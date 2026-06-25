@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from uuid import uuid4
+
+from ai_orchestrator.agents.base import AgentResult, SessionRef, TaskContext
+from ai_orchestrator.policy.engine import PolicyEngine
+from ai_orchestrator.process.runner import ProcessRunner
+
+
+@dataclass
+class GenericCLIAdapter:
+    command: str
+    args: list[str]
+    timeout_sec: int = 300
+    name: str = "generic"
+    runner: ProcessRunner = field(default_factory=ProcessRunner)
+    policy_engine: PolicyEngine = field(default_factory=PolicyEngine)
+
+    def __post_init__(self) -> None:
+        self._sessions: dict[str, TaskContext] = {}
+
+    def check_available(self) -> bool:
+        return self.runner.check_available(self.command)
+
+    def start_session(self, context: TaskContext) -> SessionRef:
+        session = SessionRef(session_id=f"generic-{uuid4()}", agent_name=self.name)
+        self._sessions[session.session_id] = context
+        return session
+
+    def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
+        context = self._sessions.get(session.session_id)
+        if context is None:
+            return AgentResult(
+                status="failed",
+                raw_output="",
+                session_id=session.session_id,
+                error="Unknown generic CLI session",
+            )
+
+        argv = [self.command, *self._render_args(prompt=prompt, repo=context.repo_path)]
+        policy_decision = self.policy_engine.evaluate_argv(argv)
+        if policy_decision.action == "deny":
+            return AgentResult(
+                status="blocked",
+                raw_output="",
+                session_id=session.session_id,
+                error=policy_decision.reason,
+            )
+        if policy_decision.action == "ask":
+            return AgentResult(
+                status="needs_approval",
+                raw_output="",
+                session_id=session.session_id,
+                error=policy_decision.reason,
+            )
+
+        result = self.runner.run(argv, cwd=context.repo_path, timeout_sec=self.timeout_sec)
+        raw_output = result.stdout if result.stdout else result.stderr
+        return AgentResult(
+            status=result.status,
+            raw_output=raw_output,
+            session_id=session.session_id,
+            error=result.error,
+        )
+
+    def continue_session(self, session: SessionRef, prompt: str) -> AgentResult:
+        return self.run_step(session, prompt)
+
+    def stop_session(self, session: SessionRef) -> None:
+        self._sessions.pop(session.session_id, None)
+
+    def _render_args(self, prompt: str, repo: Path) -> list[str]:
+        return [
+            item.replace("{prompt}", prompt).replace("{repo}", str(repo))
+            for item in self.args
+        ]

@@ -1,0 +1,92 @@
+project:
+  name: "ai-orchestrator"
+  repo: "."
+
+orchestrator:
+  default_agent: "mock"
+  fallback_agents:
+    - "generic"
+    - "codex"
+    - "claude"
+    - "kimi"
+    - "gemini"
+  max_iterations: 10
+  max_no_change_iterations: 2
+  max_task_runtime_minutes: 120
+
+agents:
+  mock:
+    enabled: true
+    type: "mock"
+
+  generic:
+    enabled: false
+    type: "generic_cli"
+    command: "echo"
+    args:
+      - "{prompt}"
+    timeout_sec: 300
+
+  codex:
+    enabled: false
+    type: "codex_exec"
+    command: "codex"
+    args:
+      - "exec"
+      - "--json"
+      - "--sandbox"
+      - "workspace-write"
+      - "{prompt}"
+    timeout_sec: 1800
+
+  claude:
+    enabled: false
+    type: "claude_headless"
+    command: "claude"
+    args:
+      - "-p"
+      - "{prompt}"
+      - "--output-format"
+      - "json"
+    timeout_sec: 1800
+
+  # Kimi/Gemini are generic CLI aliases. If command/args are omitted,
+  # defaults are: kimi -> kimi {prompt}; gemini -> gemini -p {prompt}.
+  # Keep command/args explicit when local CLI flags differ.
+  kimi:
+    enabled: false
+    type: "kimi_cli"
+    command: "kimi"
+    args:
+      - "{prompt}"
+    timeout_sec: 1800
+
+  gemini:
+    enabled: false
+    type: "gemini_cli"
+    command: "gemini"
+    args:
+      - "-p"
+      - "{prompt}"
+    timeout_sec: 1800
+
+verification:
+  commands:
+    - name: "compile"
+      run: "python -m compileall ai_orchestrator"
+      timeout_sec: 120
+    - name: "tests"
+      run: "python -m pytest"
+      timeout_sec: 300
+
+policy:
+  deny:
+    - "rm -rf /"
+    - "cat ~/.ssh"
+    - "cat ~/.codex/auth.json"
+  require_approval:
+    - "git push"
+    - "rm -rf"
+    - "pip install"
+    - "npm install"
+    - "network call"
