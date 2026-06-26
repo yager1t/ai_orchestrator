@@ -3,6 +3,30 @@ from __future__ import annotations
 from ai_orchestrator.storage.db import StateStore
 
 
+def render_approvals_view(store: StateStore) -> str:
+    lines = ["Approvals"]
+    pending: list[str] = []
+    for task in store.list_tasks():
+        for iteration in store.list_iterations(task.task_id):
+            checks = store.list_verification_details(task.task_id, iteration.iteration_id)
+            for check in checks:
+                if check.status != "needs_approval":
+                    continue
+                pending.extend(
+                    [
+                        f"  {task.task_id} iteration={iteration.iteration_index} check={check.name}",
+                        f"     task: {task.task}",
+                        f"     reason: {check.error or 'approval required'}",
+                    ]
+                )
+
+    if not pending:
+        lines.append("  No pending approvals.")
+    else:
+        lines.extend(pending)
+    return "\n".join(lines) + "\n"
+
+
 def render_tasks_view(store: StateStore) -> str:
     tasks = store.list_tasks()
     lines = ["Tasks"]

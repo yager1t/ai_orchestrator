@@ -130,6 +130,52 @@ def test_tui_tasks_prints_empty_state(capsys, tmp_path: Path) -> None:
     assert "No tasks recorded." in output
 
 
+def test_tui_approvals_prints_pending_verification_approvals(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("needs approval", repo_path=tmp_path, task_id="task-approval")
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="needs approval",
+        raw_output="done",
+        decision_status="blocked",
+        decision_reason="Approval required",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="deploy",
+            status="needs_approval",
+            exit_code=None,
+            stdout="",
+            stderr="",
+            error="Requires approval: deploy",
+        ),
+    )
+
+    exit_code = main(["tui", "approvals", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Approvals" in output
+    assert "task-approval iteration=1 check=deploy" in output
+    assert "reason: Requires approval: deploy" in output
+
+
+def test_tui_approvals_prints_empty_state(capsys, tmp_path: Path) -> None:
+    exit_code = main(["tui", "approvals", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "No pending approvals." in output
+
+
 def test_report_writes_markdown_file(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo report", repo_path=tmp_path)

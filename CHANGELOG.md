@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added read-only `ai-orch tui approvals` pending approval view.
 - Added release checklist documentation.
 - Added read-only `ai-orch tui tasks` task list.
 - Added dedicated Kimi and Gemini CLI adapter wrappers with native defaults.
