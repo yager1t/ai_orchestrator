@@ -31,6 +31,19 @@ class StoredIteration:
 
 
 @dataclass(frozen=True)
+class StoredIterationDetail:
+    iteration_id: int
+    task_id: str
+    iteration_index: int
+    agent_name: str
+    agent_status: str
+    prompt: str
+    raw_output: str
+    decision_status: str
+    decision_reason: str
+
+
+@dataclass(frozen=True)
 class StoredVerificationRun:
     verification_id: int
     task_id: str
@@ -284,6 +297,29 @@ class StateStore:
                 (task_id,),
             ).fetchall()
         return [StoredIteration(**dict(row)) for row in rows]
+
+    def list_iteration_details(self, task_id: str) -> list[StoredIterationDetail]:
+        self.initialize()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    iteration_id,
+                    task_id,
+                    iteration_index,
+                    agent_name,
+                    agent_status,
+                    prompt,
+                    raw_output,
+                    decision_status,
+                    decision_reason
+                FROM iterations
+                WHERE task_id = ?
+                ORDER BY iteration_index ASC, iteration_id ASC
+                """,
+                (task_id,),
+            ).fetchall()
+        return [StoredIterationDetail(**dict(row)) for row in rows]
 
     def list_verification_runs(
         self,

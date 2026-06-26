@@ -252,6 +252,37 @@ def test_tui_current_prints_empty_iteration_state(capsys, tmp_path: Path) -> Non
     assert "No iterations recorded." in output
 
 
+def test_tui_logs_prints_iteration_prompt_and_output(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("log task", repo_path=tmp_path, task_id="task-logs")
+    store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="please finish",
+        raw_output="done output",
+        decision_status="done",
+        decision_reason="Verification passed: unit",
+    )
+
+    exit_code = main(["tui", "logs", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Logs for task-logs" in output
+    assert "prompt: please finish" in output
+    assert "output: done output" in output
+
+
+def test_tui_logs_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
+    exit_code = main(["tui", "logs", "missing-task", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Task not found: missing-task" in output
+
+
 def test_report_writes_markdown_file(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo report", repo_path=tmp_path)

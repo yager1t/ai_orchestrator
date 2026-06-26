@@ -61,6 +61,31 @@ def render_current_view(store: StateStore, task_id: str) -> str | None:
     return "\n".join(lines) + "\n"
 
 
+def render_logs_view(store: StateStore, task_id: str) -> str | None:
+    task = store.get_task(task_id)
+    if task is None:
+        return None
+
+    lines = [f"Logs for {task.task_id}", f"Summary: {task.task}"]
+    iterations = store.list_iteration_details(task.task_id)
+    if not iterations:
+        lines.append("No iterations recorded.")
+        return "\n".join(lines) + "\n"
+
+    for iteration in iterations:
+        lines.extend(
+            [
+                f"Iteration {iteration.iteration_index}",
+                f"  agent: {iteration.agent_name}",
+                f"  prompt: {_one_line(iteration.prompt)}",
+                f"  output: {_one_line(iteration.raw_output)}",
+                f"  decision: {iteration.decision_status}",
+                f"  reason: {iteration.decision_reason}",
+            ]
+        )
+    return "\n".join(lines) + "\n"
+
+
 def render_tasks_view(store: StateStore) -> str:
     tasks = store.list_tasks()
     lines = ["Tasks"]
@@ -73,6 +98,13 @@ def render_tasks_view(store: StateStore) -> str:
         lines.append(f"     updated: {task.updated_at}")
 
     return "\n".join(lines) + "\n"
+
+
+def _one_line(value: str, limit: int = 160) -> str:
+    rendered = " ".join(value.splitlines())
+    if len(rendered) <= limit:
+        return rendered
+    return f"{rendered[:limit]}..."
 
 
 def render_status_view(store: StateStore, task_id: str) -> str | None:

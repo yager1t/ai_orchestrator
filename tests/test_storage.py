@@ -57,10 +57,13 @@ def test_state_store_persists_iteration_and_verification(tmp_path: Path) -> None
     )
 
     iterations = store.list_iterations(task.task_id)
+    iteration_details = store.list_iteration_details(task.task_id)
     verification_runs = store.list_verification_runs(task.task_id)
     verification_details = store.list_verification_details(task.task_id)
 
     assert iterations == [iteration]
+    assert iteration_details[0].prompt == "do it"
+    assert iteration_details[0].raw_output == "done"
     assert verification_runs == [verification]
     assert verification_runs[0].iteration_id == iteration.iteration_id
     assert verification_details[0].stderr == "assertion failed"

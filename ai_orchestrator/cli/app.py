@@ -14,6 +14,7 @@ from ai_orchestrator.storage.db import StateStore
 from ai_orchestrator.tui.app import (
     render_approvals_view,
     render_current_view,
+    render_logs_view,
     render_status_view,
     render_tasks_view,
 )
@@ -63,6 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
     tui_current = tui_sub.add_parser("current", help="Render the latest task iteration")
     tui_current.add_argument("task_id")
     tui_current.add_argument("--repo", default=".")
+    tui_logs = tui_sub.add_parser("logs", help="Render task iteration logs")
+    tui_logs.add_argument("task_id")
+    tui_logs.add_argument("--repo", default=".")
     tui_tasks = tui_sub.add_parser("tasks", help="Render a read-only task list")
     tui_tasks.add_argument("--repo", default=".")
     tui_status = tui_sub.add_parser("status", help="Render a read-only task status view")
@@ -138,6 +142,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.tui_command == "current":
             store = _state_store_for_repo(Path(args.repo))
             view = render_current_view(store, args.task_id)
+            if view is None:
+                print(f"Task not found: {args.task_id}")
+                return 1
+            print(view, end="")
+            return 0
+        if args.tui_command == "logs":
+            store = _state_store_for_repo(Path(args.repo))
+            view = render_logs_view(store, args.task_id)
             if view is None:
                 print(f"Task not found: {args.task_id}")
                 return 1

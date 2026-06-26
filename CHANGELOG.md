@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added read-only `ai-orch tui logs` iteration log view.
 - Added read-only `ai-orch tui current` latest iteration view.
 - Added MCP/ACP research notes for future adapter spikes.
 - Added read-only `ai-orch tui approvals` pending approval view.
