@@ -3,7 +3,9 @@ from __future__ import annotations
 from ai_orchestrator.agents.base import AgentAdapter
 from ai_orchestrator.agents.claude import ClaudeHeadlessAdapter
 from ai_orchestrator.agents.codex import CodexExecAdapter
+from ai_orchestrator.agents.gemini import GeminiCLIAdapter
 from ai_orchestrator.agents.generic import GenericCLIAdapter
+from ai_orchestrator.agents.kimi import KimiCLIAdapter
 from ai_orchestrator.agents.mock import MockAgentAdapter
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig
 from ai_orchestrator.policy.engine import PolicyEngine
@@ -52,19 +54,9 @@ def _build_agent_from_config(
     if agent_config.type == "generic_cli":
         return _build_generic(agent_config, policy_engine)
     if agent_config.type in {"kimi", "kimi_cli"}:
-        return _build_cli_alias(
-            agent_config,
-            policy_engine,
-            default_command="kimi",
-            default_args=["{prompt}"],
-        )
+        return _build_kimi(agent_config, policy_engine)
     if agent_config.type in {"gemini", "gemini_cli"}:
-        return _build_cli_alias(
-            agent_config,
-            policy_engine,
-            default_command="gemini",
-            default_args=["-p", "{prompt}"],
-        )
+        return _build_gemini(agent_config, policy_engine)
     if agent_config.type == "codex_exec":
         return _build_codex(agent_config, policy_engine)
     if agent_config.type in {"claude", "claude_headless"}:
@@ -88,16 +80,27 @@ def _build_generic(
     )
 
 
-def _build_cli_alias(
+def _build_kimi(
     config: AgentConfig,
     policy_engine: PolicyEngine | None,
-    default_command: str,
-    default_args: list[str],
-) -> GenericCLIAdapter:
-    return GenericCLIAdapter(
+) -> KimiCLIAdapter:
+    return KimiCLIAdapter(
         name=config.name,
-        command=config.command or default_command,
-        args=config.args if config.args is not None else default_args,
+        command=config.command or "kimi",
+        args=config.args if config.args is not None else ["{prompt}"],
+        timeout_sec=config.timeout_sec,
+        policy_engine=policy_engine or PolicyEngine(),
+    )
+
+
+def _build_gemini(
+    config: AgentConfig,
+    policy_engine: PolicyEngine | None,
+) -> GeminiCLIAdapter:
+    return GeminiCLIAdapter(
+        name=config.name,
+        command=config.command or "gemini",
+        args=config.args if config.args is not None else ["-p", "{prompt}"],
         timeout_sec=config.timeout_sec,
         policy_engine=policy_engine or PolicyEngine(),
     )

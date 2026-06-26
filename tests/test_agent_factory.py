@@ -5,7 +5,9 @@ from ai_orchestrator.agents.base import TaskContext
 from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
 from ai_orchestrator.agents.claude import ClaudeHeadlessAdapter
 from ai_orchestrator.agents.codex import CodexExecAdapter
+from ai_orchestrator.agents.gemini import GeminiCLIAdapter
 from ai_orchestrator.agents.generic import GenericCLIAdapter
+from ai_orchestrator.agents.kimi import KimiCLIAdapter
 from ai_orchestrator.agents.mock import MockAgentAdapter
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig
 from ai_orchestrator.policy.engine import PolicyEngine
@@ -105,7 +107,7 @@ def test_build_agent_creates_kimi_cli_alias() -> None:
 
     agent = build_agent(config)
 
-    assert isinstance(agent, GenericCLIAdapter)
+    assert isinstance(agent, KimiCLIAdapter)
     assert agent.name == "kimi"
     assert agent.command == "kimi"
     assert agent.args == ["--prompt", "{prompt}"]
@@ -126,7 +128,7 @@ def test_build_agent_creates_gemini_cli_alias_with_defaults() -> None:
 
     agent = build_agent(config)
 
-    assert isinstance(agent, GenericCLIAdapter)
+    assert isinstance(agent, GeminiCLIAdapter)
     assert agent.name == "gemini"
     assert agent.command == "gemini"
     assert agent.args == ["-p", "{prompt}"]
