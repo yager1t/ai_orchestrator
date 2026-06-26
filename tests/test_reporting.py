@@ -36,6 +36,10 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
     assert report is not None
     assert f"# ai-orch report: {task.task_id}" in report
     assert "- Status: `done`" in report
+    assert "- Iterations: `1`" in report
+    assert "- Verification runs: `1` (`passed`: 1)" in report
+    assert "- Final decision: `done`" in report
+    assert "- Final reason: Verification passed: unit" in report
     assert "### Iteration 1" in report
     assert "- `unit`: `passed` exit=`0`" in report
 
@@ -98,6 +102,9 @@ def test_render_task_report_includes_unavailable_agent_blocker(tmp_path: Path) -
 
     assert report is not None
     assert "- Status: `blocked`" in report
+    assert "- Iterations: `1`" in report
+    assert "- Verification runs: `0`" in report
+    assert "- Final decision: `blocked`" in report
     assert "- Agent: `generic`" in report
     assert "- Agent status: `unavailable`" in report
     assert "- Reason: Agent is not available" in report

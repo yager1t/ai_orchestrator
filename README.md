@@ -1,5 +1,28 @@
 # AI Task Finisher / ai-orch
 
+## Project status
+
+The MVP control plane is implemented and pushed to `origin/main`.
+
+Current working surface:
+
+- CLI commands: `init`, `start`, `resume`, `status`, `report`, `verify`, `agents`, `agents --check`.
+- Supervisor completes tasks only after verification passes.
+- SQLite state store records tasks, iterations, and verification runs.
+- Policy checks protect verification and agent commands.
+- Supported agents: mock, generic CLI, Codex exec, Claude headless, and Kimi/Gemini CLI aliases.
+- Markdown reports are generated from stored task history.
+
+Latest verified baseline:
+
+- `python -m pytest`: 100 passed
+- `python -m compileall ai_orchestrator`: passed
+- `python -m ai_orchestrator verify --repo .`: passed
+- `git diff --check`: passed
+
+## Language policy
+
+Project descriptions, README updates, and changelog/log entries may be written in English. User-facing assistant replies should stay in Russian unless the user asks otherwise.
 MVP-проект оркестратора локальных ИИ-агентов.
 
 Цель: управлять установленными CLI-агентами — Codex CLI, Claude Code, Gemini CLI, Kimi Code CLI и generic CLI — через единый supervisor-loop:

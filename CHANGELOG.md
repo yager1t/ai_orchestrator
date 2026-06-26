@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added exact-command approval support for `ai-orch verify --approve-command`.
+- Added `ai-orch --version` for release/version visibility.
+- Changed verification command execution to use parsed argv without `shell=True`.
+- Improved markdown task report summaries with iteration, verification, and final decision totals.
+- Added GitHub Actions CI for pytest, compileall, ai-orch verification, and whitespace checks.
+- Documented the current MVP project status and language policy for English project docs/logs with Russian user-facing replies.
 - Added a minimal decision engine for supervisor `done` / `continue` / `blocked` outcomes.
 - Added supervisor retry flow that sends a follow-up prompt after failed verification.
 - Added SQLite state storage for tasks, iterations, and verification runs.

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import subprocess
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
 from ai_orchestrator.policy.engine import PolicyEngine
+from ai_orchestrator.process.runner import ProcessRunner
 
 
 @dataclass(frozen=True)
@@ -25,8 +26,15 @@ class VerificationResult:
 
 
 class VerificationRunner:
-    def __init__(self, policy_engine: PolicyEngine | None = None) -> None:
+    def __init__(
+        self,
+        policy_engine: PolicyEngine | None = None,
+        process_runner: ProcessRunner | None = None,
+        approved_commands: set[str] | None = None,
+    ) -> None:
         self.policy_engine = policy_engine
+        self.process_runner = process_runner or ProcessRunner()
+        self.approved_commands = frozenset(approved_commands or set())
 
     def run(self, command: VerificationCommand, cwd: Path | None = None) -> VerificationResult:
         if self.policy_engine is not None:
@@ -41,42 +49,38 @@ class VerificationRunner:
                     error=decision.reason,
                 )
             if decision.action == "ask":
-                return VerificationResult(
-                    name=command.name,
-                    status="needs_approval",
-                    exit_code=None,
-                    stdout="",
-                    stderr="",
-                    error=decision.reason,
-                )
+                if command.run not in self.approved_commands:
+                    return VerificationResult(
+                        name=command.name,
+                        status="needs_approval",
+                        exit_code=None,
+                        stdout="",
+                        stderr="",
+                        error=decision.reason,
+                    )
 
         try:
-            completed = subprocess.run(
-                command.run,
-                cwd=str(cwd) if cwd else None,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=command.timeout_sec,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
+            argv = shlex.split(command.run)
+        except ValueError as exc:
             return VerificationResult(
                 name=command.name,
-                status="timeout",
+                status="failed",
                 exit_code=None,
-                stdout=exc.stdout or "",
-                stderr=exc.stderr or "",
-                error=f"Command timed out after {command.timeout_sec}s",
+                stdout="",
+                stderr="",
+                error=f"Invalid command: {exc}",
             )
 
-        status = "passed" if completed.returncode == 0 else "failed"
+        completed = self.process_runner.run(argv, cwd=cwd, timeout_sec=command.timeout_sec)
+
+        status = "passed" if completed.status == "success" else completed.status
         return VerificationResult(
             name=command.name,
             status=status,
-            exit_code=completed.returncode,
+            exit_code=completed.exit_code,
             stdout=completed.stdout,
             stderr=completed.stderr,
+            error=completed.error,
         )
 
     def run_many(

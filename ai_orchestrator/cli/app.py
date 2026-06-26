@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from ai_orchestrator import __version__
 from ai_orchestrator.agents.base import AgentAdapter
 from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
 from ai_orchestrator.config.loader import ProjectConfig, load_project_config
@@ -15,6 +16,7 @@ from ai_orchestrator.verification.runner import VerificationRunner
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-orch", description="Local supervisor for CLI AI agents")
+    parser.add_argument("--version", action="version", version=f"ai-orch {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("init", help="Create local .ai-orch directories")
@@ -37,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = sub.add_parser("verify", help="Run default verification commands")
     verify.add_argument("--repo", default=".")
+    verify.add_argument(
+        "--approve-command",
+        action="append",
+        default=[],
+        help="Approve one exact verification command string that policy marked as requiring approval",
+    )
 
     agents = sub.add_parser("agents", help="List configured starter agents")
     agents.add_argument("--repo", default=".")
@@ -70,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify":
         repo = Path(args.repo)
         config = load_project_config(repo)
-        runner = _verification_runner(config)
+        runner = _verification_runner(config, approved_commands=set(args.approve_command))
         result = runner.run_many(config.verification_commands, cwd=repo)
         for item in result:
             print(f"{item.name}: {item.status} exit={item.exit_code}")
@@ -212,5 +220,11 @@ def _policy_engine(config: ProjectConfig) -> PolicyEngine:
     )
 
 
-def _verification_runner(config: ProjectConfig) -> VerificationRunner:
-    return VerificationRunner(policy_engine=_policy_engine(config))
+def _verification_runner(
+    config: ProjectConfig,
+    approved_commands: set[str] | None = None,
+) -> VerificationRunner:
+    return VerificationRunner(
+        policy_engine=_policy_engine(config),
+        approved_commands=approved_commands,
+    )

@@ -1,5 +1,10 @@
 # AGENTS.md
 
+## Language policy
+
+- User-facing assistant replies should be in Russian by default unless the user asks for another language.
+- Project descriptions, README updates, changelog/log entries, and other project-facing documentation may be written in English.
+- Keep generated code, commands, identifiers, and structured config values in the language/style already used by the surrounding file.
 Инструкции для Codex и других coding agents в этом репозитории.
 
 Уровень рассуждения:

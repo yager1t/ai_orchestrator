@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+
 from ai_orchestrator.storage.db import StateStore
 
 
@@ -7,6 +9,10 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
     task = store.get_task(task_id)
     if task is None:
         return None
+
+    iterations = store.list_iterations(task.task_id)
+    verification_runs = store.list_verification_runs(task.task_id)
+    final_iteration = iterations[-1] if iterations else None
 
     lines = [
         f"# ai-orch report: {task.task_id}",
@@ -16,14 +22,28 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
         f"- Status: `{task.status}`",
         f"- Repository: `{task.repo_path}`",
         f"- Task: {task.task}",
+        f"- Iterations: `{len(iterations)}`",
+        f"- Verification runs: `{len(verification_runs)}`{_status_summary(verification_runs)}",
         f"- Created: `{task.created_at}`",
         f"- Updated: `{task.updated_at}`",
+    ]
+
+    if final_iteration is not None:
+        lines.extend(
+            [
+                f"- Final decision: `{final_iteration.decision_status}`",
+                f"- Final reason: {final_iteration.decision_reason}",
+            ]
+        )
+
+    lines.extend(
+        [
         "",
         "## Iterations",
         "",
-    ]
+        ]
+    )
 
-    iterations = store.list_iterations(task.task_id)
     if not iterations:
         lines.append("No iterations recorded.")
         return "\n".join(lines) + "\n"
@@ -74,3 +94,12 @@ def _verification_excerpt(stderr: str, stdout: str, error: str | None, limit: in
 
 def _indent(text: str, prefix: str) -> str:
     return "\n".join(f"{prefix}{line}" for line in text.splitlines())
+
+
+def _status_summary(verification_runs: list[object]) -> str:
+    if not verification_runs:
+        return ""
+
+    counts = Counter(run.status for run in verification_runs)
+    summary = ", ".join(f"`{status}`: {count}" for status, count in sorted(counts.items()))
+    return f" ({summary})"

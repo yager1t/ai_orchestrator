@@ -2,10 +2,20 @@ from pathlib import Path
 
 import pytest
 
+from ai_orchestrator import __version__
 from ai_orchestrator.cli.app import main
 from ai_orchestrator.process.runner import ProcessResult, ProcessRunner
 from ai_orchestrator.storage.db import StateStore
 from ai_orchestrator.verification.runner import VerificationResult, VerificationRunner
+
+
+def test_version_command(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+
+    output = capsys.readouterr().out
+    assert exc.value.code == 0
+    assert output == f"ai-orch {__version__}\n"
 
 
 def test_status_prints_stored_task(capsys, tmp_path: Path) -> None:
@@ -450,6 +460,30 @@ def test_verify_uses_policy_rules_from_project_config(capsys, tmp_path: Path) ->
 
     assert exit_code == 1
     assert "deploy: needs_approval exit=None" in output
+
+
+def test_verify_approves_exact_command_from_cli(capsys, tmp_path: Path) -> None:
+    command = "python -c \"print('approval-token ok')\""
+    write_config(
+        tmp_path,
+        command_name="approval",
+        command_run=command,
+        require_approval_patterns=["approval-token"],
+    )
+
+    exit_code = main(
+        [
+            "verify",
+            "--repo",
+            str(tmp_path),
+            "--approve-command",
+            command,
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "approval: passed exit=0" in output
 
 
 def write_config(
