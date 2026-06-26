@@ -73,3 +73,29 @@ def test_load_project_config_uses_compile_fallback_without_config(tmp_path: Path
     assert config.agents["mock"].enabled is True
     assert len(config.verification_commands) == 1
     assert config.verification_commands[0].name == "compile"
+
+
+def test_load_project_config_reads_structured_verification_argv(tmp_path: Path) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+verification:
+  commands:
+    - name: "unit"
+      argv:
+        - "python"
+        - "-m"
+        - "pytest"
+      timeout_sec: 30
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = load_project_config(tmp_path)
+
+    assert len(config.verification_commands) == 1
+    assert config.verification_commands[0].name == "unit"
+    assert config.verification_commands[0].run == ""
+    assert config.verification_commands[0].argv == ["python", "-m", "pytest"]
+    assert config.verification_commands[0].timeout_sec == 30

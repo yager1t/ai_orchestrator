@@ -11,6 +11,7 @@ from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.reporting.markdown import render_task_report
 from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.tui.app import render_status_view
 from ai_orchestrator.verification.runner import VerificationRunner
 
 
@@ -49,6 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
     agents = sub.add_parser("agents", help="List configured starter agents")
     agents.add_argument("--repo", default=".")
     agents.add_argument("--check", action="store_true", help="Check enabled agent availability")
+
+    tui = sub.add_parser("tui", help="Read-only text UI helpers")
+    tui_sub = tui.add_subparsers(dest="tui_command")
+    tui_status = tui_sub.add_parser("status", help="Render a read-only task status view")
+    tui_status.add_argument("task_id")
+    tui_status.add_argument("--repo", default=".")
     return parser
 
 
@@ -110,6 +117,18 @@ def main(argv: list[str] | None = None) -> int:
             for check in checks:
                 print(f"     check={check.name} status={check.status} exit={check.exit_code}")
         return 0
+
+    if args.command == "tui":
+        if args.tui_command == "status":
+            store = _state_store_for_repo(Path(args.repo))
+            view = render_status_view(store, args.task_id)
+            if view is None:
+                print(f"Task not found: {args.task_id}")
+                return 1
+            print(view, end="")
+            return 0
+        parser.print_help()
+        return 1
 
     if args.command == "resume":
         store = _state_store_for_repo(Path(args.repo))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,7 @@ class VerificationCommand:
     name: str
     run: str
     timeout_sec: int = 300
+    argv: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,13 @@ class VerificationRunner:
         self.approved_commands = frozenset(approved_commands or set())
 
     def run(self, command: VerificationCommand, cwd: Path | None = None) -> VerificationResult:
+        policy_command = command.run
+        argv = command.argv
+        if argv is not None:
+            policy_command = subprocess.list2cmdline(argv)
+
         if self.policy_engine is not None:
-            decision = self.policy_engine.evaluate_command(command.run)
+            decision = self.policy_engine.evaluate_command(policy_command)
             if decision.action == "deny":
                 return VerificationResult(
                     name=command.name,
@@ -49,7 +56,7 @@ class VerificationRunner:
                     error=decision.reason,
                 )
             if decision.action == "ask":
-                if command.run not in self.approved_commands:
+                if policy_command not in self.approved_commands:
                     return VerificationResult(
                         name=command.name,
                         status="needs_approval",
@@ -59,17 +66,18 @@ class VerificationRunner:
                         error=decision.reason,
                     )
 
-        try:
-            argv = shlex.split(command.run)
-        except ValueError as exc:
-            return VerificationResult(
-                name=command.name,
-                status="failed",
-                exit_code=None,
-                stdout="",
-                stderr="",
-                error=f"Invalid command: {exc}",
-            )
+        if argv is None:
+            try:
+                argv = shlex.split(command.run)
+            except ValueError as exc:
+                return VerificationResult(
+                    name=command.name,
+                    status="failed",
+                    exit_code=None,
+                    stdout="",
+                    stderr="",
+                    error=f"Invalid command: {exc}",
+                )
 
         completed = self.process_runner.run(argv, cwd=cwd, timeout_sec=command.timeout_sec)
 

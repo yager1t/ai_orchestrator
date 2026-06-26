@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added read-only `ai-orch tui status` task view.
+- Added structured verification `argv` config support alongside legacy `run` strings.
+- Documented verification approval rules and CLI usage.
 - Added exact-command approval support for `ai-orch verify --approve-command`.
 - Added `ai-orch --version` for release/version visibility.
 - Changed verification command execution to use parsed argv without `shell=True`.

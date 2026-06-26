@@ -54,6 +54,25 @@ def test_verification_uses_process_runner_with_parsed_argv(tmp_path: Path) -> No
     assert process_runner.timeout_sec == 12
 
 
+def test_verification_uses_structured_argv_without_splitting(tmp_path: Path) -> None:
+    process_runner = RecordingProcessRunner()
+    runner = VerificationRunner(process_runner=process_runner)
+    result = runner.run(
+        VerificationCommand(
+            "ok",
+            "",
+            timeout_sec=12,
+            argv=["python", "-c", "print('ok')"],
+        ),
+        cwd=tmp_path,
+    )
+
+    assert result.status == "passed"
+    assert process_runner.argv == ["python", "-c", "print('ok')"]
+    assert process_runner.cwd == tmp_path
+    assert process_runner.timeout_sec == 12
+
+
 def test_verification_does_not_execute_shell_operators(tmp_path: Path) -> None:
     marker = tmp_path / "marker.txt"
     runner = VerificationRunner()
@@ -157,3 +176,19 @@ def test_verification_approval_does_not_override_deny(tmp_path: Path) -> None:
     assert result.status == "policy_denied"
     assert result.exit_code is None
     assert marker.exists() is False
+
+
+def test_verification_structured_argv_policy_uses_executed_command() -> None:
+    runner = VerificationRunner(
+        policy_engine=PolicyEngine(ask_patterns=["approval-token"]),
+    )
+
+    result = runner.run(
+        VerificationCommand(
+            "argv",
+            "",
+            argv=["python", "-c", "print('approval-token ok')"],
+        )
+    )
+
+    assert result.status == "needs_approval"

@@ -88,6 +88,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
     policy_deny_patterns: list[str] = []
     policy_ask_patterns: list[str] = []
     current_command: dict[str, str] | None = None
+    in_verification_argv = False
     section: str | None = None
     in_verification_commands = False
     in_fallback_agents = False
@@ -109,6 +110,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
                 )
             section = stripped[:-1]
             in_verification_commands = False
+            in_verification_argv = False
             in_fallback_agents = False
             policy_list = None
             in_agent_args = False
@@ -195,8 +197,15 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
             continue
 
         if stripped.startswith("- "):
+            if in_verification_argv and current_command is not None:
+                argv = current_command.setdefault("argv", [])
+                if isinstance(argv, list):
+                    argv.append(_strip_quotes(stripped[2:].strip()))
+                continue
+
             current_command = _finish_command(current_command, verification_commands)
             current_command = {}
+            in_verification_argv = False
             remainder = stripped[2:].strip()
             if remainder:
                 key, value = _split_key_value(remainder)
@@ -204,7 +213,13 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
                     current_command[key] = value
             continue
 
+        if current_command is not None and stripped == "argv:":
+            current_command["argv"] = []
+            in_verification_argv = True
+            continue
+
         if current_command is not None and ":" in stripped:
+            in_verification_argv = False
             key, value = _split_key_value(stripped)
             if key:
                 current_command[key] = value
@@ -224,15 +239,17 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
 
 
 def _finish_command(
-    current_command: dict[str, str] | None,
+    current_command: dict[str, object] | None,
     commands: list[VerificationCommand],
 ) -> None:
     if current_command is None:
         return None
 
     name = current_command.get("name")
-    run = current_command.get("run")
-    if not name or not run:
+    run = current_command.get("run", "")
+    raw_argv = current_command.get("argv")
+    argv = [str(item) for item in raw_argv] if isinstance(raw_argv, list) else None
+    if not isinstance(name, str) or (not run and not argv):
         return None
 
     timeout_value = current_command.get("timeout_sec", "300")
@@ -241,7 +258,14 @@ def _finish_command(
     except ValueError:
         timeout_sec = 300
 
-    commands.append(VerificationCommand(name=name, run=run, timeout_sec=timeout_sec))
+    commands.append(
+        VerificationCommand(
+            name=name,
+            run=str(run),
+            timeout_sec=timeout_sec,
+            argv=argv,
+        )
+    )
     return None
 
 

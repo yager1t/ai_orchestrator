@@ -54,3 +54,20 @@ require_approval:
 ## Правило секрета
 
 Секрет нельзя выводить в лог, отчёт, prompt или тест.
+
+## Verification approvals
+
+Verification commands that match `require_approval` return `needs_approval` by default.
+For the MVP, approval is explicit and one-shot through the CLI:
+
+```bash
+python -m ai_orchestrator verify --repo . --approve-command "exact command string"
+```
+
+Rules:
+
+- Approval uses exact command string matching only.
+- Approval can only unblock `ask` decisions; `deny` decisions still win.
+- Approvals are not read from `.ai-orch/config.yaml` and should not be stored in repo config.
+- Approval applies to verification commands only, not agent execution commands.
+- No `--approve-all` or pattern approval mode is supported.

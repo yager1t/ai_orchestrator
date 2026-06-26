@@ -65,6 +65,16 @@ Supported MVP agent types:
 
 Kimi and Gemini aliases use the same subprocess, policy, timeout, and availability-check path as `generic_cli`. Keep their `command` and `args` explicit in config when real CLI flags differ from the defaults.
 
+## Verification approvals
+
+`ai-orch verify` blocks commands that match `policy.require_approval` unless the user approves the exact configured command string:
+
+```bash
+python -m ai_orchestrator verify --repo . --approve-command "git push origin main"
+```
+
+Approvals are not stored in `.ai-orch/config.yaml`, do not override deny rules, and apply only to verification commands.
+
 ---
 
 ## Старт работы через Codex

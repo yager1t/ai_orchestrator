@@ -62,6 +62,49 @@ def test_status_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
     assert "Task not found: missing-task" in output
 
 
+def test_tui_status_prints_read_only_task_view(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo task",
+        raw_output="done",
+        decision_status="done",
+        decision_reason="Verification passed: unit",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="ok",
+            stderr="",
+        ),
+    )
+
+    exit_code = main(["tui", "status", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Task {task.task_id}" in output
+    assert "Status: created" in output
+    assert "Iterations" in output
+    assert "check: unit passed exit=0" in output
+
+
+def test_tui_status_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
+    exit_code = main(["tui", "status", "missing-task", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Task not found: missing-task" in output
+
+
 def test_report_writes_markdown_file(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo report", repo_path=tmp_path)
