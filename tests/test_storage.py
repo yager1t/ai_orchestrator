@@ -17,6 +17,18 @@ def test_state_store_persists_task(tmp_path: Path) -> None:
     assert loaded.status == "done"
 
 
+def test_state_store_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    store.initialize()
+
+    with store._connect() as connection:
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+        busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+
+    assert journal_mode == "wal"
+    assert busy_timeout == 5000
+
+
 def test_state_store_lists_tasks_newest_first(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
 

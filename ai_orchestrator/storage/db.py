@@ -178,7 +178,7 @@ class StateStore:
                 """
                 SELECT task_id, task, repo_path, status, created_at, updated_at
                 FROM tasks
-                ORDER BY updated_at DESC, created_at DESC
+                ORDER BY updated_at DESC, created_at DESC, task_id DESC
                 """
             ).fetchall()
         return [StoredTask(**dict(row)) for row in rows]
@@ -376,6 +376,8 @@ class StateStore:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA busy_timeout = 5000")
         return connection
 
 
