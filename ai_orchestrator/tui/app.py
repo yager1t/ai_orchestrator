@@ -27,6 +27,40 @@ def render_approvals_view(store: StateStore) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_current_view(store: StateStore, task_id: str) -> str | None:
+    task = store.get_task(task_id)
+    if task is None:
+        return None
+
+    lines = [
+        f"Current iteration for {task.task_id}",
+        f"Status: {task.status}",
+        f"Summary: {task.task}",
+    ]
+    iterations = store.list_iterations(task.task_id)
+    if not iterations:
+        lines.append("No iterations recorded.")
+        return "\n".join(lines) + "\n"
+
+    iteration = iterations[-1]
+    lines.extend(
+        [
+            f"Iteration: {iteration.iteration_index}",
+            f"Agent: {iteration.agent_name}",
+            f"Agent status: {iteration.agent_status}",
+            f"Decision: {iteration.decision_status}",
+            f"Reason: {iteration.decision_reason}",
+            "Verification",
+        ]
+    )
+    checks = store.list_verification_runs(task.task_id, iteration.iteration_id)
+    if not checks:
+        lines.append("  No verification runs recorded.")
+    for check in checks:
+        lines.append(f"  {check.name}: {check.status} exit={check.exit_code}")
+    return "\n".join(lines) + "\n"
+
+
 def render_tasks_view(store: StateStore) -> str:
     tasks = store.list_tasks()
     lines = ["Tasks"]

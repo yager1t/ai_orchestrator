@@ -176,6 +176,82 @@ def test_tui_approvals_prints_empty_state(capsys, tmp_path: Path) -> None:
     assert "No pending approvals." in output
 
 
+def test_tui_current_prints_latest_iteration(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("current task", repo_path=tmp_path, task_id="task-current")
+    first = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="current task",
+        raw_output="done",
+        decision_status="continue",
+        decision_reason="Needs another pass",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=first.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="failed",
+            exit_code=1,
+            stdout="",
+            stderr="failed",
+        ),
+    )
+    second = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=2,
+        agent_name="mock",
+        agent_status="success",
+        prompt="current task",
+        raw_output="done",
+        decision_status="done",
+        decision_reason="Verification passed: unit",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=second.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="ok",
+            stderr="",
+        ),
+    )
+
+    exit_code = main(["tui", "current", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Current iteration for task-current" in output
+    assert "Iteration: 2" in output
+    assert "Decision: done" in output
+    assert "unit: passed exit=0" in output
+
+
+def test_tui_current_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
+    exit_code = main(["tui", "current", "missing-task", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Task not found: missing-task" in output
+
+
+def test_tui_current_prints_empty_iteration_state(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("empty current", repo_path=tmp_path, task_id="task-empty")
+
+    exit_code = main(["tui", "current", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Current iteration for task-empty" in output
+    assert "No iterations recorded." in output
+
+
 def test_report_writes_markdown_file(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo report", repo_path=tmp_path)

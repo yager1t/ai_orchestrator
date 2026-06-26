@@ -11,7 +11,12 @@ from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.reporting.markdown import render_task_report
 from ai_orchestrator.storage.db import StateStore
-from ai_orchestrator.tui.app import render_approvals_view, render_status_view, render_tasks_view
+from ai_orchestrator.tui.app import (
+    render_approvals_view,
+    render_current_view,
+    render_status_view,
+    render_tasks_view,
+)
 from ai_orchestrator.verification.runner import VerificationRunner
 
 
@@ -55,6 +60,9 @@ def build_parser() -> argparse.ArgumentParser:
     tui_sub = tui.add_subparsers(dest="tui_command")
     tui_approvals = tui_sub.add_parser("approvals", help="Render pending verification approvals")
     tui_approvals.add_argument("--repo", default=".")
+    tui_current = tui_sub.add_parser("current", help="Render the latest task iteration")
+    tui_current.add_argument("task_id")
+    tui_current.add_argument("--repo", default=".")
     tui_tasks = tui_sub.add_parser("tasks", help="Render a read-only task list")
     tui_tasks.add_argument("--repo", default=".")
     tui_status = tui_sub.add_parser("status", help="Render a read-only task status view")
@@ -126,6 +134,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.tui_command == "approvals":
             store = _state_store_for_repo(Path(args.repo))
             print(render_approvals_view(store), end="")
+            return 0
+        if args.tui_command == "current":
+            store = _state_store_for_repo(Path(args.repo))
+            view = render_current_view(store, args.task_id)
+            if view is None:
+                print(f"Task not found: {args.task_id}")
+                return 1
+            print(view, end="")
             return 0
         if args.tui_command == "tasks":
             store = _state_store_for_repo(Path(args.repo))
