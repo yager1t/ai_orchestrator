@@ -14,6 +14,10 @@ class Decision:
 
 
 class DecisionEngine:
+    MAX_FAILED_CHECKS_IN_PROMPT = 3
+    MAX_CHECK_OUTPUT_CHARS = 1200
+    MAX_FOLLOW_UP_PROMPT_CHARS = 4000
+
     def decide(
         self,
         agent_result: AgentResult,
@@ -64,7 +68,8 @@ class DecisionEngine:
         sections = [
             "Previous verification failed. Fix the issues below, then stop for verification."
         ]
-        for item in failed_results:
+        shown_results = failed_results[: self.MAX_FAILED_CHECKS_IN_PROMPT]
+        for item in shown_results:
             details = item.stderr or item.stdout or item.error or "No output captured."
             sections.append(
                 "\n".join(
@@ -72,8 +77,19 @@ class DecisionEngine:
                         f"Check: {item.name}",
                         f"Status: {item.status}",
                         f"Exit code: {item.exit_code}",
-                        f"Output:\n{details[:2000]}",
+                        f"Output:\n{self._excerpt(details, self.MAX_CHECK_OUTPUT_CHARS)}",
                     ]
                 )
             )
-        return "\n\n".join(sections)
+        hidden_count = len(failed_results) - len(shown_results)
+        if hidden_count > 0:
+            sections.append(f"... {hidden_count} more failed check(s) omitted ...")
+        return self._excerpt("\n\n".join(sections), self.MAX_FOLLOW_UP_PROMPT_CHARS)
+
+    def _excerpt(self, text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        suffix = "\n... truncated ..."
+        if limit <= len(suffix):
+            return suffix[:limit]
+        return f"{text[: limit - len(suffix)]}{suffix}"

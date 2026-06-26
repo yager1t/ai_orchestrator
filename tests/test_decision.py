@@ -17,6 +17,16 @@ def verification(status: str) -> VerificationResult:
     )
 
 
+def failed_verification(name: str, stderr: str = "failed") -> VerificationResult:
+    return VerificationResult(
+        name=name,
+        status="failed",
+        exit_code=1,
+        stdout="",
+        stderr=stderr,
+    )
+
+
 def test_decision_done_when_verification_passes() -> None:
     decision = DecisionEngine().decide(
         agent_success(),
@@ -85,3 +95,36 @@ def test_decision_blocks_policy_verification_result_without_retry() -> None:
     assert decision.status == "blocked"
     assert decision.follow_up_prompt is None
     assert "Verification blocked by policy" in decision.reason
+
+
+def test_decision_follow_up_prompt_truncates_large_output() -> None:
+    decision = DecisionEngine().decide(
+        agent_success(),
+        [failed_verification("unit", stderr="x" * 5000)],
+        iteration=1,
+        max_iterations=2,
+    )
+
+    assert decision.follow_up_prompt is not None
+    assert len(decision.follow_up_prompt) <= DecisionEngine.MAX_FOLLOW_UP_PROMPT_CHARS
+    assert "... truncated ..." in decision.follow_up_prompt
+
+
+def test_decision_follow_up_prompt_limits_failed_check_count() -> None:
+    decision = DecisionEngine().decide(
+        agent_success(),
+        [
+            failed_verification("one"),
+            failed_verification("two"),
+            failed_verification("three"),
+            failed_verification("four"),
+        ],
+        iteration=1,
+        max_iterations=2,
+    )
+
+    assert decision.follow_up_prompt is not None
+    assert "Check: one" in decision.follow_up_prompt
+    assert "Check: three" in decision.follow_up_prompt
+    assert "Check: four" not in decision.follow_up_prompt
+    assert "1 more failed check(s) omitted" in decision.follow_up_prompt
