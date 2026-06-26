@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added MCP/ACP research notes for future adapter spikes.
 - Added read-only `ai-orch tui approvals` pending approval view.
 - Added release checklist documentation.
 - Added read-only `ai-orch tui tasks` task list.
