@@ -158,6 +158,18 @@ class StateStore:
             return None
         return StoredTask(**dict(row))
 
+    def list_tasks(self) -> list[StoredTask]:
+        self.initialize()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT task_id, task, repo_path, status, created_at, updated_at
+                FROM tasks
+                ORDER BY updated_at DESC, created_at DESC
+                """
+            ).fetchall()
+        return [StoredTask(**dict(row)) for row in rows]
+
     def add_iteration(
         self,
         task_id: str,

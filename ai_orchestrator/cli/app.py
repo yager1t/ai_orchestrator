@@ -11,7 +11,7 @@ from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.reporting.markdown import render_task_report
 from ai_orchestrator.storage.db import StateStore
-from ai_orchestrator.tui.app import render_status_view
+from ai_orchestrator.tui.app import render_status_view, render_tasks_view
 from ai_orchestrator.verification.runner import VerificationRunner
 
 
@@ -53,6 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     tui = sub.add_parser("tui", help="Read-only text UI helpers")
     tui_sub = tui.add_subparsers(dest="tui_command")
+    tui_tasks = tui_sub.add_parser("tasks", help="Render a read-only task list")
+    tui_tasks.add_argument("--repo", default=".")
     tui_status = tui_sub.add_parser("status", help="Render a read-only task status view")
     tui_status.add_argument("task_id")
     tui_status.add_argument("--repo", default=".")
@@ -119,6 +121,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "tui":
+        if args.tui_command == "tasks":
+            store = _state_store_for_repo(Path(args.repo))
+            print(render_tasks_view(store), end="")
+            return 0
         if args.tui_command == "status":
             store = _state_store_for_repo(Path(args.repo))
             view = render_status_view(store, args.task_id)

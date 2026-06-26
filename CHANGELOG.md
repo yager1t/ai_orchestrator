@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added read-only `ai-orch tui tasks` task list.
 - Added dedicated Kimi and Gemini CLI adapter wrappers with native defaults.
 - Added read-only `ai-orch tui status` task view.
 - Added structured verification `argv` config support alongside legacy `run` strings.

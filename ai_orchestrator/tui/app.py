@@ -3,6 +3,20 @@ from __future__ import annotations
 from ai_orchestrator.storage.db import StateStore
 
 
+def render_tasks_view(store: StateStore) -> str:
+    tasks = store.list_tasks()
+    lines = ["Tasks"]
+    if not tasks:
+        lines.append("  No tasks recorded.")
+        return "\n".join(lines) + "\n"
+
+    for task in tasks:
+        lines.append(f"  {task.task_id} [{task.status}] {task.task}")
+        lines.append(f"     updated: {task.updated_at}")
+
+    return "\n".join(lines) + "\n"
+
+
 def render_status_view(store: StateStore, task_id: str) -> str | None:
     task = store.get_task(task_id)
     if task is None:

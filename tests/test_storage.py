@@ -17,6 +17,19 @@ def test_state_store_persists_task(tmp_path: Path) -> None:
     assert loaded.status == "done"
 
 
+def test_state_store_lists_tasks_newest_first(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    first = store.create_task("first", repo_path=tmp_path, task_id="task-1")
+    second = store.create_task("second", repo_path=tmp_path, task_id="task-2")
+    store.update_task_status(first.task_id, "done")
+    store.update_task_status(second.task_id, "blocked")
+
+    tasks = store.list_tasks()
+
+    assert [task.task_id for task in tasks] == [second.task_id, first.task_id]
+
+
 def test_state_store_persists_iteration_and_verification(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo", repo_path=tmp_path)

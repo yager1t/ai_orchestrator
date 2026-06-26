@@ -105,6 +105,31 @@ def test_tui_status_returns_error_for_missing_task(capsys, tmp_path: Path) -> No
     assert "Task not found: missing-task" in output
 
 
+def test_tui_tasks_prints_read_only_task_list(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    first = store.create_task("first task", repo_path=tmp_path, task_id="task-1")
+    second = store.create_task("second task", repo_path=tmp_path, task_id="task-2")
+    store.update_task_status(first.task_id, "done")
+    store.update_task_status(second.task_id, "blocked")
+
+    exit_code = main(["tui", "tasks", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Tasks" in output
+    assert "task-2 [blocked] second task" in output
+    assert "task-1 [done] first task" in output
+    assert output.index("task-2") < output.index("task-1")
+
+
+def test_tui_tasks_prints_empty_state(capsys, tmp_path: Path) -> None:
+    exit_code = main(["tui", "tasks", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "No tasks recorded." in output
+
+
 def test_report_writes_markdown_file(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo report", repo_path=tmp_path)
