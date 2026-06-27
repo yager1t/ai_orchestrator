@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a SQLite schema version marker for the state store.
+- Improved supervisor no-change detection so noisy agent logs do not reset the counter.
+- Changed fallback verification compile command to avoid hardcoding the package directory.
+- Improved built-in policy command matching to avoid substring false positives.
 - Added read-only `ai-orch tui logs` iteration log view.
 - Added read-only `ai-orch tui current` latest iteration view.
 - Added MCP/ACP research notes for future adapter spikes.

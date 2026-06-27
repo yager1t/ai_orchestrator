@@ -51,6 +51,22 @@ class NoChangeAgent(MockAgentAdapter):
         return self.run_step(session, prompt)
 
 
+class NoisyNoChangeAgent(MockAgentAdapter):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
+        self.calls += 1
+        return AgentResult(
+            status="success",
+            raw_output=f"log line {self.calls}",
+            session_id=session.session_id,
+        )
+
+    def continue_session(self, session: SessionRef, prompt: str) -> AgentResult:
+        return self.run_step(session, prompt)
+
+
 class SequencedVerifier(VerificationRunner):
     def __init__(self, statuses: list[str]) -> None:
         self.statuses = statuses
@@ -301,10 +317,30 @@ def test_supervisor_blocks_after_repeated_no_change(tmp_path: Path) -> None:
 
     assert result.status == "blocked"
     assert result.task_id is not None
-    assert result.summary == "No agent output or repository change detected for 2 iteration(s)"
+    assert result.summary == "No agent file or repository change detected for 2 iteration(s)"
     assert verifier.calls == 2
     iterations = store.list_iterations(result.task_id)
     assert [item.decision_status for item in iterations] == ["continue", "blocked"]
+
+
+def test_supervisor_blocks_no_change_with_noisy_output(tmp_path: Path) -> None:
+    verifier = SequencedVerifier(["failed", "failed", "passed"])
+    supervisor = Supervisor(
+        agent=NoisyNoChangeAgent(),
+        verifier=verifier,
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        max_iterations=3,
+        max_no_change_iterations=2,
+        process_runner=SnapshotRunner([""]),
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "blocked"
+    assert result.summary == "No agent file or repository change detected for 2 iteration(s)"
+    assert verifier.calls == 2
 
 
 def test_supervisor_repo_snapshot_change_resets_no_change_counter(tmp_path: Path) -> None:
@@ -347,7 +383,7 @@ def test_supervisor_ignores_runtime_artifacts_in_repo_snapshot(tmp_path: Path) -
     result = supervisor.run_once(task="demo", repo=tmp_path)
 
     assert result.status == "blocked"
-    assert result.summary == "No agent output or repository change detected for 2 iteration(s)"
+    assert result.summary == "No agent file or repository change detected for 2 iteration(s)"
     assert verifier.calls == 2
 
 

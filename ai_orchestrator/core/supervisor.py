@@ -88,7 +88,7 @@ class Supervisor:
         context = TaskContext(task=task, repo_path=repo)
         session = self.agent.start_session(context)
         prompt = task
-        previous_signature: tuple[str, str, tuple[str, ...], str] | None = None
+        previous_signature: tuple[str, tuple[str, ...], str] | None = None
         no_change_count = 0
 
         for attempt in range(1, self.max_iterations + 1):
@@ -112,7 +112,6 @@ class Supervisor:
                 if repo_snapshot is not None:
                     signature = (
                         result.status,
-                        result.raw_output,
                         tuple(result.files_changed),
                         repo_snapshot,
                     )
@@ -128,7 +127,7 @@ class Supervisor:
                         decision = Decision(
                             status="blocked",
                             reason=(
-                                "No agent output or repository change detected for "
+                                "No agent file or repository change detected for "
                                 f"{no_change_count} iteration(s)"
                             ),
                         )

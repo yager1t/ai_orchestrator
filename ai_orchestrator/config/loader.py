@@ -63,7 +63,7 @@ def default_verification_commands() -> list[VerificationCommand]:
     return [
         VerificationCommand(
             "compile",
-            "python -m compileall ai_orchestrator",
+            "python -m compileall .",
             timeout_sec=120,
         )
     ]

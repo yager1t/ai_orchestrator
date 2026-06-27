@@ -1,6 +1,9 @@
+import sqlite3
 from pathlib import Path
 
-from ai_orchestrator.storage.db import StateStore
+import pytest
+
+from ai_orchestrator.storage.db import SCHEMA_VERSION, StateStore
 from ai_orchestrator.verification.runner import VerificationResult
 
 
@@ -27,6 +30,24 @@ def test_state_store_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
 
     assert journal_mode == "wal"
     assert busy_timeout == 5000
+
+
+def test_state_store_records_schema_version(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    store.initialize()
+
+    assert store.schema_version() == SCHEMA_VERSION
+
+
+def test_state_store_rejects_future_schema_version(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    store = StateStore(db_path)
+
+    with pytest.raises(RuntimeError, match="Unsupported state store schema version"):
+        store.initialize()
 
 
 def test_state_store_lists_tasks_newest_first(tmp_path: Path) -> None:
