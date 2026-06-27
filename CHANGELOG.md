@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a post-review backlog for deferred architecture and runtime follow-ups.
 - Documented MVP secret storage guidance.
 - Documented agent and verification timeout defaults.
 - Added a SQLite schema version marker for the state store.
