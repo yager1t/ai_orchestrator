@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +9,9 @@ from ai_orchestrator.core.decision import Decision, DecisionEngine
 from ai_orchestrator.process.runner import ProcessRunner
 from ai_orchestrator.storage.db import StateStore
 from ai_orchestrator.verification.runner import VerificationCommand, VerificationRunner
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,13 @@ class Supervisor:
         task_id: str | None,
         start_iteration: int,
     ) -> SupervisorResult:
+        logger.debug(
+            "supervisor run started agent=%s task_id=%s start_iteration=%s max_iterations=%s",
+            self.agent.name,
+            task_id,
+            start_iteration,
+            self.max_iterations,
+        )
         stored_task_id = task_id
         if self.state_store is not None:
             if stored_task_id is None:
@@ -67,6 +78,11 @@ class Supervisor:
                 self.state_store.update_task_status(stored_task_id, "running")
 
         if not self.agent.check_available():
+            logger.warning(
+                "supervisor agent unavailable agent=%s task_id=%s",
+                self.agent.name,
+                stored_task_id,
+            )
             if stored_task_id is not None and self.state_store is not None:
                 self.state_store.add_iteration(
                     task_id=stored_task_id,
@@ -93,10 +109,25 @@ class Supervisor:
 
         for attempt in range(1, self.max_iterations + 1):
             iteration_index = start_iteration + attempt - 1
+            logger.debug(
+                "supervisor iteration started agent=%s task_id=%s iteration=%s attempt=%s",
+                session.agent_name,
+                stored_task_id,
+                iteration_index,
+                attempt,
+            )
             if attempt == 1:
                 result = self.agent.run_step(session, prompt=prompt)
             else:
                 result = self.agent.continue_session(session, prompt=prompt)
+            logger.debug(
+                "supervisor agent result agent=%s task_id=%s iteration=%s status=%s files_changed=%s",
+                session.agent_name,
+                stored_task_id,
+                iteration_index,
+                result.status,
+                len(result.files_changed),
+            )
 
             verification_results = []
             if result.status == "success":
@@ -106,6 +137,12 @@ class Supervisor:
                 verification_results,
                 iteration=attempt,
                 max_iterations=self.max_iterations,
+            )
+            logger.debug(
+                "supervisor decision task_id=%s iteration=%s status=%s",
+                stored_task_id,
+                iteration_index,
+                decision.status,
             )
             if decision.status == "continue":
                 repo_snapshot = self._repo_snapshot(repo)
@@ -131,6 +168,12 @@ class Supervisor:
                                 f"{no_change_count} iteration(s)"
                             ),
                         )
+                        logger.warning(
+                            "supervisor blocked no-change task_id=%s iteration=%s count=%s",
+                            stored_task_id,
+                            iteration_index,
+                            no_change_count,
+                        )
             stored_iteration = None
             if stored_task_id is not None and self.state_store is not None:
                 stored_iteration = self.state_store.add_iteration(
@@ -151,6 +194,11 @@ class Supervisor:
                     )
 
             if decision.status == "done":
+                logger.debug(
+                    "supervisor run done task_id=%s iteration=%s",
+                    stored_task_id,
+                    iteration_index,
+                )
                 if stored_task_id is not None and self.state_store is not None:
                     self.state_store.update_task_status(stored_task_id, "done")
                 return SupervisorResult(
@@ -160,6 +208,11 @@ class Supervisor:
                 )
 
             if decision.status == "blocked":
+                logger.warning(
+                    "supervisor run blocked task_id=%s iteration=%s",
+                    stored_task_id,
+                    iteration_index,
+                )
                 if stored_task_id is not None and self.state_store is not None:
                     self.state_store.update_task_status(stored_task_id, "blocked")
                 return SupervisorResult(
@@ -172,6 +225,7 @@ class Supervisor:
 
         if stored_task_id is not None and self.state_store is not None:
             self.state_store.update_task_status(stored_task_id, "blocked")
+        logger.warning("supervisor max iterations exhausted task_id=%s", stored_task_id)
         return SupervisorResult(
             status="blocked",
             summary="Max iterations exhausted",

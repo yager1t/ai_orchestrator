@@ -145,6 +145,25 @@ def test_supervisor_done_only_after_verification_passes() -> None:
     assert result.status == "done"
 
 
+def test_supervisor_logs_metadata_without_task_or_output(caplog) -> None:
+    secret = "secret-task-token"
+    supervisor = Supervisor(
+        agent=MockAgentAdapter(),
+        verifier=VerificationRunner(),
+        verification_commands=[
+            VerificationCommand("ok", "python -c \"print('ok')\""),
+        ],
+    )
+
+    with caplog.at_level("DEBUG", logger="ai_orchestrator.core.supervisor"):
+        result = supervisor.run_once(task=f"demo {secret}", repo=Path("."))
+
+    assert result.status == "done"
+    assert secret not in caplog.text
+    assert "supervisor iteration started" in caplog.text
+    assert "supervisor run done" in caplog.text
+
+
 def test_supervisor_blocks_when_verification_fails() -> None:
     supervisor = Supervisor(
         agent=MockAgentAdapter(),

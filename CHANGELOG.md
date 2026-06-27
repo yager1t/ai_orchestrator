@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added supervisor metadata logging without task prompt or agent output capture.
 - Added verification runner metadata logging without command output capture.
 - Added subprocess runner metadata logging without command output capture.
 - Added a lightweight SQLite migration helper for state store schema version checks.
