@@ -54,6 +54,21 @@ def test_codex_exec_adapter_runs_default_command(tmp_path: Path) -> None:
     ]
 
 
+def test_codex_exec_adapter_logs_metadata_without_prompt_or_output(caplog, tmp_path: Path) -> None:
+    secret = "secret-codex-token"
+    runner = FakeRunner(stdout=f'{{"type":"result","message":"{secret}"}}')
+    agent = CodexExecAdapter(runner=runner)
+    session = agent.start_session(TaskContext(task="demo", repo_path=tmp_path))
+
+    with caplog.at_level("DEBUG", logger="ai_orchestrator.agents.codex"):
+        result = agent.run_step(session, secret)
+
+    assert result.status == "success"
+    assert secret in result.raw_output
+    assert secret not in caplog.text
+    assert "codex run finished" in caplog.text
+
+
 def test_codex_exec_adapter_normalizes_jsonl_output(tmp_path: Path) -> None:
     runner = FakeRunner(
         stdout='\n'.join(

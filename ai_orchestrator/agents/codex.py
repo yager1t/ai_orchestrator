@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,9 @@ from uuid import uuid4
 from ai_orchestrator.agents.base import AgentResult, SessionRef, TaskContext
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessRunner
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,11 +42,17 @@ class CodexExecAdapter:
     def start_session(self, context: TaskContext) -> SessionRef:
         session = SessionRef(session_id=f"codex-{uuid4()}", agent_name=self.name)
         self._sessions[session.session_id] = context
+        logger.debug("codex session started agent=%s session_id=%s", self.name, session.session_id)
         return session
 
     def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
         context = self._sessions.get(session.session_id)
         if context is None:
+            logger.warning(
+                "codex unknown session agent=%s session_id=%s",
+                self.name,
+                session.session_id,
+            )
             return AgentResult(
                 status="failed",
                 raw_output="",
@@ -56,6 +66,11 @@ class CodexExecAdapter:
     def continue_session(self, session: SessionRef, prompt: str) -> AgentResult:
         context = self._sessions.get(session.session_id)
         if context is None:
+            logger.warning(
+                "codex unknown session agent=%s session_id=%s",
+                self.name,
+                session.session_id,
+            )
             return AgentResult(
                 status="failed",
                 raw_output="",
@@ -69,6 +84,7 @@ class CodexExecAdapter:
     def stop_session(self, session: SessionRef) -> None:
         self._sessions.pop(session.session_id, None)
         self._codex_session_ids.pop(session.session_id, None)
+        logger.debug("codex session stopped agent=%s session_id=%s", self.name, session.session_id)
 
     def _run_argv(
         self,
@@ -78,6 +94,11 @@ class CodexExecAdapter:
     ) -> AgentResult:
         policy_decision = self.policy_engine.evaluate_argv(argv)
         if policy_decision.action == "deny":
+            logger.warning(
+                "codex policy denied agent=%s session_id=%s",
+                self.name,
+                session.session_id,
+            )
             return AgentResult(
                 status="blocked",
                 raw_output="",
@@ -85,6 +106,11 @@ class CodexExecAdapter:
                 error=policy_decision.reason,
             )
         if policy_decision.action == "ask":
+            logger.warning(
+                "codex policy needs approval agent=%s session_id=%s",
+                self.name,
+                session.session_id,
+            )
             return AgentResult(
                 status="needs_approval",
                 raw_output="",
@@ -93,6 +119,13 @@ class CodexExecAdapter:
             )
 
         result = self.runner.run(argv, cwd=context.repo_path, timeout_sec=self.timeout_sec)
+        logger.debug(
+            "codex run finished agent=%s session_id=%s status=%s exit_code=%s",
+            self.name,
+            session.session_id,
+            result.status,
+            result.exit_code,
+        )
         codex_session_id = self._extract_session_id(result.stdout)
         if codex_session_id:
             self._codex_session_ids[session.session_id] = codex_session_id

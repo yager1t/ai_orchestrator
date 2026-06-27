@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
@@ -7,6 +8,9 @@ from uuid import uuid4
 from ai_orchestrator.agents.base import AgentResult, SessionRef, TaskContext
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessRunner
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,11 +31,21 @@ class GenericCLIAdapter:
     def start_session(self, context: TaskContext) -> SessionRef:
         session = SessionRef(session_id=f"generic-{uuid4()}", agent_name=self.name)
         self._sessions[session.session_id] = context
+        logger.debug(
+            "generic session started agent=%s session_id=%s",
+            self.name,
+            session.session_id,
+        )
         return session
 
     def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
         context = self._sessions.get(session.session_id)
         if context is None:
+            logger.warning(
+                "generic unknown session agent=%s session_id=%s",
+                self.name,
+                session.session_id,
+            )
             return AgentResult(
                 status="failed",
                 raw_output="",
@@ -42,6 +56,11 @@ class GenericCLIAdapter:
         argv = [self.command, *self._render_args(prompt=prompt, repo=context.repo_path)]
         policy_decision = self.policy_engine.evaluate_argv(argv)
         if policy_decision.action == "deny":
+            logger.warning(
+                "generic policy denied agent=%s session_id=%s",
+                self.name,
+                session.session_id,
+            )
             return AgentResult(
                 status="blocked",
                 raw_output="",
@@ -49,6 +68,11 @@ class GenericCLIAdapter:
                 error=policy_decision.reason,
             )
         if policy_decision.action == "ask":
+            logger.warning(
+                "generic policy needs approval agent=%s session_id=%s",
+                self.name,
+                session.session_id,
+            )
             return AgentResult(
                 status="needs_approval",
                 raw_output="",
@@ -57,6 +81,13 @@ class GenericCLIAdapter:
             )
 
         result = self.runner.run(argv, cwd=context.repo_path, timeout_sec=self.timeout_sec)
+        logger.debug(
+            "generic run finished agent=%s session_id=%s status=%s exit_code=%s",
+            self.name,
+            session.session_id,
+            result.status,
+            result.exit_code,
+        )
         raw_output = result.stdout if result.stdout else result.stderr
         return AgentResult(
             status=result.status,
@@ -70,6 +101,11 @@ class GenericCLIAdapter:
 
     def stop_session(self, session: SessionRef) -> None:
         self._sessions.pop(session.session_id, None)
+        logger.debug(
+            "generic session stopped agent=%s session_id=%s",
+            self.name,
+            session.session_id,
+        )
 
     def _render_args(self, prompt: str, repo: Path) -> list[str]:
         return [

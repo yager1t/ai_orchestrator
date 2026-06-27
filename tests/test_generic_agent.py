@@ -17,6 +17,23 @@ def test_generic_cli_adapter_runs_prompt(tmp_path: Path) -> None:
     assert "hello generic" in result.raw_output
 
 
+def test_generic_cli_adapter_logs_metadata_without_prompt_or_output(caplog, tmp_path: Path) -> None:
+    secret = "secret-generic-token"
+    agent = GenericCLIAdapter(
+        command="python",
+        args=["-c", "import sys; print(sys.argv[1])", "{prompt}"],
+    )
+    session = agent.start_session(TaskContext(task="demo", repo_path=tmp_path))
+
+    with caplog.at_level("DEBUG", logger="ai_orchestrator.agents.generic"):
+        result = agent.run_step(session, secret)
+
+    assert result.status == "success"
+    assert secret in result.raw_output
+    assert secret not in caplog.text
+    assert "generic run finished" in caplog.text
+
+
 def test_generic_cli_adapter_reports_failure(tmp_path: Path) -> None:
     agent = GenericCLIAdapter(
         command="python",

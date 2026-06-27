@@ -48,6 +48,24 @@ def test_claude_headless_adapter_runs_print_mode(tmp_path: Path) -> None:
     ]
 
 
+def test_claude_headless_adapter_logs_metadata_without_prompt_or_output(
+    caplog,
+    tmp_path: Path,
+) -> None:
+    secret = "secret-claude-token"
+    runner = FakeRunner(stdout=f'{{"result":"{secret}"}}')
+    agent = ClaudeHeadlessAdapter(runner=runner)
+    session = agent.start_session(TaskContext(task="demo", repo_path=tmp_path))
+
+    with caplog.at_level("DEBUG", logger="ai_orchestrator.agents.claude"):
+        result = agent.run_step(session, secret)
+
+    assert result.status == "success"
+    assert secret in result.raw_output
+    assert secret not in caplog.text
+    assert "claude run finished" in caplog.text
+
+
 def test_claude_headless_adapter_continues_latest_session(tmp_path: Path) -> None:
     runner = FakeRunner(stdout='{"result":"continued"}')
     agent = ClaudeHeadlessAdapter(runner=runner)

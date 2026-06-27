@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added adapter metadata logging without prompt or output capture.
 - Added state store metadata logging without task prompt or output capture.
 - Added supervisor metadata logging without task prompt or agent output capture.
 - Added verification runner metadata logging without command output capture.
