@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added supervisor agent session cleanup on completion and keyboard interruption.
 - Added subprocess cleanup on keyboard interruption.
 - Changed process timeout handling to terminate subprocesses before force-killing them.
 - Added `--log-level` to enable safe metadata logs from the CLI.

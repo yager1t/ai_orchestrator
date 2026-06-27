@@ -39,6 +39,19 @@ class BlockedAgent(MockAgentAdapter):
         )
 
 
+class StopRecordingAgent(MockAgentAdapter):
+    def __init__(self) -> None:
+        self.stopped_sessions: list[str] = []
+
+    def stop_session(self, session: SessionRef) -> None:
+        self.stopped_sessions.append(session.session_id)
+
+
+class InterruptingAgent(StopRecordingAgent):
+    def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
+        raise KeyboardInterrupt
+
+
 class NoChangeAgent(MockAgentAdapter):
     def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
         return AgentResult(
@@ -143,6 +156,40 @@ def test_supervisor_done_only_after_verification_passes() -> None:
     result = supervisor.run_once(task="demo", repo=Path("."))
 
     assert result.status == "done"
+
+
+def test_supervisor_stops_session_after_done() -> None:
+    agent = StopRecordingAgent()
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=VerificationRunner(),
+        verification_commands=[
+            VerificationCommand("ok", "python -c \"print('ok')\""),
+        ],
+    )
+
+    result = supervisor.run_once(task="demo", repo=Path("."))
+
+    assert result.status == "done"
+    assert len(agent.stopped_sessions) == 1
+
+
+def test_supervisor_stops_session_on_keyboard_interrupt() -> None:
+    agent = InterruptingAgent()
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=VerificationRunner(),
+        verification_commands=[],
+    )
+
+    try:
+        supervisor.run_once(task="demo", repo=Path("."))
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("Expected KeyboardInterrupt")
+
+    assert len(agent.stopped_sessions) == 1
 
 
 def test_supervisor_logs_metadata_without_task_or_output(caplog) -> None:
