@@ -21,6 +21,40 @@ def test_state_store_persists_task(tmp_path: Path) -> None:
     assert loaded.status == "done"
 
 
+def test_state_store_logs_metadata_without_payload(caplog, tmp_path: Path) -> None:
+    secret = "secret-storage-token"
+    store = StateStore(tmp_path / "state.db")
+
+    with caplog.at_level("DEBUG", logger="ai_orchestrator.storage.db"):
+        task = store.create_task(f"demo {secret}", repo_path=tmp_path)
+        iteration = store.add_iteration(
+            task_id=task.task_id,
+            iteration_index=1,
+            agent_name="mock",
+            agent_status="success",
+            prompt=f"prompt {secret}",
+            raw_output=f"output {secret}",
+            decision_status="done",
+            decision_reason="ok",
+        )
+        store.add_verification_run(
+            task_id=task.task_id,
+            iteration_id=iteration.iteration_id,
+            result=VerificationResult(
+                name="unit",
+                status="passed",
+                exit_code=0,
+                stdout=f"stdout {secret}",
+                stderr="",
+            ),
+        )
+
+    assert secret not in caplog.text
+    assert task.task_id in caplog.text
+    assert "state iteration added" in caplog.text
+    assert "state verification added" in caplog.text
+
+
 def test_state_store_uses_wal_and_busy_timeout(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     store.initialize()

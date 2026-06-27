@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -8,6 +9,9 @@ from uuid import uuid4
 
 from ai_orchestrator.storage.migrations import SCHEMA_VERSION, migrate_schema, schema_version
 from ai_orchestrator.verification.runner import VerificationResult
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,7 @@ class StateStore:
                 """
             )
             migrate_schema(connection)
+        logger.debug("state store initialized schema_version=%s", SCHEMA_VERSION)
 
     def schema_version(self) -> int:
         self.initialize()
@@ -154,6 +159,7 @@ class StateStore:
                     record.updated_at,
                 ),
             )
+        logger.debug("state task created task_id=%s status=%s", record.task_id, record.status)
         return record
 
     def update_task_status(self, task_id: str, status: str) -> None:
@@ -162,6 +168,7 @@ class StateStore:
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
                 (status, _now(), task_id),
             )
+        logger.debug("state task status updated task_id=%s status=%s", task_id, status)
 
     def get_task(self, task_id: str) -> StoredTask | None:
         self.initialize()
@@ -230,6 +237,14 @@ class StateStore:
                 ),
             )
             iteration_id = int(cursor.lastrowid)
+        logger.debug(
+            "state iteration added task_id=%s iteration_id=%s iteration_index=%s agent=%s status=%s",
+            task_id,
+            iteration_id,
+            iteration_index,
+            agent_name,
+            agent_status,
+        )
         return StoredIteration(
             iteration_id=iteration_id,
             task_id=task_id,
@@ -275,6 +290,14 @@ class StateStore:
                 ),
             )
             verification_id = int(cursor.lastrowid)
+        logger.debug(
+            "state verification added task_id=%s iteration_id=%s verification_id=%s name=%s status=%s",
+            task_id,
+            iteration_id,
+            verification_id,
+            result.name,
+            result.status,
+        )
         return StoredVerificationRun(
             verification_id=verification_id,
             task_id=task_id,
@@ -386,6 +409,7 @@ class StateStore:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA busy_timeout = 5000")
         return connection
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
