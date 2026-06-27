@@ -22,3 +22,15 @@ def test_process_runner_missing_command() -> None:
     assert result.status == "failed"
     assert result.exit_code is None
     assert result.error == "Command not found: definitely-missing-ai-orch-command"
+
+
+def test_process_runner_logs_metadata_without_output(caplog) -> None:
+    secret_output = "secret-output-token"
+
+    with caplog.at_level("DEBUG", logger="ai_orchestrator.process.runner"):
+        result = ProcessRunner().run(["python", "-c", f"print('{secret_output}')"])
+
+    assert result.status == "success"
+    assert secret_output in result.stdout
+    assert secret_output not in caplog.text
+    assert "process exited" in caplog.text

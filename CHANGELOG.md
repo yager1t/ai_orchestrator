@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added subprocess runner metadata logging without command output capture.
 - Added a lightweight SQLite migration helper for state store schema version checks.
 - Added a post-review backlog for deferred architecture and runtime follow-ups.
 - Documented MVP secret storage guidance.
