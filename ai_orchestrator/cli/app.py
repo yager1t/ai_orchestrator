@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from ai_orchestrator import __version__
@@ -24,6 +25,11 @@ from ai_orchestrator.verification.runner import VerificationRunner
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-orch", description="Local supervisor for CLI AI agents")
     parser.add_argument("--version", action="version", version=f"ai-orch {__version__}")
+    parser.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error"],
+        help="Enable stderr logging at the selected level",
+    )
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("init", help="Create local .ai-orch directories")
@@ -78,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _configure_logging(args.log_level)
 
     if args.command == "init":
         Path(".ai-orch/state").mkdir(parents=True, exist_ok=True)
@@ -287,3 +294,15 @@ def _verification_runner(
         policy_engine=_policy_engine(config),
         approved_commands=approved_commands,
     )
+
+
+def _configure_logging(log_level: str | None) -> None:
+    if log_level is None:
+        return
+    level = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+    }[log_level]
+    logging.basicConfig(level=level, format="%(levelname)s:%(name)s:%(message)s")

@@ -18,6 +18,21 @@ def test_version_command(capsys) -> None:
     assert output == f"ai-orch {__version__}\n"
 
 
+def test_log_level_configures_logging(monkeypatch, tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_basic_config(**kwargs) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.logging.basicConfig", fake_basic_config)
+
+    exit_code = main(["--log-level", "debug", "agents", "--repo", str(tmp_path)])
+
+    assert exit_code == 0
+    assert calls
+    assert calls[0]["level"] == 10
+
+
 def test_status_prints_stored_task(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo task", repo_path=tmp_path)

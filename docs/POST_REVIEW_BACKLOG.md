@@ -14,6 +14,6 @@ This file tracks follow-up items that remain after the initial external review c
 
 ## P2
 
-- Continue refining structured logging fields and operator-facing log configuration.
+- Continue refining structured logging fields after the initial CLI `--log-level` support.
 - Add graceful shutdown handling for long-running agent subprocesses.
 - Revisit global runtime budgets as a complement to per-command `timeout_sec`.
