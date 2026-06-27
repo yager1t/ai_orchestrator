@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added cancellation polling so running agent subprocesses can be terminated after `ai-orch cancel`.
 - Added stable `event=...` fields to supervisor and process runner logs.
 - Added `orchestrator.max_runtime_sec` as a cooperative supervisor runtime budget.
 - Added supervisor cancellation checks between agent and verification steps.

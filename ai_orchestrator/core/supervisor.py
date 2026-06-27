@@ -114,7 +114,12 @@ class Supervisor:
                 task_id=stored_task_id,
             )
 
-        context = TaskContext(task=task, repo_path=repo)
+        context = TaskContext(
+            task=task,
+            repo_path=repo,
+            metadata={"task_id": stored_task_id} if stored_task_id is not None else {},
+            cancellation_requested=lambda: self._is_task_cancelled(stored_task_id),
+        )
         session = self.agent.start_session(context)
         prompt = task
         previous_signature: tuple[str, tuple[str, ...], str] | None = None
@@ -171,6 +176,18 @@ class Supervisor:
                 result.status,
                 len(result.files_changed),
             )
+            if result.status == "cancelled" or self._is_task_cancelled(stored_task_id):
+                logger.warning(
+                    "event=supervisor.task_cancelled task_id=%s iteration=%s",
+                    stored_task_id,
+                    iteration_index,
+                )
+                self._stop_session(session)
+                return SupervisorResult(
+                    status="cancelled",
+                    summary="Task was cancelled",
+                    task_id=stored_task_id,
+                )
 
             verification_results = []
             if result.status == "success":

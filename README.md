@@ -15,7 +15,7 @@ Current working surface:
 
 Latest verified baseline:
 
-- `python -m pytest`: 158 passed
+- `python -m pytest`: 159 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `git diff --check`: passed
@@ -87,7 +87,7 @@ Use each agent CLI's native login flow or process environment variables for cred
 ## Runtime controls
 
 Use `ai-orch cancel <task_id>` to mark a stored task as `cancelled`.
-Running supervisors observe the cancelled status between agent and verification steps.
+Running supervisors observe the cancelled status between steps and request active subprocess termination.
 Use global `--log-level debug|info|warning|error` before the subcommand to enable safe
 metadata logs on stderr.
 

@@ -62,6 +62,52 @@ def test_process_runner_terminates_process_on_timeout(monkeypatch) -> None:
     assert processes[0].killed is False
 
 
+def test_process_runner_terminates_process_on_cancel(monkeypatch) -> None:
+    processes = []
+    cancel_checks = 0
+
+    class FakePopen:
+        def __init__(self, *args, **kwargs) -> None:
+            self.communicate_calls = 0
+            self.terminated = False
+            self.killed = False
+            self.returncode = None
+            processes.append(self)
+
+        def communicate(self, timeout=None):
+            self.communicate_calls += 1
+            if not self.terminated:
+                raise subprocess.TimeoutExpired(cmd=["slow"], timeout=timeout)
+            return "partial stdout", "partial stderr"
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+    def should_cancel() -> bool:
+        nonlocal cancel_checks
+        cancel_checks += 1
+        return cancel_checks >= 2
+
+    monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
+
+    result = ProcessRunner().run(
+        ["slow"],
+        timeout_sec=30,
+        terminate_grace_sec=1,
+        should_cancel=should_cancel,
+    )
+
+    assert result.status == "cancelled"
+    assert result.error == "Command cancelled"
+    assert result.stdout == "partial stdout"
+    assert result.stderr == "partial stderr"
+    assert processes[0].terminated is True
+    assert processes[0].killed is False
+
+
 def test_process_runner_terminates_process_on_keyboard_interrupt(monkeypatch) -> None:
     processes = []
 

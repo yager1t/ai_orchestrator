@@ -19,6 +19,7 @@ class FakeRunner:
         argv: list[str],
         cwd: Path | None = None,
         timeout_sec: int = 300,
+        should_cancel=None,
     ) -> ProcessResult:
         self.runs.append((argv, cwd, timeout_sec))
         return ProcessResult(

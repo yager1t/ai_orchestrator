@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
+
+
+def _never_cancel() -> bool:
+    return False
 
 
 @dataclass(frozen=True)
@@ -10,6 +14,7 @@ class TaskContext:
     task: str
     repo_path: Path
     metadata: dict[str, str] = field(default_factory=dict)
+    cancellation_requested: Callable[[], bool] = _never_cancel
 
 
 @dataclass(frozen=True)

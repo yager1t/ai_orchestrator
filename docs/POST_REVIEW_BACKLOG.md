@@ -11,7 +11,3 @@ This file tracks follow-up items that remain after the initial external review c
 - Expand the lightweight migration path for SQLite schema changes.
   - Current state: `ai_orchestrator/storage/migrations.py` owns schema version checks.
   - Next step: add explicit version-to-version migration functions when schema changes beyond version 1.
-
-## P2
-
-- Extend cancellation beyond stored-task status updates to active task interruption.

@@ -600,6 +600,7 @@ def test_start_uses_cli_alias_default_argv(
         argv: list[str],
         cwd: Path | None = None,
         timeout_sec: int = 300,
+        should_cancel=None,
     ) -> ProcessResult:
         captured_argv.append(argv)
         return ProcessResult(

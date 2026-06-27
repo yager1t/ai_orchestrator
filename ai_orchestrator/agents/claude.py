@@ -115,7 +115,12 @@ class ClaudeHeadlessAdapter:
                 error=policy_decision.reason,
             )
 
-        result = self.runner.run(argv, cwd=context.repo_path, timeout_sec=self.timeout_sec)
+        result = self.runner.run(
+            argv,
+            cwd=context.repo_path,
+            timeout_sec=self.timeout_sec,
+            should_cancel=context.cancellation_requested,
+        )
         logger.debug(
             "claude run finished agent=%s session_id=%s status=%s exit_code=%s",
             self.name,

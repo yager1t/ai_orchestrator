@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,7 @@ class ProcessRunner:
         cwd: Path | None = None,
         timeout_sec: int = 300,
         terminate_grace_sec: int = 5,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> ProcessResult:
         if not argv:
             logger.warning("event=process.empty_argv")
@@ -55,7 +58,19 @@ class ProcessRunner:
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            stdout, stderr = process.communicate(timeout=timeout_sec)
+            if should_cancel is None:
+                stdout, stderr = process.communicate(timeout=timeout_sec)
+            else:
+                cancel_result = self._communicate_with_cancel(
+                    process=process,
+                    argv=argv,
+                    timeout_sec=timeout_sec,
+                    terminate_grace_sec=terminate_grace_sec,
+                    should_cancel=should_cancel,
+                )
+                if isinstance(cancel_result, ProcessResult):
+                    return cancel_result
+                stdout, stderr = cancel_result
         except FileNotFoundError:
             logger.warning("event=process.command_not_found executable=%s", argv[0])
             return ProcessResult(
@@ -117,3 +132,46 @@ class ProcessRunner:
             stdout=stdout,
             stderr=stderr,
         )
+
+    def _communicate_with_cancel(
+        self,
+        process: subprocess.Popen[str],
+        argv: list[str],
+        timeout_sec: int,
+        terminate_grace_sec: int,
+        should_cancel: Callable[[], bool],
+    ) -> tuple[str, str] | ProcessResult:
+        deadline = time.monotonic() + timeout_sec
+        while True:
+            if should_cancel():
+                logger.warning(
+                    "event=process.cancel_requested executable=%s argc=%s",
+                    argv[0],
+                    len(argv),
+                )
+                process.terminate()
+                try:
+                    stdout, stderr = process.communicate(timeout=terminate_grace_sec)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "event=process.kill_after_cancel executable=%s argc=%s",
+                        argv[0],
+                        len(argv),
+                    )
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                return ProcessResult(
+                    status="cancelled",
+                    exit_code=None,
+                    stdout=stdout or "",
+                    stderr=stderr or "",
+                    error="Command cancelled",
+                )
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(cmd=argv, timeout=timeout_sec)
+            try:
+                return process.communicate(timeout=min(0.2, remaining))
+            except subprocess.TimeoutExpired:
+                continue
