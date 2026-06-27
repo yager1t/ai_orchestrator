@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Documented MVP secret storage guidance.
+- Documented agent and verification timeout defaults.
 - Added a SQLite schema version marker for the state store.
 - Improved supervisor no-change detection so noisy agent logs do not reset the counter.
 - Changed fallback verification compile command to avoid hardcoding the package directory.

@@ -55,6 +55,15 @@ require_approval:
 
 Секрет нельзя выводить в лог, отчёт, prompt или тест.
 
+## Secret storage
+
+Do not store API keys, tokens, passwords, or private key material in `.ai-orch/config.yaml`,
+task prompts, stored reports, or test fixtures.
+
+Agent credentials should come from the agent CLI's native auth flow or process environment,
+for example `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or vendor-specific environment variables.
+The MVP config only describes commands, argv, policy, verification, and timeout behavior.
+
 ## Verification approvals
 
 Verification commands that match `require_approval` return `needs_approval` by default.

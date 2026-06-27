@@ -15,7 +15,7 @@ Current working surface:
 
 Latest verified baseline:
 
-- `python -m pytest`: 100 passed
+- `python -m pytest`: 139 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `git diff --check`: passed
@@ -64,6 +64,24 @@ Supported MVP agent types:
 - `gemini` / `gemini_cli` as config-driven CLI aliases
 
 Kimi and Gemini aliases use the same subprocess, policy, timeout, and availability-check path as `generic_cli`. Keep their `command` and `args` explicit in config when real CLI flags differ from the defaults.
+
+## Timeout defaults
+
+Timeouts are configured per agent and verification command with `timeout_sec` in `.ai-orch/config.yaml`.
+
+Default runtime values:
+
+- generic, Kimi, and Gemini CLI aliases: `300` seconds
+- Codex exec and Claude headless adapters: `1800` seconds
+- fallback verification compile command: `120` seconds
+- configured verification commands without `timeout_sec`: `300` seconds
+
+Tune these values per project instead of relying on one global timeout. Long-running headless agents usually need higher limits than simple verification commands.
+
+## Secrets
+
+Do not put API keys, tokens, passwords, or private key material in `.ai-orch/config.yaml`.
+Use each agent CLI's native login flow or process environment variables for credentials.
 
 ## Verification approvals
 
