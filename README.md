@@ -6,7 +6,7 @@ The MVP control plane is implemented and pushed to `origin/main`.
 
 Current working surface:
 
-- CLI commands: `init`, `start`, `resume`, `status`, `report`, `verify`, `agents`, `agents --check`.
+- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `agents`, `agents --check`.
 - Supervisor completes tasks only after verification passes.
 - SQLite state store records tasks, iterations, and verification runs.
 - Policy checks protect verification and agent commands.
@@ -15,7 +15,7 @@ Current working surface:
 
 Latest verified baseline:
 
-- `python -m pytest`: 139 passed
+- `python -m pytest`: 154 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `git diff --check`: passed
@@ -82,6 +82,12 @@ Tune these values per project instead of relying on one global timeout. Long-run
 
 Do not put API keys, tokens, passwords, or private key material in `.ai-orch/config.yaml`.
 Use each agent CLI's native login flow or process environment variables for credentials.
+
+## Runtime controls
+
+Use `ai-orch cancel <task_id>` to mark a stored task as `cancelled`.
+Use global `--log-level debug|info|warning|error` before the subcommand to enable safe
+metadata logs on stderr.
 
 ## Verification approvals
 
