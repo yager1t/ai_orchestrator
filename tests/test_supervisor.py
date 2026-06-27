@@ -300,8 +300,8 @@ def test_supervisor_logs_metadata_without_task_or_output(caplog) -> None:
 
     assert result.status == "done"
     assert secret not in caplog.text
-    assert "supervisor iteration started" in caplog.text
-    assert "supervisor run done" in caplog.text
+    assert "event=supervisor.iteration_started" in caplog.text
+    assert "event=supervisor.run_done" in caplog.text
 
 
 def test_supervisor_blocks_when_verification_fails() -> None:

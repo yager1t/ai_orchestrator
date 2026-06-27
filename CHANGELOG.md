@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added stable `event=...` fields to supervisor and process runner logs.
 - Added `orchestrator.max_runtime_sec` as a cooperative supervisor runtime budget.
 - Added supervisor cancellation checks between agent and verification steps.
 - Documented task cancellation and log-level runtime controls.

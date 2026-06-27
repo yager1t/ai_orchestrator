@@ -31,7 +31,7 @@ class ProcessRunner:
         terminate_grace_sec: int = 5,
     ) -> ProcessResult:
         if not argv:
-            logger.warning("process runner rejected empty argv")
+            logger.warning("event=process.empty_argv")
             return ProcessResult(
                 status="failed",
                 exit_code=None,
@@ -42,7 +42,7 @@ class ProcessRunner:
 
         try:
             logger.debug(
-                "running process executable=%s argc=%s cwd=%s timeout_sec=%s",
+                "event=process.started executable=%s argc=%s cwd=%s timeout_sec=%s",
                 argv[0],
                 len(argv),
                 str(cwd) if cwd else None,
@@ -57,7 +57,7 @@ class ProcessRunner:
             )
             stdout, stderr = process.communicate(timeout=timeout_sec)
         except FileNotFoundError:
-            logger.warning("process command not found: %s", argv[0])
+            logger.warning("event=process.command_not_found executable=%s", argv[0])
             return ProcessResult(
                 status="failed",
                 exit_code=None,
@@ -67,7 +67,7 @@ class ProcessRunner:
             )
         except subprocess.TimeoutExpired:
             logger.warning(
-                "process timed out executable=%s argc=%s timeout_sec=%s",
+                "event=process.timed_out executable=%s argc=%s timeout_sec=%s",
                 argv[0],
                 len(argv),
                 timeout_sec,
@@ -77,7 +77,7 @@ class ProcessRunner:
                 stdout, stderr = process.communicate(timeout=terminate_grace_sec)
             except subprocess.TimeoutExpired:
                 logger.warning(
-                    "process kill after graceful timeout executable=%s argc=%s",
+                    "event=process.kill_after_timeout executable=%s argc=%s",
                     argv[0],
                     len(argv),
                 )
@@ -91,13 +91,13 @@ class ProcessRunner:
                 error=f"Command timed out after {timeout_sec}s",
             )
         except KeyboardInterrupt:
-            logger.warning("process interrupted executable=%s argc=%s", argv[0], len(argv))
+            logger.warning("event=process.interrupted executable=%s argc=%s", argv[0], len(argv))
             process.terminate()
             try:
                 process.communicate(timeout=terminate_grace_sec)
             except subprocess.TimeoutExpired:
                 logger.warning(
-                    "process kill after interrupt executable=%s argc=%s",
+                    "event=process.kill_after_interrupt executable=%s argc=%s",
                     argv[0],
                     len(argv),
                 )
@@ -106,7 +106,7 @@ class ProcessRunner:
             raise
 
         logger.debug(
-            "process exited executable=%s argc=%s exit_code=%s",
+            "event=process.exited executable=%s argc=%s exit_code=%s",
             argv[0],
             len(argv),
             process.returncode,

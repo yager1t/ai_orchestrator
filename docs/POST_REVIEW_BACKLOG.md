@@ -14,5 +14,4 @@ This file tracks follow-up items that remain after the initial external review c
 
 ## P2
 
-- Continue refining structured logging fields after the initial CLI `--log-level` support.
 - Extend cancellation beyond stored-task status updates to active task interruption.

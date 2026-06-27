@@ -70,7 +70,7 @@ class Supervisor:
         start_iteration: int,
     ) -> SupervisorResult:
         logger.debug(
-            "supervisor run started agent=%s task_id=%s start_iteration=%s max_iterations=%s",
+            "event=supervisor.run_started agent=%s task_id=%s start_iteration=%s max_iterations=%s",
             self.agent.name,
             task_id,
             start_iteration,
@@ -92,7 +92,7 @@ class Supervisor:
 
         if not self.agent.check_available():
             logger.warning(
-                "supervisor agent unavailable agent=%s task_id=%s",
+                "event=supervisor.agent_unavailable agent=%s task_id=%s",
                 self.agent.name,
                 stored_task_id,
             )
@@ -125,6 +125,11 @@ class Supervisor:
             if self._is_runtime_budget_exhausted(started_at):
                 if stored_task_id is not None and self.state_store is not None:
                     self.state_store.update_task_status(stored_task_id, "blocked")
+                logger.warning(
+                    "event=supervisor.runtime_budget_exhausted task_id=%s iteration=%s",
+                    stored_task_id,
+                    iteration_index,
+                )
                 self._stop_session(session)
                 return SupervisorResult(
                     status="blocked",
@@ -132,6 +137,11 @@ class Supervisor:
                     task_id=stored_task_id,
                 )
             if self._is_task_cancelled(stored_task_id):
+                logger.warning(
+                    "event=supervisor.task_cancelled task_id=%s iteration=%s",
+                    stored_task_id,
+                    iteration_index,
+                )
                 self._stop_session(session)
                 return SupervisorResult(
                     status="cancelled",
@@ -139,7 +149,7 @@ class Supervisor:
                     task_id=stored_task_id,
                 )
             logger.debug(
-                "supervisor iteration started agent=%s task_id=%s iteration=%s attempt=%s",
+                "event=supervisor.iteration_started agent=%s task_id=%s iteration=%s attempt=%s",
                 session.agent_name,
                 stored_task_id,
                 iteration_index,
@@ -154,7 +164,7 @@ class Supervisor:
                 self._stop_session(session)
                 raise
             logger.debug(
-                "supervisor agent result agent=%s task_id=%s iteration=%s status=%s files_changed=%s",
+                "event=supervisor.agent_result agent=%s task_id=%s iteration=%s status=%s files_changed=%s",
                 session.agent_name,
                 stored_task_id,
                 iteration_index,
@@ -167,6 +177,11 @@ class Supervisor:
                 if self._is_runtime_budget_exhausted(started_at):
                     if stored_task_id is not None and self.state_store is not None:
                         self.state_store.update_task_status(stored_task_id, "blocked")
+                    logger.warning(
+                        "event=supervisor.runtime_budget_exhausted task_id=%s iteration=%s",
+                        stored_task_id,
+                        iteration_index,
+                    )
                     self._stop_session(session)
                     return SupervisorResult(
                         status="blocked",
@@ -174,6 +189,11 @@ class Supervisor:
                         task_id=stored_task_id,
                     )
                 if self._is_task_cancelled(stored_task_id):
+                    logger.warning(
+                        "event=supervisor.task_cancelled task_id=%s iteration=%s",
+                        stored_task_id,
+                        iteration_index,
+                    )
                     self._stop_session(session)
                     return SupervisorResult(
                         status="cancelled",
@@ -195,7 +215,7 @@ class Supervisor:
                 max_iterations=self.max_iterations,
             )
             logger.debug(
-                "supervisor decision task_id=%s iteration=%s status=%s",
+                "event=supervisor.decision task_id=%s iteration=%s status=%s",
                 stored_task_id,
                 iteration_index,
                 decision.status,
@@ -225,7 +245,7 @@ class Supervisor:
                             ),
                         )
                         logger.warning(
-                            "supervisor blocked no-change task_id=%s iteration=%s count=%s",
+                            "event=supervisor.no_change_blocked task_id=%s iteration=%s count=%s",
                             stored_task_id,
                             iteration_index,
                             no_change_count,
@@ -251,7 +271,7 @@ class Supervisor:
 
             if decision.status == "done":
                 logger.debug(
-                    "supervisor run done task_id=%s iteration=%s",
+                    "event=supervisor.run_done task_id=%s iteration=%s",
                     stored_task_id,
                     iteration_index,
                 )
@@ -266,7 +286,7 @@ class Supervisor:
 
             if decision.status == "blocked":
                 logger.warning(
-                    "supervisor run blocked task_id=%s iteration=%s",
+                    "event=supervisor.run_blocked task_id=%s iteration=%s",
                     stored_task_id,
                     iteration_index,
                 )
@@ -283,7 +303,7 @@ class Supervisor:
 
         if stored_task_id is not None and self.state_store is not None:
             self.state_store.update_task_status(stored_task_id, "blocked")
-        logger.warning("supervisor max iterations exhausted task_id=%s", stored_task_id)
+        logger.warning("event=supervisor.max_iterations_exhausted task_id=%s", stored_task_id)
         self._stop_session(session)
         return SupervisorResult(
             status="blocked",
@@ -339,13 +359,13 @@ class Supervisor:
         try:
             self.agent.stop_session(session)
             logger.debug(
-                "supervisor session stopped agent=%s session_id=%s",
+                "event=supervisor.session_stopped agent=%s session_id=%s",
                 session.agent_name,
                 session.session_id,
             )
         except Exception:
             logger.warning(
-                "supervisor session stop failed agent=%s session_id=%s",
+                "event=supervisor.session_stop_failed agent=%s session_id=%s",
                 session.agent_name,
                 session.session_id,
             )

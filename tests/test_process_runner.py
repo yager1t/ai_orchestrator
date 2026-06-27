@@ -102,4 +102,4 @@ def test_process_runner_logs_metadata_without_output(caplog) -> None:
     assert result.status == "success"
     assert secret_output in result.stdout
     assert secret_output not in caplog.text
-    assert "process exited" in caplog.text
+    assert "event=process.exited" in caplog.text
