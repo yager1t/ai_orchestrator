@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added subprocess cleanup on keyboard interruption.
 - Changed process timeout handling to terminate subprocesses before force-killing them.
 - Added `--log-level` to enable safe metadata logs from the CLI.
 - Added adapter metadata logging without prompt or output capture.

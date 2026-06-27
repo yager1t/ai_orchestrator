@@ -90,6 +90,20 @@ class ProcessRunner:
                 stderr=stderr or "",
                 error=f"Command timed out after {timeout_sec}s",
             )
+        except KeyboardInterrupt:
+            logger.warning("process interrupted executable=%s argc=%s", argv[0], len(argv))
+            process.terminate()
+            try:
+                process.communicate(timeout=terminate_grace_sec)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "process kill after interrupt executable=%s argc=%s",
+                    argv[0],
+                    len(argv),
+                )
+                process.kill()
+                process.communicate()
+            raise
 
         logger.debug(
             "process exited executable=%s argc=%s exit_code=%s",

@@ -15,5 +15,5 @@ This file tracks follow-up items that remain after the initial external review c
 ## P2
 
 - Continue refining structured logging fields after the initial CLI `--log-level` support.
-- Extend graceful shutdown handling beyond process timeouts to user interrupts and task cancellation.
+- Extend graceful shutdown handling beyond process timeouts and interrupts to task cancellation.
 - Revisit global runtime budgets as a complement to per-command `timeout_sec`.

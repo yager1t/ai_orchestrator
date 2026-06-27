@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from ai_orchestrator.process.runner import ProcessRunner
 
 
@@ -56,6 +58,37 @@ def test_process_runner_terminates_process_on_timeout(monkeypatch) -> None:
     assert result.status == "timeout"
     assert result.stdout == "partial stdout"
     assert result.stderr == "partial stderr"
+    assert processes[0].terminated is True
+    assert processes[0].killed is False
+
+
+def test_process_runner_terminates_process_on_keyboard_interrupt(monkeypatch) -> None:
+    processes = []
+
+    class FakePopen:
+        def __init__(self, *args, **kwargs) -> None:
+            self.communicate_calls = 0
+            self.terminated = False
+            self.killed = False
+            processes.append(self)
+
+        def communicate(self, timeout=None):
+            self.communicate_calls += 1
+            if self.communicate_calls == 1:
+                raise KeyboardInterrupt
+            return "", ""
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+    monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
+
+    with pytest.raises(KeyboardInterrupt):
+        ProcessRunner().run(["interrupt"], timeout_sec=30, terminate_grace_sec=1)
+
     assert processes[0].terminated is True
     assert processes[0].killed is False
 
