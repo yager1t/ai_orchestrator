@@ -14,6 +14,6 @@ This file tracks follow-up items that remain after the initial external review c
 
 ## P2
 
-- Expand structured logging beyond the process runner to supervisor, verification, adapters, and storage.
+- Expand structured logging beyond process and verification runners to supervisor, adapters, and storage.
 - Add graceful shutdown handling for long-running agent subprocesses.
 - Revisit global runtime budgets as a complement to per-command `timeout_sec`.

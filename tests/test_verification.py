@@ -192,3 +192,19 @@ def test_verification_structured_argv_policy_uses_executed_command() -> None:
     )
 
     assert result.status == "needs_approval"
+
+
+def test_verification_logs_metadata_without_command_or_output(caplog) -> None:
+    secret = "secret-verification-token"
+    runner = VerificationRunner()
+
+    with caplog.at_level("DEBUG", logger="ai_orchestrator.verification.runner"):
+        result = runner.run(
+            VerificationCommand("secret-check", f"python -c \"print('{secret}')\"")
+        )
+
+    assert result.status == "passed"
+    assert secret in result.stdout
+    assert secret not in caplog.text
+    assert "secret-check" in caplog.text
+    assert "verification finished" in caplog.text
