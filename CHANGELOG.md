@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `ai-orch cancel <task_id>` for marking stored tasks as cancelled.
 - Added supervisor agent session cleanup on completion and keyboard interruption.
 - Added subprocess cleanup on keyboard interruption.
 - Changed process timeout handling to terminate subprocesses before force-killing them.

@@ -42,6 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("task_id")
     status.add_argument("--repo", default=".")
 
+    cancel = sub.add_parser("cancel", help="Mark a stored task as cancelled")
+    cancel.add_argument("task_id")
+    cancel.add_argument("--repo", default=".")
+
     resume = sub.add_parser("resume", help="Resume a stored task")
     resume.add_argument("task_id")
     resume.add_argument("--repo", default=".")
@@ -139,6 +143,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"     reason={iteration.decision_reason}")
             for check in checks:
                 print(f"     check={check.name} status={check.status} exit={check.exit_code}")
+        return 0
+
+    if args.command == "cancel":
+        store = _state_store_for_repo(Path(args.repo))
+        task = store.get_task(args.task_id)
+        if task is None:
+            print(f"Task not found: {args.task_id}")
+            return 1
+        store.update_task_status(task.task_id, "cancelled")
+        print(f"Cancelled: {task.task_id}")
         return 0
 
     if args.command == "tui":

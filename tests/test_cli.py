@@ -77,6 +77,28 @@ def test_status_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
     assert "Task not found: missing-task" in output
 
 
+def test_cancel_marks_task_cancelled(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("cancel me", repo_path=tmp_path)
+
+    exit_code = main(["cancel", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+    loaded = store.get_task(task.task_id)
+
+    assert exit_code == 0
+    assert f"Cancelled: {task.task_id}" in output
+    assert loaded is not None
+    assert loaded.status == "cancelled"
+
+
+def test_cancel_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
+    exit_code = main(["cancel", "missing-task", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Task not found: missing-task" in output
+
+
 def test_tui_status_prints_read_only_task_view(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo task", repo_path=tmp_path)

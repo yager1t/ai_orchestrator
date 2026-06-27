@@ -15,5 +15,5 @@ This file tracks follow-up items that remain after the initial external review c
 ## P2
 
 - Continue refining structured logging fields after the initial CLI `--log-level` support.
-- Extend graceful shutdown handling beyond session cleanup to explicit task cancellation APIs.
+- Extend cancellation beyond stored-task status updates to active task interruption.
 - Revisit global runtime budgets as a complement to per-command `timeout_sec`.
