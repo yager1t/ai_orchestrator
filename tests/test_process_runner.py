@@ -1,3 +1,5 @@
+import subprocess
+
 from ai_orchestrator.process.runner import ProcessRunner
 
 
@@ -22,6 +24,40 @@ def test_process_runner_missing_command() -> None:
     assert result.status == "failed"
     assert result.exit_code is None
     assert result.error == "Command not found: definitely-missing-ai-orch-command"
+
+
+def test_process_runner_terminates_process_on_timeout(monkeypatch) -> None:
+    processes = []
+
+    class FakePopen:
+        def __init__(self, *args, **kwargs) -> None:
+            self.communicate_calls = 0
+            self.terminated = False
+            self.killed = False
+            self.returncode = None
+            processes.append(self)
+
+        def communicate(self, timeout=None):
+            self.communicate_calls += 1
+            if self.communicate_calls == 1:
+                raise subprocess.TimeoutExpired(cmd=["slow"], timeout=timeout)
+            return "partial stdout", "partial stderr"
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+    monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
+
+    result = ProcessRunner().run(["slow"], timeout_sec=1, terminate_grace_sec=1)
+
+    assert result.status == "timeout"
+    assert result.stdout == "partial stdout"
+    assert result.stderr == "partial stderr"
+    assert processes[0].terminated is True
+    assert processes[0].killed is False
 
 
 def test_process_runner_logs_metadata_without_output(caplog) -> None:

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Changed process timeout handling to terminate subprocesses before force-killing them.
 - Added `--log-level` to enable safe metadata logs from the CLI.
 - Added adapter metadata logging without prompt or output capture.
 - Added state store metadata logging without task prompt or output capture.

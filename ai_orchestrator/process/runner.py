@@ -28,6 +28,7 @@ class ProcessRunner:
         argv: list[str],
         cwd: Path | None = None,
         timeout_sec: int = 300,
+        terminate_grace_sec: int = 5,
     ) -> ProcessResult:
         if not argv:
             logger.warning("process runner rejected empty argv")
@@ -47,14 +48,14 @@ class ProcessRunner:
                 str(cwd) if cwd else None,
                 timeout_sec,
             )
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 argv,
                 cwd=str(cwd) if cwd else None,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout_sec,
-                check=False,
             )
+            stdout, stderr = process.communicate(timeout=timeout_sec)
         except FileNotFoundError:
             logger.warning("process command not found: %s", argv[0])
             return ProcessResult(
@@ -64,18 +65,29 @@ class ProcessRunner:
                 stderr="",
                 error=f"Command not found: {argv[0]}",
             )
-        except subprocess.TimeoutExpired as exc:
+        except subprocess.TimeoutExpired:
             logger.warning(
                 "process timed out executable=%s argc=%s timeout_sec=%s",
                 argv[0],
                 len(argv),
                 timeout_sec,
             )
+            process.terminate()
+            try:
+                stdout, stderr = process.communicate(timeout=terminate_grace_sec)
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "process kill after graceful timeout executable=%s argc=%s",
+                    argv[0],
+                    len(argv),
+                )
+                process.kill()
+                stdout, stderr = process.communicate()
             return ProcessResult(
                 status="timeout",
                 exit_code=None,
-                stdout=exc.stdout or "",
-                stderr=exc.stderr or "",
+                stdout=stdout or "",
+                stderr=stderr or "",
                 error=f"Command timed out after {timeout_sec}s",
             )
 
@@ -83,11 +95,11 @@ class ProcessRunner:
             "process exited executable=%s argc=%s exit_code=%s",
             argv[0],
             len(argv),
-            completed.returncode,
+            process.returncode,
         )
         return ProcessResult(
-            status="success" if completed.returncode == 0 else "failed",
-            exit_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            status="success" if process.returncode == 0 else "failed",
+            exit_code=process.returncode,
+            stdout=stdout,
+            stderr=stderr,
         )
