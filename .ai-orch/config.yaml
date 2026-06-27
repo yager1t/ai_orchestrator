@@ -12,7 +12,7 @@ orchestrator:
     - "gemini"
   max_iterations: 10
   max_no_change_iterations: 2
-  max_task_runtime_minutes: 120
+  max_runtime_sec: 7200
 
 agents:
   mock:

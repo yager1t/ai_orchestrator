@@ -260,6 +260,7 @@ def _build_supervisor(state_store: StateStore, config: ProjectConfig) -> Supervi
         state_store=state_store,
         max_iterations=config.max_iterations,
         max_no_change_iterations=config.max_no_change_iterations,
+        max_runtime_sec=config.max_runtime_sec,
     )
 
 

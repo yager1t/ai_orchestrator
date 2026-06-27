@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from ai_orchestrator.agents.base import AgentAdapter, SessionRef, TaskContext
 from ai_orchestrator.core.decision import Decision, DecisionEngine
@@ -31,7 +33,9 @@ class Supervisor:
         state_store: StateStore | None = None,
         max_iterations: int = 2,
         max_no_change_iterations: int = 2,
+        max_runtime_sec: int | None = None,
         process_runner: ProcessRunner | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.agent = agent
         self.verifier = verifier
@@ -40,7 +44,9 @@ class Supervisor:
         self.state_store = state_store
         self.max_iterations = max_iterations
         self.max_no_change_iterations = max_no_change_iterations
+        self.max_runtime_sec = max_runtime_sec
         self.process_runner = process_runner or ProcessRunner()
+        self.clock = clock or time.monotonic
 
     def run_once(self, task: str, repo: Path) -> SupervisorResult:
         return self._run(task=task, repo=repo, task_id=None, start_iteration=1)
@@ -70,6 +76,7 @@ class Supervisor:
             start_iteration,
             self.max_iterations,
         )
+        started_at = self.clock()
         stored_task_id = task_id
         if self.state_store is not None:
             if stored_task_id is None:
@@ -115,6 +122,15 @@ class Supervisor:
 
         for attempt in range(1, self.max_iterations + 1):
             iteration_index = start_iteration + attempt - 1
+            if self._is_runtime_budget_exhausted(started_at):
+                if stored_task_id is not None and self.state_store is not None:
+                    self.state_store.update_task_status(stored_task_id, "blocked")
+                self._stop_session(session)
+                return SupervisorResult(
+                    status="blocked",
+                    summary="Runtime budget exhausted",
+                    task_id=stored_task_id,
+                )
             if self._is_task_cancelled(stored_task_id):
                 self._stop_session(session)
                 return SupervisorResult(
@@ -148,6 +164,15 @@ class Supervisor:
 
             verification_results = []
             if result.status == "success":
+                if self._is_runtime_budget_exhausted(started_at):
+                    if stored_task_id is not None and self.state_store is not None:
+                        self.state_store.update_task_status(stored_task_id, "blocked")
+                    self._stop_session(session)
+                    return SupervisorResult(
+                        status="blocked",
+                        summary="Runtime budget exhausted",
+                        task_id=stored_task_id,
+                    )
                 if self._is_task_cancelled(stored_task_id):
                     self._stop_session(session)
                     return SupervisorResult(
@@ -271,6 +296,11 @@ class Supervisor:
             return False
         task = self.state_store.get_task(task_id)
         return task is not None and task.status == "cancelled"
+
+    def _is_runtime_budget_exhausted(self, started_at: float) -> bool:
+        if self.max_runtime_sec is None:
+            return False
+        return self.clock() - started_at >= self.max_runtime_sec
 
     def _repo_snapshot(self, repo: Path) -> str | None:
         try:

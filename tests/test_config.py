@@ -14,6 +14,7 @@ orchestrator:
     - "mock"
   max_iterations: 4
   max_no_change_iterations: 3
+  max_runtime_sec: 600
 
 agents:
   mock:
@@ -50,6 +51,7 @@ policy:
 
     assert config.max_iterations == 4
     assert config.max_no_change_iterations == 3
+    assert config.max_runtime_sec == 600
     assert config.default_agent == "generic"
     assert config.fallback_agents == ["mock"]
     assert config.agents["generic"].enabled is True
@@ -69,6 +71,7 @@ def test_load_project_config_uses_compile_fallback_without_config(tmp_path: Path
 
     assert config.max_iterations == 2
     assert config.max_no_change_iterations == 2
+    assert config.max_runtime_sec is None
     assert config.default_agent == "mock"
     assert config.agents["mock"].enabled is True
     assert len(config.verification_commands) == 1
@@ -100,3 +103,19 @@ verification:
     assert config.verification_commands[0].run == ""
     assert config.verification_commands[0].argv == ["python", "-m", "pytest"]
     assert config.verification_commands[0].timeout_sec == 30
+
+
+def test_load_project_config_reads_legacy_runtime_budget_minutes(tmp_path: Path) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+orchestrator:
+  max_task_runtime_minutes: 2
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = load_project_config(tmp_path)
+
+    assert config.max_runtime_sec == 120

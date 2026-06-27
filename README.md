@@ -15,7 +15,7 @@ Current working surface:
 
 Latest verified baseline:
 
-- `python -m pytest`: 154 passed
+- `python -m pytest`: 158 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `git diff --check`: passed
@@ -68,6 +68,7 @@ Kimi and Gemini aliases use the same subprocess, policy, timeout, and availabili
 ## Timeout defaults
 
 Timeouts are configured per agent and verification command with `timeout_sec` in `.ai-orch/config.yaml`.
+Use `orchestrator.max_runtime_sec` as an outer cooperative budget for the supervisor loop.
 
 Default runtime values:
 
@@ -76,7 +77,7 @@ Default runtime values:
 - fallback verification compile command: `120` seconds
 - configured verification commands without `timeout_sec`: `300` seconds
 
-Tune these values per project instead of relying on one global timeout. Long-running headless agents usually need higher limits than simple verification commands.
+Tune per-command timeouts and the outer runtime budget per project. Long-running headless agents usually need higher limits than simple verification commands.
 
 ## Secrets
 

@@ -21,6 +21,7 @@ class ProjectConfig:
     verification_commands: list[VerificationCommand] = field(default_factory=list)
     max_iterations: int = 2
     max_no_change_iterations: int = 2
+    max_runtime_sec: int | None = None
     default_agent: str = "mock"
     fallback_agents: list[str] = field(default_factory=list)
     agents: dict[str, AgentConfig] = field(default_factory=dict)
@@ -51,6 +52,7 @@ def load_project_config(start: Path | None = None) -> ProjectConfig:
         verification_commands=commands,
         max_iterations=parsed.max_iterations,
         max_no_change_iterations=parsed.max_no_change_iterations,
+        max_runtime_sec=parsed.max_runtime_sec,
         default_agent=parsed.default_agent,
         fallback_agents=parsed.fallback_agents,
         agents=parsed.agents or default_agent_configs(),
@@ -78,6 +80,7 @@ def default_agent_configs() -> dict[str, AgentConfig]:
 def _parse_minimal_config(content: str) -> ProjectConfig:
     max_iterations = 2
     max_no_change_iterations = 2
+    max_runtime_sec: int | None = None
     default_agent = "mock"
     fallback_agents: list[str] = []
     agents: dict[str, AgentConfig] = {}
@@ -164,6 +167,25 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
                 max_no_change_iterations = 2
             continue
 
+        if section == "orchestrator" and stripped.startswith("max_runtime_sec:"):
+            in_fallback_agents = False
+            value = _value_after_colon(stripped)
+            try:
+                max_runtime_sec = int(value)
+            except ValueError:
+                max_runtime_sec = None
+            continue
+
+        if section == "orchestrator" and stripped.startswith("max_task_runtime_minutes:"):
+            in_fallback_agents = False
+            if max_runtime_sec is None:
+                value = _value_after_colon(stripped)
+                try:
+                    max_runtime_sec = int(value) * 60
+                except ValueError:
+                    max_runtime_sec = None
+            continue
+
         if section == "orchestrator" and stripped.startswith("default_agent:"):
             in_fallback_agents = False
             default_agent = _value_after_colon(stripped)
@@ -230,6 +252,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
         verification_commands=verification_commands,
         max_iterations=max_iterations,
         max_no_change_iterations=max_no_change_iterations,
+        max_runtime_sec=max_runtime_sec,
         default_agent=default_agent,
         fallback_agents=fallback_agents,
         agents=agents,

@@ -160,6 +160,17 @@ class FailingSnapshotRunner:
         )
 
 
+class SequenceClock:
+    def __init__(self, values: list[float]) -> None:
+        self.values = values
+        self.calls = 0
+
+    def __call__(self) -> float:
+        value = self.values[min(self.calls, len(self.values) - 1)]
+        self.calls += 1
+        return value
+
+
 def test_supervisor_done_only_after_verification_passes() -> None:
     supervisor = Supervisor(
         agent=MockAgentAdapter(),
@@ -245,6 +256,33 @@ def test_supervisor_skips_verification_when_task_cancelled_during_run(tmp_path: 
     assert verifier.calls == 0
     assert len(agent.stopped_sessions) == 1
     assert store.list_iterations(task.task_id) == []
+
+
+def test_supervisor_blocks_before_verification_when_runtime_budget_exhausted(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    verifier = SequencedVerifier(["passed"])
+    supervisor = Supervisor(
+        agent=StopRecordingAgent(),
+        verifier=verifier,
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        state_store=store,
+        max_runtime_sec=10,
+        clock=SequenceClock([0, 0, 11]),
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "blocked"
+    assert result.summary == "Runtime budget exhausted"
+    assert verifier.calls == 0
+    assert result.task_id is not None
+    task = store.get_task(result.task_id)
+    assert task is not None
+    assert task.status == "blocked"
 
 
 def test_supervisor_logs_metadata_without_task_or_output(caplog) -> None:
