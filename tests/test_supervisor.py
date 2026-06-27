@@ -52,6 +52,21 @@ class InterruptingAgent(StopRecordingAgent):
         raise KeyboardInterrupt
 
 
+class CancellingDuringRunAgent(StopRecordingAgent):
+    def __init__(self, store: StateStore, task_id: str) -> None:
+        super().__init__()
+        self.store = store
+        self.task_id = task_id
+
+    def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
+        self.store.update_task_status(self.task_id, "cancelled")
+        return AgentResult(
+            status="success",
+            raw_output="cancelled",
+            session_id=session.session_id,
+        )
+
+
 class NoChangeAgent(MockAgentAdapter):
     def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
         return AgentResult(
@@ -190,6 +205,46 @@ def test_supervisor_stops_session_on_keyboard_interrupt() -> None:
         raise AssertionError("Expected KeyboardInterrupt")
 
     assert len(agent.stopped_sessions) == 1
+
+
+def test_supervisor_does_not_resume_cancelled_task(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path, status="cancelled")
+    agent = StopRecordingAgent()
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=VerificationRunner(),
+        state_store=store,
+    )
+
+    result = supervisor.run_existing(task_id=task.task_id, task="demo", repo=tmp_path)
+
+    assert result.status == "cancelled"
+    assert result.task_id == task.task_id
+    assert agent.stopped_sessions == []
+    assert store.list_iterations(task.task_id) == []
+
+
+def test_supervisor_skips_verification_when_task_cancelled_during_run(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    agent = CancellingDuringRunAgent(store=store, task_id=task.task_id)
+    verifier = SequencedVerifier(["passed"])
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=verifier,
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        state_store=store,
+    )
+
+    result = supervisor.run_existing(task_id=task.task_id, task="demo", repo=tmp_path)
+
+    assert result.status == "cancelled"
+    assert verifier.calls == 0
+    assert len(agent.stopped_sessions) == 1
+    assert store.list_iterations(task.task_id) == []
 
 
 def test_supervisor_logs_metadata_without_task_or_output(caplog) -> None:

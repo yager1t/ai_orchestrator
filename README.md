@@ -86,6 +86,7 @@ Use each agent CLI's native login flow or process environment variables for cred
 ## Runtime controls
 
 Use `ai-orch cancel <task_id>` to mark a stored task as `cancelled`.
+Running supervisors observe the cancelled status between agent and verification steps.
 Use global `--log-level debug|info|warning|error` before the subcommand to enable safe
 metadata logs on stderr.
 

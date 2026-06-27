@@ -75,6 +75,12 @@ class Supervisor:
             if stored_task_id is None:
                 stored_task_id = self.state_store.create_task(task=task, repo_path=repo).task_id
             else:
+                if self._is_task_cancelled(stored_task_id):
+                    return SupervisorResult(
+                        status="cancelled",
+                        summary="Task was cancelled",
+                        task_id=stored_task_id,
+                    )
                 self.state_store.update_task_status(stored_task_id, "running")
 
         if not self.agent.check_available():
@@ -109,6 +115,13 @@ class Supervisor:
 
         for attempt in range(1, self.max_iterations + 1):
             iteration_index = start_iteration + attempt - 1
+            if self._is_task_cancelled(stored_task_id):
+                self._stop_session(session)
+                return SupervisorResult(
+                    status="cancelled",
+                    summary="Task was cancelled",
+                    task_id=stored_task_id,
+                )
             logger.debug(
                 "supervisor iteration started agent=%s task_id=%s iteration=%s attempt=%s",
                 session.agent_name,
@@ -135,6 +148,13 @@ class Supervisor:
 
             verification_results = []
             if result.status == "success":
+                if self._is_task_cancelled(stored_task_id):
+                    self._stop_session(session)
+                    return SupervisorResult(
+                        status="cancelled",
+                        summary="Task was cancelled",
+                        task_id=stored_task_id,
+                    )
                 try:
                     verification_results = self.verifier.run_many(
                         self.verification_commands,
@@ -245,6 +265,12 @@ class Supervisor:
             summary="Max iterations exhausted",
             task_id=stored_task_id,
         )
+
+    def _is_task_cancelled(self, task_id: str | None) -> bool:
+        if task_id is None or self.state_store is None:
+            return False
+        task = self.state_store.get_task(task_id)
+        return task is not None and task.status == "cancelled"
 
     def _repo_snapshot(self, repo: Path) -> str | None:
         try:
