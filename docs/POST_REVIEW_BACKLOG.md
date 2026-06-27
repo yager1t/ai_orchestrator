@@ -8,9 +8,9 @@ This file tracks follow-up items that remain after the initial external review c
   - Current position: defer until config needs broader YAML compatibility.
   - Expected decision file: `docs/DECISIONS.md`.
 
-- Add a lightweight migration path for SQLite schema changes.
-  - Current state: `PRAGMA user_version` marks schema version and rejects future schemas.
-  - Next step: add `ai_orchestrator/storage/migrations.py` when schema changes beyond version 1.
+- Expand the lightweight migration path for SQLite schema changes.
+  - Current state: `ai_orchestrator/storage/migrations.py` owns schema version checks.
+  - Next step: add explicit version-to-version migration functions when schema changes beyond version 1.
 
 ## P2
 

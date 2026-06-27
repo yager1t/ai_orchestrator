@@ -6,10 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from ai_orchestrator.storage.migrations import SCHEMA_VERSION, migrate_schema, schema_version
 from ai_orchestrator.verification.runner import VerificationResult
-
-
-SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -117,18 +115,12 @@ class StateStore:
                 );
                 """
             )
-            current_version = self._schema_version(connection)
-            if current_version > SCHEMA_VERSION:
-                raise RuntimeError(
-                    f"Unsupported state store schema version: {current_version}"
-                )
-            if current_version == 0:
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            migrate_schema(connection)
 
     def schema_version(self) -> int:
         self.initialize()
         with self._connect() as connection:
-            return self._schema_version(connection)
+            return schema_version(connection)
 
     def create_task(
         self,
@@ -394,10 +386,6 @@ class StateStore:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA busy_timeout = 5000")
         return connection
-
-    def _schema_version(self, connection: sqlite3.Connection) -> int:
-        return int(connection.execute("PRAGMA user_version").fetchone()[0])
-
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()

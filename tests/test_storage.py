@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from ai_orchestrator.storage.db import SCHEMA_VERSION, StateStore
+from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.storage.migrations import SCHEMA_VERSION, migrate_schema
 from ai_orchestrator.verification.runner import VerificationResult
 
 
@@ -38,6 +39,14 @@ def test_state_store_records_schema_version(tmp_path: Path) -> None:
     store.initialize()
 
     assert store.schema_version() == SCHEMA_VERSION
+
+
+def test_migrate_schema_sets_initial_version(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        version = migrate_schema(connection)
+
+    assert version == SCHEMA_VERSION
 
 
 def test_state_store_rejects_future_schema_version(tmp_path: Path) -> None:
