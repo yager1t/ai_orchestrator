@@ -4,7 +4,12 @@ from pathlib import Path
 import pytest
 
 from ai_orchestrator.storage.db import StateStore
-from ai_orchestrator.storage.migrations import SCHEMA_VERSION, migrate_schema
+from ai_orchestrator.storage.migrations import (
+    SCHEMA_VERSION,
+    migrate_between_versions,
+    migrate_schema,
+    schema_version,
+)
 from ai_orchestrator.verification.runner import VerificationResult
 
 
@@ -93,6 +98,52 @@ def test_state_store_rejects_future_schema_version(tmp_path: Path) -> None:
         store.initialize()
 
 
+def test_migrate_between_versions_runs_migrations_in_order(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    calls: list[str] = []
+
+    def migration_1(connection: sqlite3.Connection) -> None:
+        calls.append("1")
+        connection.execute("CREATE TABLE migration_one (id INTEGER)")
+
+    def migration_2(connection: sqlite3.Connection) -> None:
+        calls.append("2")
+        connection.execute("CREATE TABLE migration_two (id INTEGER)")
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 1")
+        migrate_between_versions(
+            connection,
+            current_version=1,
+            target_version=3,
+            migrations={1: migration_1, 2: migration_2},
+        )
+
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        version = schema_version(connection)
+
+    assert calls == ["1", "2"]
+    assert {"migration_one", "migration_two"}.issubset(tables)
+    assert version == 3
+
+
+def test_migrate_between_versions_rejects_missing_path(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        with pytest.raises(RuntimeError, match="Missing state store migration path: 1 -> 2"):
+            migrate_between_versions(
+                connection,
+                current_version=1,
+                target_version=2,
+                migrations={},
+            )
+
+
 def test_state_store_lists_tasks_newest_first(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
 
@@ -145,3 +196,42 @@ def test_state_store_persists_iteration_and_verification(tmp_path: Path) -> None
     assert verification_details[0].stderr == "assertion failed"
     assert verification_details[0].stdout == ""
     assert verification_details[0].error is None
+
+
+def test_state_store_redacts_secret_like_outputs(tmp_path: Path) -> None:
+    secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo",
+        raw_output=f"agent leaked {secret}",
+        decision_status="blocked",
+        decision_reason="failed",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="failed",
+            exit_code=1,
+            stdout=f"stdout {secret}",
+            stderr=f"stderr {secret}",
+            error=f"error {secret}",
+        ),
+    )
+
+    details = store.list_iteration_details(task.task_id)
+    checks = store.list_verification_details(task.task_id)
+
+    assert secret not in details[0].raw_output
+    assert secret not in checks[0].stdout
+    assert secret not in checks[0].stderr
+    assert secret not in (checks[0].error or "")
+    assert "***REDACTED***" in details[0].raw_output
+    assert "***REDACTED***" in checks[0].stderr

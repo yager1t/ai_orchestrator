@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ai_orchestrator.storage.migrations import SCHEMA_VERSION, migrate_schema, schema_version
+from ai_orchestrator.storage.redaction import redact_secrets
 from ai_orchestrator.verification.runner import VerificationResult
 
 
@@ -230,7 +231,7 @@ class StateStore:
                     agent_name,
                     agent_status,
                     prompt,
-                    raw_output,
+                    redact_secrets(raw_output) or "",
                     decision_status,
                     decision_reason,
                     _now(),
@@ -283,9 +284,9 @@ class StateStore:
                     result.name,
                     result.status,
                     result.exit_code,
-                    result.stdout,
-                    result.stderr,
-                    result.error,
+                    redact_secrets(result.stdout) or "",
+                    redact_secrets(result.stderr) or "",
+                    redact_secrets(result.error),
                     _now(),
                 ),
             )

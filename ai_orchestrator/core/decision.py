@@ -24,6 +24,7 @@ class DecisionEngine:
         verification_results: list[VerificationResult],
         iteration: int,
         max_iterations: int,
+        original_task: str | None = None,
     ) -> Decision:
         if agent_result.status != "success":
             return Decision(
@@ -61,13 +62,22 @@ class DecisionEngine:
         return Decision(
             status="continue",
             reason=f"Verification failed: {failed_summary}",
-            follow_up_prompt=self._build_follow_up_prompt(failed_results),
+            follow_up_prompt=self._build_follow_up_prompt(
+                failed_results,
+                original_task=original_task,
+            ),
         )
 
-    def _build_follow_up_prompt(self, failed_results: list[VerificationResult]) -> str:
+    def _build_follow_up_prompt(
+        self,
+        failed_results: list[VerificationResult],
+        original_task: str | None = None,
+    ) -> str:
         sections = [
             "Previous verification failed. Fix the issues below, then stop for verification."
         ]
+        if original_task:
+            sections.insert(0, f"Original task:\n{self._excerpt_tail(original_task, 1000)}")
         shown_results = failed_results[: self.MAX_FAILED_CHECKS_IN_PROMPT]
         for item in shown_results:
             details = item.stderr or item.stdout or item.error or "No output captured."
@@ -77,7 +87,7 @@ class DecisionEngine:
                         f"Check: {item.name}",
                         f"Status: {item.status}",
                         f"Exit code: {item.exit_code}",
-                        f"Output:\n{self._excerpt(details, self.MAX_CHECK_OUTPUT_CHARS)}",
+                        f"Output:\n{self._excerpt_tail(details, self.MAX_CHECK_OUTPUT_CHARS)}",
                     ]
                 )
             )
@@ -93,3 +103,11 @@ class DecisionEngine:
         if limit <= len(suffix):
             return suffix[:limit]
         return f"{text[: limit - len(suffix)]}{suffix}"
+
+    def _excerpt_tail(self, text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        prefix = "... truncated ...\n"
+        if limit <= len(prefix):
+            return prefix[:limit]
+        return f"{prefix}{text[-(limit - len(prefix)):]}"

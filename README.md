@@ -10,12 +10,14 @@ Current working surface:
 - Supervisor completes tasks only after verification passes.
 - SQLite state store records tasks, iterations, and verification runs.
 - Policy checks protect verification and agent commands.
+- Runtime controls include cooperative task cancellation, subprocess termination on cancel, and supervisor runtime budgets.
+- Safe metadata logs use stable `event=...` fields without prompt/output payloads.
 - Supported agents: mock, generic CLI, Codex exec, Claude headless, and Kimi/Gemini CLI aliases.
 - Markdown reports are generated from stored task history.
 
 Latest verified baseline:
 
-- `python -m pytest`: 159 passed
+- `python -m pytest`: 170 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `git diff --check`: passed
@@ -83,6 +85,7 @@ Tune per-command timeouts and the outer runtime budget per project. Long-running
 
 Do not put API keys, tokens, passwords, or private key material in `.ai-orch/config.yaml`.
 Use each agent CLI's native login flow or process environment variables for credentials.
+Stored agent and verification outputs redact common secret-like token formats before reports are rendered.
 
 ## Runtime controls
 
@@ -90,6 +93,12 @@ Use `ai-orch cancel <task_id>` to mark a stored task as `cancelled`.
 Running supervisors observe the cancelled status between steps and request active subprocess termination.
 Use global `--log-level debug|info|warning|error` before the subcommand to enable safe
 metadata logs on stderr.
+
+## State migrations
+
+The SQLite state store tracks schema version with `PRAGMA user_version`.
+Future schema updates should add explicit version-to-version migration functions in
+`ai_orchestrator/storage/migrations.py`.
 
 ## Verification approvals
 

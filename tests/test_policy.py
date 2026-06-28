@@ -37,6 +37,42 @@ def test_policy_denies_rm_recursive_force_root() -> None:
     assert decision.action == "deny"
 
 
+def test_policy_denies_rm_recursive_force_root_after_env_assignment() -> None:
+    decision = PolicyEngine().evaluate_command("FOO=bar rm -rf /")
+
+    assert decision.action == "deny"
+
+
+def test_policy_denies_rm_recursive_force_root_after_env_wrapper() -> None:
+    decision = PolicyEngine().evaluate_command("env FOO=bar rm -rf /")
+
+    assert decision.action == "deny"
+
+
+def test_policy_denies_rm_recursive_force_root_after_sudo_wrapper() -> None:
+    decision = PolicyEngine().evaluate_command("sudo -u root rm -rf /")
+
+    assert decision.action == "deny"
+
+
+def test_policy_denies_rm_recursive_force_root_after_nice_wrapper() -> None:
+    decision = PolicyEngine().evaluate_command("nice -n 10 rm -rf /")
+
+    assert decision.action == "deny"
+
+
+def test_policy_denies_rm_recursive_force_root_after_xargs_wrapper() -> None:
+    decision = PolicyEngine().evaluate_command("xargs rm -rf /")
+
+    assert decision.action == "deny"
+
+
+def test_policy_uses_newline_as_command_separator() -> None:
+    decision = PolicyEngine().evaluate_command("git status\nrm -rf /")
+
+    assert decision.action == "deny"
+
+
 def test_policy_does_not_match_git_push_url() -> None:
     decision = PolicyEngine().evaluate_command("git push-url origin")
 

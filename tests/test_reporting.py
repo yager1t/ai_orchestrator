@@ -83,6 +83,39 @@ def test_render_task_report_includes_failed_verification_excerpt(tmp_path: Path)
     assert "```text" in report
 
 
+def test_render_task_report_redacts_secret_like_verification_output(tmp_path: Path) -> None:
+    secret = "ghp_abcdefghijklmnopqrstuvwxyz123456"
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo secret", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo secret",
+        raw_output="done",
+        decision_status="blocked",
+        decision_reason="Verification failed after 1 iteration(s): unit: failed exit=1",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="failed",
+            exit_code=1,
+            stdout="",
+            stderr=f"leaked {secret}",
+        ),
+    )
+
+    report = render_task_report(store, task.task_id)
+
+    assert report is not None
+    assert secret not in report
+    assert "***REDACTED***" in report
+
+
 def test_render_task_report_includes_unavailable_agent_blocker(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo unavailable", repo_path=tmp_path)

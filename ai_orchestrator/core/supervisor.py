@@ -230,6 +230,7 @@ class Supervisor:
                 verification_results,
                 iteration=attempt,
                 max_iterations=self.max_iterations,
+                original_task=task,
             )
             logger.debug(
                 "event=supervisor.decision task_id=%s iteration=%s status=%s",

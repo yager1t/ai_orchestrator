@@ -14,6 +14,14 @@ class PolicyDecision:
 class PolicyEngine:
     DEFAULT_DENY_PATTERNS = ["rm -rf /", "~/.ssh", "~/.codex/auth.json"]
     DEFAULT_ASK_PATTERNS = ["git push", "rm -rf", "pip install", "npm install"]
+    TRANSPARENT_WRAPPERS = {"command", "env", "nice", "nohup", "stdbuf", "sudo", "time", "xargs"}
+    WRAPPER_OPTIONS_WITH_VALUES = {
+        "env": {"-u", "--unset"},
+        "nice": {"-n", "--adjustment"},
+        "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+        "sudo": {"-C", "-g", "-h", "-p", "-T", "-U", "-u"},
+        "xargs": {"-E", "-I", "-L", "-P", "-n", "-s"},
+    }
 
     def __init__(
         self,
@@ -82,10 +90,11 @@ class PolicyEngine:
     def _split_command(self, command: str) -> list[str]:
         if not command:
             return []
+        command = command.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ; ")
         try:
             return shlex.split(command)
         except ValueError:
-            return command.split()
+            return command.replace("\n", " ; ").split()
 
     def _command_segments(self, tokens: list[str]) -> list[list[str]]:
         segments: list[list[str]] = []
@@ -110,7 +119,44 @@ class PolicyEngine:
             nested_tokens = self._split_command(token)
             if nested_tokens != [token]:
                 segments.extend(self._command_segments(nested_tokens))
-        return segments
+        return [self._peel_wrappers(segment) for segment in segments if segment]
+
+    def _peel_wrappers(self, tokens: list[str]) -> list[str]:
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            command_name = self._command_name(token)
+            if self._is_env_assignment(token):
+                index += 1
+                continue
+            if command_name not in self.TRANSPARENT_WRAPPERS:
+                break
+            index += 1
+            index = self._skip_wrapper_options(tokens, index, command_name)
+        return tokens[index:]
+
+    def _skip_wrapper_options(self, tokens: list[str], index: int, wrapper: str) -> int:
+        options_with_values = self.WRAPPER_OPTIONS_WITH_VALUES.get(wrapper, set())
+        while index < len(tokens):
+            token = tokens[index]
+            if self._is_env_assignment(token):
+                index += 1
+                continue
+            if token == "--":
+                return index + 1
+            if not token.startswith("-") or token == "-":
+                return index
+            index += 1
+            option_name = token.split("=", 1)[0]
+            if "=" not in token and option_name in options_with_values and index < len(tokens):
+                index += 1
+        return index
+
+    def _is_env_assignment(self, token: str) -> bool:
+        if "=" not in token or token.startswith("-"):
+            return False
+        name, _value = token.split("=", 1)
+        return bool(name) and all(char == "_" or char.isalnum() for char in name)
 
     def _match_default_deny(self, tokens: list[str]) -> str | None:
         if self._has_secret_path(tokens, "~/.codex/auth.json"):

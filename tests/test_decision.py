@@ -51,6 +51,20 @@ def test_decision_continue_when_verification_fails_and_retry_allowed() -> None:
     assert "Previous verification failed" in decision.follow_up_prompt
 
 
+def test_decision_follow_up_prompt_includes_original_task() -> None:
+    decision = DecisionEngine().decide(
+        agent_success(),
+        [verification("failed")],
+        iteration=1,
+        max_iterations=2,
+        original_task="fix the dashboard bug",
+    )
+
+    assert decision.follow_up_prompt is not None
+    assert "Original task:" in decision.follow_up_prompt
+    assert "fix the dashboard bug" in decision.follow_up_prompt
+
+
 def test_decision_blocked_when_max_iterations_reached() -> None:
     decision = DecisionEngine().decide(
         agent_success(),
@@ -98,9 +112,10 @@ def test_decision_blocks_policy_verification_result_without_retry() -> None:
 
 
 def test_decision_follow_up_prompt_truncates_large_output() -> None:
+    tail = "tail traceback line"
     decision = DecisionEngine().decide(
         agent_success(),
-        [failed_verification("unit", stderr="x" * 5000)],
+        [failed_verification("unit", stderr=f"{'x' * 5000}{tail}")],
         iteration=1,
         max_iterations=2,
     )
@@ -108,6 +123,7 @@ def test_decision_follow_up_prompt_truncates_large_output() -> None:
     assert decision.follow_up_prompt is not None
     assert len(decision.follow_up_prompt) <= DecisionEngine.MAX_FOLLOW_UP_PROMPT_CHARS
     assert "... truncated ..." in decision.follow_up_prompt
+    assert tail in decision.follow_up_prompt
 
 
 def test_decision_follow_up_prompt_limits_failed_check_count() -> None:

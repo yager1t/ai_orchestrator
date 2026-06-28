@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 
 from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.storage.redaction import redact_secrets
 
 
 def render_task_report(store: StateStore, task_id: str) -> str | None:
@@ -86,7 +87,7 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
 
 
 def _verification_excerpt(stderr: str, stdout: str, error: str | None, limit: int = 1200) -> str:
-    excerpt = error or stderr or stdout
+    excerpt = redact_secrets(error or stderr or stdout) or ""
     if len(excerpt) <= limit:
         return excerpt
     return f"{excerpt[:limit]}\n... truncated ..."

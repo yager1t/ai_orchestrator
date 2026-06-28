@@ -64,6 +64,19 @@ Agent credentials should come from the agent CLI's native auth flow or process e
 for example `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or vendor-specific environment variables.
 The MVP config only describes commands, argv, policy, verification, and timeout behavior.
 
+Stored agent and verification outputs redact common secret-like token formats before they are
+persisted or rendered into markdown reports. This redaction is a safety net, not a replacement
+for keeping secrets out of prompts and command output.
+
+## Policy scope
+
+PolicyEngine is defense-in-depth for trusted project configuration and agent-generated commands.
+It is not a sandbox and must not be treated as the primary isolation boundary.
+
+Use each agent's native sandbox or permission model for real isolation, for example Codex
+workspace sandbox settings. PolicyEngine should reduce obvious accidents and block known-dangerous
+command shapes, while the agent sandbox limits filesystem and process impact.
+
 ## Verification approvals
 
 Verification commands that match `require_approval` return `needs_approval` by default.

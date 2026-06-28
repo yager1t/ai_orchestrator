@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Documented PolicyEngine scope as defense-in-depth and added redaction guidance.
+- Improved follow-up prompts with original task context and tail-focused failure excerpts.
+- Added redaction for secret-like tokens in stored agent and verification outputs.
+- Hardened built-in policy matching against wrapper commands and newline-separated commands.
+- Updated project status docs for runtime controls, event logs, and migration guidance.
+- Added an explicit version-to-version SQLite migration dispatcher.
+- Documented the decision to defer PyYAML until broader YAML compatibility is needed.
 - Added cancellation polling so running agent subprocesses can be terminated after `ai-orch cancel`.
 - Added stable `event=...` fields to supervisor and process runner logs.
 - Added `orchestrator.max_runtime_sec` as a cooperative supervisor runtime budget.
