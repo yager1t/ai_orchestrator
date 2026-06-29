@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added a shipping packet template for reviewer-ready release handoffs.
+- Added PM-derived task template sections for intent, assumptions, negative scenarios, and verification mapping.
 - Added mypy type checking to the development dependencies and CI.
 - Refreshed README project descriptions, runtime notes, and documentation map.
 - Kept root `REVIEW.md` as a local ignored review note.

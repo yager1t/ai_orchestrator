@@ -1,42 +1,69 @@
-# TASK-XXX: Название
+# TASK-XXX: Title
 
-## Роль агента
+## Agent Role
 
-Supervisor / Architect / Core / Adapter / Verification / Security / Storage / CLI / Docs / Review
+Supervisor / Architect / Core / Adapter / Verification / Security / Storage /
+CLI / Docs / Review
 
-## Цель
+## Intent
 
-Кратко описать, какой результат нужен.
+Briefly describe the intended outcome and why it matters.
+
+## Assumptions
+
+- ...
 
 ## Scope
 
-Входит:
+In:
 
 - ...
 
-Не входит:
+Out:
 
 - ...
 
-## Файлы
+## Files
 
 ```text
 ...
 ```
 
-## Definition of Done
+## Acceptance Criteria
 
 - [ ] ...
-- [ ] Тесты проходят.
-- [ ] Документация обновлена.
+- [ ] Error and negative paths are handled where applicable.
+- [ ] Documentation is updated if behavior changes.
 
-## Проверки
+## Negative Scenarios
 
-```bash
-python -m pytest
-python -m compileall ai_orchestrator
-```
-
-## Риски
+List the cases that must fail closed or remain blocked.
 
 - ...
+
+## Verification Map
+
+| Rule / behavior | Evidence source | Check type | Status |
+| --- | --- | --- | --- |
+| ... | docs / code / config | unit / integration / manual | existing / proposed / none |
+
+## Required Checks
+
+```bash
+python -m ruff check ai_orchestrator tests
+python -m mypy
+python -m pytest
+python -m compileall ai_orchestrator
+python -m ai_orchestrator verify --repo .
+git diff --check
+```
+
+## Risks
+
+- ...
+
+## Review Notes
+
+- Intended vs implemented:
+- Remaining gaps:
+- Next manual step:

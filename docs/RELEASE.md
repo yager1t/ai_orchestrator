@@ -19,6 +19,9 @@ python -m ai_orchestrator verify --repo .
 git diff --check
 ```
 
+For larger or risky releases, compile a reviewer-ready handoff using
+`docs/SHIPPING_PACKET_TEMPLATE.md`.
+
 ## Git
 
 - Confirm `git status --short` has only intended changes before commit.
