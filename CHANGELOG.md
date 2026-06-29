@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added configurable scripted results for the mock agent.
 - Documented PolicyEngine scope as defense-in-depth and added redaction guidance.
 - Improved follow-up prompts with original task context and tail-focused failure excerpts.
 - Added redaction for secret-like tokens in stored agent and verification outputs.
