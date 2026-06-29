@@ -38,6 +38,17 @@ def build_parser() -> argparse.ArgumentParser:
     start = sub.add_parser("start", help="Start a task with the mock agent")
     start.add_argument("--task", required=True)
     start.add_argument("--repo", default=".")
+    start.add_argument(
+        "--use-memory",
+        action="store_true",
+        help="Enrich the initial agent prompt with read-only memory preflight context",
+    )
+    start.add_argument(
+        "--memory-area",
+        choices=["supervisor", "adapter", "release"],
+        default="supervisor",
+        help="Memory preflight area to use with --use-memory",
+    )
 
     status = sub.add_parser("status", help="Show stored task status")
     status.add_argument("task_id")
@@ -272,6 +283,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "start":
         repo = Path(args.repo)
         config = load_project_config(repo)
+        planning_context = None
+        if args.use_memory:
+            memory_context = _load_memory_planning_context(
+                config=config,
+                repo=repo,
+                area=args.memory_area,
+            )
+            if memory_context.status != "passed":
+                print(f"memory context: {memory_context.status}")
+                if memory_context.error:
+                    print(f"error: {memory_context.error}")
+                return 1
+            planning_context = memory_context.stdout
         try:
             supervisor = _build_supervisor(
                 state_store=_state_store_for_repo(repo),
@@ -280,7 +304,11 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(str(exc))
             return 1
-        supervisor_result = supervisor.run_once(task=args.task, repo=repo)
+        supervisor_result = supervisor.run_once(
+            task=args.task,
+            repo=repo,
+            planning_context=planning_context,
+        )
         task_prefix = f"{supervisor_result.task_id}: " if supervisor_result.task_id else ""
         print(f"{task_prefix}{supervisor_result.summary}")
         return 0 if supervisor_result.status == "done" else 1
@@ -442,6 +470,46 @@ def _run_memory_preflight(
     return 0 if all(status == "passed" for status in statuses) else 1
 
 
+def _load_memory_planning_context(
+    config: ProjectConfig,
+    repo: Path,
+    area: str,
+) -> CodebaseMemoryResult:
+    client = _memory_client(config)
+    if not client.check_available():
+        return CodebaseMemoryResult(
+            tool="preflight",
+            status="unavailable",
+            exit_code=None,
+            stdout="",
+            stderr="",
+            error="Memory provider is not available",
+        )
+
+    project = config.memory.project
+    sections = [f"memory preflight area={area}"]
+    for label, tool, tool_args in _memory_preflight_steps(area, project, limit=20):
+        result = client.run_tool(tool, tool_args, cwd=repo)
+        if result.status != "passed":
+            return CodebaseMemoryResult(
+                tool=tool,
+                status=result.status,
+                exit_code=result.exit_code,
+                stdout="\n\n".join(sections),
+                stderr=result.stderr,
+                error=result.error or f"Memory preflight step failed: {label}",
+            )
+        output = result.stdout or result.stderr
+        sections.append(f"## {label}\n{_excerpt(output, 1200) if output else '(no output)'}")
+    return CodebaseMemoryResult(
+        tool="preflight",
+        status="passed",
+        exit_code=0,
+        stdout="\n\n".join(sections),
+        stderr="",
+    )
+
+
 def _memory_preflight_steps(
     area: str,
     project: str,
@@ -489,6 +557,15 @@ def _print_memory_result(tool: str, result: CodebaseMemoryResult) -> None:
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
     if result.stderr:
         print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
+
+
+def _excerpt(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    suffix = "\n... truncated ..."
+    if limit <= len(suffix):
+        return suffix[:limit]
+    return f"{text[: limit - len(suffix)]}{suffix}"
 
 
 def _configure_logging(log_level: str | None) -> None:

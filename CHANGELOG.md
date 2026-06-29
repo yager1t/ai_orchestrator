@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added opt-in `ai-orch start --use-memory` prompt enrichment from read-only memory preflight context.
 - Added `ai-orch memory preflight --area supervisor|adapter|release` for read-only planning context.
 - Added manual Codebase Memory playbooks for supervisor, adapter, and release review work.
 - Documented the manual Codebase Memory workflow before supervisor planning automation.

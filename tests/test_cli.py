@@ -500,6 +500,56 @@ def test_start_uses_project_config(capsys, tmp_path: Path) -> None:
     assert "Verification passed: custom" in output
 
 
+def test_start_with_use_memory_enriches_initial_prompt(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    memory_argv: list[list[str]] = []
+
+    def fake_run(self: ProcessRunner, argv: list[str], **kwargs) -> ProcessResult:
+        if argv[:2] == ["codebase-memory-mcp", "cli"]:
+            memory_argv.append(argv)
+            return ProcessResult(
+                status="success",
+                exit_code=0,
+                stdout=f"memory output for {argv[2]}",
+                stderr="",
+            )
+        return ProcessResult(status="success", exit_code=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(ProcessRunner, "check_available", lambda self, command: True)
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(tmp_path, include_memory=True, memory_project="demo")
+
+    exit_code = main(
+        [
+            "start",
+            "--task",
+            "demo",
+            "--repo",
+            str(tmp_path),
+            "--use-memory",
+            "--memory-area",
+            "release",
+        ]
+    )
+    output = capsys.readouterr().out
+    task_id = output.split(":", 1)[0]
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.get_task(task_id)
+    iterations = store.list_iteration_details(task_id)
+
+    assert exit_code == 0
+    assert task is not None
+    assert task.task == "demo"
+    assert "Planning context (read-only, non-authoritative)" in iterations[0].prompt
+    assert "memory preflight area=release" in iterations[0].prompt
+    assert "memory output for get_architecture" in iterations[0].prompt
+    assert "memory output for detect_changes" in iterations[0].prompt
+    assert [item[2] for item in memory_argv] == ["get_architecture", "detect_changes"]
+
+
 def test_start_uses_generic_agent_from_project_config(capsys, tmp_path: Path) -> None:
     write_config(tmp_path, default_agent="generic", include_generic_agent=True)
 

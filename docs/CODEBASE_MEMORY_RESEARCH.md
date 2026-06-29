@@ -102,8 +102,9 @@ python -m ai_orchestrator memory search --repo . --pattern ".*Policy.*" --label 
 python -m ai_orchestrator memory impact --repo .
 ```
 
-The next automation step should be opt-in, such as `start --use-memory`, and
-must stay read-only unless the user separately approves indexing.
+The first automation step is opt-in: `start --use-memory`. It appends read-only
+preflight context to the initial agent prompt and must stay read-only unless the
+user separately approves indexing.
 
 `memory preflight` is the manual bridge before supervisor automation. It runs
 the read-only architecture, symbol search, and impact queries for a selected
@@ -113,6 +114,7 @@ work area:
 python -m ai_orchestrator memory preflight --repo . --area supervisor
 python -m ai_orchestrator memory preflight --repo . --area adapter
 python -m ai_orchestrator memory preflight --repo . --area release
+python -m ai_orchestrator start --repo . --task "..." --use-memory --memory-area supervisor
 ```
 
 ## Manual Playbooks
@@ -223,6 +225,7 @@ python -m ai_orchestrator memory search --repo . --pattern ".*Supervisor.*" --la
 python -m ai_orchestrator memory architecture --repo .
 python -m ai_orchestrator memory impact --repo .
 python -m ai_orchestrator memory preflight --repo . --area supervisor
+python -m ai_orchestrator start --repo . --task "..." --use-memory --memory-area supervisor
 python -m ai_orchestrator memory index --repo . --approve
 ```
 

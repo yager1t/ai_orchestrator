@@ -125,6 +125,11 @@ The initial CLI surface is read-mostly:
 - `memory preflight --area supervisor|adapter|release`
 - `memory index --approve`
 
+Supervisor use is opt-in through `start --use-memory`. The CLI gathers
+read-only preflight context and appends it to the initial agent prompt as
+non-authoritative planning input. Supervisor completion still depends only on
+agent status and verification results.
+
 ## Integration Priority
 
 1. Headless CLI.

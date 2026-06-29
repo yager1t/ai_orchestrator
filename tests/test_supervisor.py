@@ -47,6 +47,15 @@ class StopRecordingAgent(MockAgentAdapter):
         self.stopped_sessions.append(session.session_id)
 
 
+class PromptRecordingAgent(MockAgentAdapter):
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
+        self.prompts.append(prompt)
+        return super().run_step(session, prompt)
+
+
 class InterruptingAgent(StopRecordingAgent):
     def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
         raise KeyboardInterrupt
@@ -184,6 +193,32 @@ def test_supervisor_done_only_after_verification_passes() -> None:
     result = supervisor.run_once(task="demo", repo=Path("."))
 
     assert result.status == "done"
+
+
+def test_supervisor_adds_planning_context_to_initial_prompt() -> None:
+    agent = PromptRecordingAgent()
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=VerificationRunner(),
+        verification_commands=[
+            VerificationCommand("ok", "python -c \"print('ok')\""),
+        ],
+    )
+
+    result = supervisor.run_once(
+        task="demo",
+        repo=Path("."),
+        planning_context="architecture summary",
+    )
+
+    assert result.status == "done"
+    assert agent.prompts == [
+        (
+            "demo\n\n"
+            "Planning context (read-only, non-authoritative):\n\n"
+            "architecture summary"
+        )
+    ]
 
 
 def test_supervisor_stops_session_after_done() -> None:

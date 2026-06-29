@@ -24,6 +24,8 @@ class SupervisorResult:
 
 
 class Supervisor:
+    MAX_PLANNING_CONTEXT_CHARS = 4000
+
     def __init__(
         self,
         agent: AgentAdapter,
@@ -48,10 +50,27 @@ class Supervisor:
         self.process_runner = process_runner or ProcessRunner()
         self.clock = clock or time.monotonic
 
-    def run_once(self, task: str, repo: Path) -> SupervisorResult:
-        return self._run(task=task, repo=repo, task_id=None, start_iteration=1)
+    def run_once(
+        self,
+        task: str,
+        repo: Path,
+        planning_context: str | None = None,
+    ) -> SupervisorResult:
+        return self._run(
+            task=task,
+            repo=repo,
+            task_id=None,
+            start_iteration=1,
+            planning_context=planning_context,
+        )
 
-    def run_existing(self, task_id: str, task: str, repo: Path) -> SupervisorResult:
+    def run_existing(
+        self,
+        task_id: str,
+        task: str,
+        repo: Path,
+        planning_context: str | None = None,
+    ) -> SupervisorResult:
         start_iteration = 1
         if self.state_store is not None:
             start_iteration = len(self.state_store.list_iterations(task_id)) + 1
@@ -60,6 +79,7 @@ class Supervisor:
             repo=repo,
             task_id=task_id,
             start_iteration=start_iteration,
+            planning_context=planning_context,
         )
 
     def _run(
@@ -68,6 +88,7 @@ class Supervisor:
         repo: Path,
         task_id: str | None,
         start_iteration: int,
+        planning_context: str | None,
     ) -> SupervisorResult:
         logger.debug(
             "event=supervisor.run_started agent=%s task_id=%s start_iteration=%s max_iterations=%s",
@@ -121,7 +142,7 @@ class Supervisor:
             cancellation_requested=lambda: self._is_task_cancelled(stored_task_id),
         )
         session = self.agent.start_session(context)
-        prompt = task
+        prompt = self._build_initial_prompt(task=task, planning_context=planning_context)
         previous_signature: tuple[str, tuple[str, ...], str] | None = None
         no_change_count = 0
 
@@ -372,6 +393,26 @@ class Supervisor:
             or normalized.endswith("/__pycache__")
             or normalized.endswith(".pyc")
         )
+
+    def _build_initial_prompt(self, task: str, planning_context: str | None) -> str:
+        if not planning_context:
+            return task
+        context = self._excerpt(planning_context, self.MAX_PLANNING_CONTEXT_CHARS)
+        return "\n\n".join(
+            [
+                task,
+                "Planning context (read-only, non-authoritative):",
+                context,
+            ]
+        )
+
+    def _excerpt(self, text: str, limit: int) -> str:
+        if len(text) <= limit:
+            return text
+        suffix = "\n... truncated ..."
+        if limit <= len(suffix):
+            return suffix[:limit]
+        return f"{text[: limit - len(suffix)]}{suffix}"
 
     def _stop_session(self, session: SessionRef) -> None:
         try:
