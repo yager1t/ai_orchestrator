@@ -4,7 +4,7 @@ import pytest
 
 from ai_orchestrator import __version__
 from ai_orchestrator.cli.app import main
-from ai_orchestrator.process.runner import ProcessResult, ProcessRunner
+from ai_orchestrator.process.runner import ProcessResult, ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
 from ai_orchestrator.verification.runner import VerificationResult, VerificationRunner
 
@@ -601,6 +601,7 @@ def test_start_uses_cli_alias_default_argv(
         cwd: Path | None = None,
         timeout_sec: int = 300,
         should_cancel=None,
+        options: RunOptions | None = None,
     ) -> ProcessResult:
         captured_argv.append(argv)
         return ProcessResult(

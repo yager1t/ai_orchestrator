@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from ai_orchestrator.agents.base import AgentResult, SessionRef, TaskContext
 from ai_orchestrator.policy.engine import PolicyEngine
-from ai_orchestrator.process.runner import ProcessRunner
+from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 
 
 logger = logging.getLogger(__name__)
@@ -118,8 +118,10 @@ class ClaudeHeadlessAdapter:
         result = self.runner.run(
             argv,
             cwd=context.repo_path,
-            timeout_sec=self.timeout_sec,
-            should_cancel=context.cancellation_requested,
+            options=RunOptions(
+                timeout_sec=self.timeout_sec,
+                should_cancel=context.cancellation_requested,
+            ),
         )
         logger.debug(
             "claude run finished agent=%s session_id=%s status=%s exit_code=%s",

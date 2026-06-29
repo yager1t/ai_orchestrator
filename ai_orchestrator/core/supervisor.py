@@ -8,7 +8,7 @@ from typing import Callable
 
 from ai_orchestrator.agents.base import AgentAdapter, SessionRef, TaskContext
 from ai_orchestrator.core.decision import Decision, DecisionEngine
-from ai_orchestrator.process.runner import ProcessRunner
+from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
 from ai_orchestrator.verification.runner import VerificationCommand, VerificationRunner
 
@@ -345,7 +345,7 @@ class Supervisor:
             result = self.process_runner.run(
                 ["git", "status", "--porcelain=v1"],
                 cwd=repo,
-                timeout_sec=30,
+                options=RunOptions(timeout_sec=30),
             )
         except Exception:
             return None

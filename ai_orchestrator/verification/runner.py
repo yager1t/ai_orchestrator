@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ai_orchestrator.policy.engine import PolicyEngine
-from ai_orchestrator.process.runner import ProcessRunner
+from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,11 @@ class VerificationRunner:
                     error=f"Invalid command: {exc}",
                 )
 
-        completed = self.process_runner.run(argv, cwd=cwd, timeout_sec=command.timeout_sec)
+        completed = self.process_runner.run(
+            argv,
+            cwd=cwd,
+            options=RunOptions(timeout_sec=command.timeout_sec),
+        )
 
         status = "passed" if completed.status == "success" else completed.status
         logger.debug(

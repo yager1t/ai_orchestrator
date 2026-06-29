@@ -2,7 +2,7 @@ from pathlib import Path
 
 from ai_orchestrator.agents.base import AgentResult, SessionRef, TaskContext
 from ai_orchestrator.agents.mock import MockAgentAdapter
-from ai_orchestrator.process.runner import ProcessResult
+from ai_orchestrator.process.runner import ProcessResult, RunOptions
 from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.storage.db import StateStore
 from ai_orchestrator.verification.runner import (
@@ -128,6 +128,7 @@ class SnapshotRunner:
         argv: list[str],
         cwd: Path | None = None,
         timeout_sec: int = 300,
+        options: RunOptions | None = None,
     ) -> ProcessResult:
         snapshot = self.snapshots[min(self.calls, len(self.snapshots) - 1)]
         self.calls += 1
@@ -149,6 +150,7 @@ class FailingSnapshotRunner:
         argv: list[str],
         cwd: Path | None = None,
         timeout_sec: int = 300,
+        options: RunOptions | None = None,
     ) -> ProcessResult:
         error = self.errors[min(self.calls, len(self.errors) - 1)]
         self.calls += 1

@@ -3,7 +3,7 @@ from pathlib import Path
 from ai_orchestrator.agents.base import SessionRef, TaskContext
 from ai_orchestrator.agents.codex import CodexExecAdapter
 from ai_orchestrator.policy.engine import PolicyEngine
-from ai_orchestrator.process.runner import ProcessResult
+from ai_orchestrator.process.runner import ProcessResult, RunOptions
 
 
 class FakeRunner:
@@ -25,8 +25,10 @@ class FakeRunner:
         cwd: Path | None = None,
         timeout_sec: int = 300,
         should_cancel=None,
+        options: RunOptions | None = None,
     ) -> ProcessResult:
-        self.runs.append((argv, cwd, timeout_sec))
+        effective_timeout = options.timeout_sec if options is not None else timeout_sec
+        self.runs.append((argv, cwd, effective_timeout))
         stdout = self.stdout_sequence.pop(0) if self.stdout_sequence else self.stdout
         return ProcessResult(
             status="success",

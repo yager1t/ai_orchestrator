@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from ai_orchestrator.policy.engine import PolicyEngine
-from ai_orchestrator.process.runner import ProcessResult
+from ai_orchestrator.process.runner import ProcessResult, RunOptions
 from ai_orchestrator.verification.runner import VerificationCommand, VerificationRunner
 
 
@@ -16,10 +16,11 @@ class RecordingProcessRunner:
         argv: list[str],
         cwd: Path | None = None,
         timeout_sec: int = 300,
+        options: RunOptions | None = None,
     ) -> ProcessResult:
         self.argv = argv
         self.cwd = cwd
-        self.timeout_sec = timeout_sec
+        self.timeout_sec = options.timeout_sec if options is not None else timeout_sec
         return ProcessResult(status="success", exit_code=0, stdout="ok", stderr="")
 
 
