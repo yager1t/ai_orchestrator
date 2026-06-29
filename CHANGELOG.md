@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added Ruff linting to the development dependencies and CI.
 - Added `RunOptions` for ProcessRunner runtime controls.
 - Added pip dependency caching to GitHub Actions CI.
 - Added configurable scripted results for the mock agent.

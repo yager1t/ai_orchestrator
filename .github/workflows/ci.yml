@@ -27,6 +27,9 @@ jobs:
       - name: Install package
         run: python -m pip install -e ".[dev]"
 
+      - name: Lint
+        run: python -m ruff check ai_orchestrator tests
+
       - name: Run tests
         run: python -m pytest
 
