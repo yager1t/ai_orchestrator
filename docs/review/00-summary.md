@@ -25,7 +25,7 @@ Current verified baseline after follow-up cleanup: 172 passed.
 | `02-yaml-parser.md` | P2 | Deferred by ADR-0002 |
 | `03-secrets-management.md` | P2 | Partially addressed with redaction and security docs |
 | `04-decision-prompt-growth.md` | P2 | Addressed |
-| `05-minor.md` | P3 | Partially addressed |
+| `05-minor.md` | P3 | Addressed |
 
 ## Notes
 

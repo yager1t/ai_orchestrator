@@ -7,7 +7,7 @@ and a more explicit process runner options object.
 
 ## Status
 
-Partially addressed.
+Addressed.
 
 ## Addressed
 
@@ -16,11 +16,6 @@ Partially addressed.
 - Added configurable scripted results to `MockAgentAdapter`.
 - Added `RunOptions` for `ProcessRunner`.
 - Added migration dispatcher tests that simulate version-to-version transitions.
-
-## Deferred
-
 - Python 3.13 CI matrix.
-- Full type checker integration.
-- Root `REVIEW.md` cleanup.
-
-Root `REVIEW.md` remains intentionally untracked until explicitly requested.
+- Full type checker integration in CI.
+- Kept root `REVIEW.md` as a local ignored review note.
