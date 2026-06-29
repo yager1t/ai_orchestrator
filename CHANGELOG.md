@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Added mypy type checking to the development dependencies and CI.
+- Refreshed README project descriptions, runtime notes, and documentation map.
 - Kept root `REVIEW.md` as a local ignored review note.
 - Updated review notes to mark minor P3 follow-ups as addressed.
 - Replaced the legacy mojibake backlog with a current deferred-work list.

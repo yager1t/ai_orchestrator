@@ -1,19 +1,39 @@
 # AI Task Finisher / ai-orch
 
-## Project status
+`ai-orch` is a local supervisor for CLI-based AI agents. It runs an agent,
+verifies the result, and decides whether the task should continue, finish, or be
+marked blocked.
 
-The MVP control plane is implemented and pushed to `origin/main`.
+The core rule: executor agents do not decide that work is done. Completion is
+accepted only after supervisor-controlled verification passes.
+
+```text
+plan -> execute -> verify -> decide -> continue | done | blocked
+```
+
+## Project Status
+
+The MVP control plane is implemented in the current local branch.
 
 Current working surface:
 
-- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `agents`, `agents --check`.
-- Supervisor completes tasks only after verification passes.
-- SQLite state store records tasks, iterations, and verification runs.
-- Policy checks protect verification and agent commands.
-- Runtime controls include cooperative task cancellation, subprocess termination on cancel, and supervisor runtime budgets.
-- Safe metadata logs use stable `event=...` fields without prompt/output payloads.
-- Supported agents: mock, generic CLI, Codex exec, Claude headless, and Kimi/Gemini CLI aliases.
-- Markdown reports are generated from stored task history.
+- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `agents`, `tui`.
+- Supervisor loop with verification-gated completion.
+- SQLite task, iteration, verification, and schema-version storage.
+- Policy checks for agent and verification commands.
+- Cooperative cancellation and subprocess termination.
+- Safe metadata logs with stable `event=...` fields.
+- Markdown reports generated from stored task history.
+- Read-only TUI status, task list, approval, current iteration, and logs views.
+
+Supported agent types:
+
+- `mock`
+- `generic_cli`
+- `codex_exec`
+- `claude_headless`
+- `kimi` / `kimi_cli`
+- `gemini` / `gemini_cli`
 
 Latest verified baseline:
 
@@ -22,55 +42,41 @@ Latest verified baseline:
 - `python -m ai_orchestrator verify --repo .`: passed
 - `git diff --check`: passed
 
-## Language policy
-
-Project descriptions, README updates, and changelog/log entries may be written in English. User-facing assistant replies should stay in Russian unless the user asks otherwise.
-MVP-проект оркестратора локальных ИИ-агентов.
-
-Цель: управлять установленными CLI-агентами — Codex CLI, Claude Code, Gemini CLI, Kimi Code CLI и generic CLI — через единый supervisor-loop:
-
-```text
-PLAN -> DISPATCH -> RUN AGENT -> COLLECT -> VERIFY -> DECIDE -> CONTINUE/DONE/BLOCKED
-```
-
-Главное правило проекта: **задача не считается завершённой по словам агента**. Завершение возможно только после проверок, соответствия Definition of Done и финального отчёта.
-
----
-
-## Быстрый старт для чистого проекта
+## Quick Start
 
 ```bash
-git init
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 python -m pip install -e ".[dev]"
 python -m ai_orchestrator --help
 python -m ai_orchestrator init
-python -m ai_orchestrator start --task "Проверить MVP-каркас" --repo .
+python -m ai_orchestrator start --task "Check the MVP scaffold" --repo .
 python -m pytest
 ```
 
----
+## Configuration
 
-## Agent config
+Agent routing and verification commands are configured in `.ai-orch/config.yaml`.
 
-Agent routing is configured in `.ai-orch/config.yaml`.
+Kimi and Gemini aliases use the same subprocess, policy, timeout, and
+availability-check path as `generic_cli`. Keep their `command` and `args`
+explicit in config when real CLI flags differ from defaults.
 
-Supported MVP agent types:
+Verification commands can use structured `argv` config or legacy `run` strings.
+Structured `argv` is preferred for new configs.
 
-- `mock`
-- `generic_cli`
-- `codex_exec`
-- `claude_headless`
-- `kimi` / `kimi_cli` as config-driven CLI aliases
-- `gemini` / `gemini_cli` as config-driven CLI aliases
+## Runtime Controls
 
-Kimi and Gemini aliases use the same subprocess, policy, timeout, and availability-check path as `generic_cli`. Keep their `command` and `args` explicit in config when real CLI flags differ from the defaults.
+Use `ai-orch cancel <task_id>` to mark a stored task as `cancelled`. Running
+supervisors observe cancellation between steps and request active subprocess
+termination.
 
-## Timeout defaults
+Use global `--log-level debug|info|warning|error` before the subcommand to enable
+safe metadata logs on stderr.
 
-Timeouts are configured per agent and verification command with `timeout_sec` in `.ai-orch/config.yaml`.
-Use `orchestrator.max_runtime_sec` as an outer cooperative budget for the supervisor loop.
+Timeouts are configured per agent and verification command with `timeout_sec`.
+Use `orchestrator.max_runtime_sec` as an outer cooperative budget for the
+supervisor loop.
 
 Default runtime values:
 
@@ -79,98 +85,47 @@ Default runtime values:
 - fallback verification compile command: `120` seconds
 - configured verification commands without `timeout_sec`: `300` seconds
 
-Tune per-command timeouts and the outer runtime budget per project. Long-running headless agents usually need higher limits than simple verification commands.
+## Verification Approvals
 
-## Secrets
-
-Do not put API keys, tokens, passwords, or private key material in `.ai-orch/config.yaml`.
-Use each agent CLI's native login flow or process environment variables for credentials.
-Stored agent and verification outputs redact common secret-like token formats before reports are rendered.
-
-## Runtime controls
-
-Use `ai-orch cancel <task_id>` to mark a stored task as `cancelled`.
-Running supervisors observe the cancelled status between steps and request active subprocess termination.
-Use global `--log-level debug|info|warning|error` before the subcommand to enable safe
-metadata logs on stderr.
-
-## State migrations
-
-The SQLite state store tracks schema version with `PRAGMA user_version`.
-Future schema updates should add explicit version-to-version migration functions in
-`ai_orchestrator/storage/migrations.py`.
-
-## Verification approvals
-
-`ai-orch verify` blocks commands that match `policy.require_approval` unless the user approves the exact configured command string:
+`ai-orch verify` blocks commands that match `policy.require_approval` unless the
+user approves the exact configured command string:
 
 ```bash
 python -m ai_orchestrator verify --repo . --approve-command "git push origin main"
 ```
 
-Approvals are not stored in `.ai-orch/config.yaml`, do not override deny rules, and apply only to verification commands.
+Approvals are not stored in `.ai-orch/config.yaml`, do not override deny rules,
+and apply only to verification commands.
 
----
+## Secrets
 
-## Старт работы через Codex
+Do not put API keys, tokens, passwords, or private key material in
+`.ai-orch/config.yaml`.
 
-В корне проекта уже есть `AGENTS.md`. Codex должен автоматически читать этот файл перед началом работы.
+Use each agent CLI's native login flow or process environment variables for
+credentials. Stored agent and verification outputs redact common secret-like
+token formats before reports are rendered.
 
-Рекомендуемый запуск:
+## State Migrations
 
-```bash
-codex
-```
+The SQLite state store tracks schema version with `PRAGMA user_version`.
+Future schema updates should add explicit version-to-version migration functions
+in `ai_orchestrator/storage/migrations.py`.
 
-или для неинтерактивного режима:
+## Documentation Map
 
-```bash
-codex exec --sandbox workspace-write "Выполни задачу из tasks/001_mvp_bootstrap.md. Следуй AGENTS.md."
-```
+- `docs/ARCHITECTURE.md`: current component overview.
+- `docs/MVP_IMPLEMENTATION_PLAN.md`: implemented phases and deferred work.
+- `docs/BACKLOG.md`: current backlog.
+- `docs/SECURITY.md`: security model and secret handling.
+- `docs/review/`: normalized review findings and follow-up notes.
+- `docs/RELEASE.md`: release checklist.
+- `CHANGELOG.md`: project change log.
 
----
+## Development Rules
 
-## Что входит в стартовый комплект
-
-```text
-AGENTS.md                         # главные инструкции Codex для проекта
-AGENTS_GLOBAL_TEMPLATE.md          # шаблон глобальных правил ~/.codex/AGENTS.md
-docs/AI_DEV_RULES.md               # правила разработки с ИИ
-docs/AGENT_TASK_DISTRIBUTION.md    # распределение агентских ролей
-docs/CODEX_WORKFLOW.md             # как работать в Codex по шагам
-docs/MVP_IMPLEMENTATION_PLAN.md    # этапы разработки MVP
-docs/BACKLOG.md                    # стартовый backlog
-docs/ARCHITECTURE.md               # архитектура MVP
-docs/SECURITY.md                   # безопасность
-prompts/                           # промпты для ролей агентов
-tasks/                             # шаблоны задач
-.ai-orch/config.yaml               # пример будущего конфига оркестратора
-ai_orchestrator/                   # минимальный Python-каркас
-tests/                             # стартовые тесты
-```
-
----
-
-## Первый рекомендуемый порядок разработки
-
-1. Прочитать `AGENTS.md`.
-2. Прочитать `docs/AGENT_TASK_DISTRIBUTION.md`.
-3. Начать с `tasks/001_mvp_bootstrap.md`.
-4. Реализовывать только один bounded step за итерацию.
-5. После каждого изменения запускать проверки.
-6. Фиксировать результат в `docs/DECISIONS.md` и `CHANGELOG.md`.
-
----
-
-## Основной принцип
-
-MVP должен быть не “макросом поверх окон”, а **control plane над CLI-агентами**.
-
-Приоритет интеграции:
-
-1. Headless / non-interactive CLI.
-2. JSON / JSONL / stream output.
-3. Resume / continue session.
-4. Subprocess / PTY.
-5. MCP / ACP.
-6. GUI/window automation только как fallback.
+- Work in small bounded steps.
+- Prefer standard-library code until a dependency is justified.
+- Run tests after code changes.
+- Do not push, publish, deploy, or run destructive commands without explicit user approval.
+- Keep project-facing docs and changelog entries in English.
