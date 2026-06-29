@@ -1,110 +1,29 @@
 # Backlog
 
-## P0 — стартовый MVP
+This backlog tracks future work after the current local MVP hardening pass.
+Completed MVP items are kept in project history, review notes, and the changelog.
 
-### TASK-001: AgentAdapter + MockAgentAdapter
+## P0
 
-Роль: Adapter Agent
-Файлы:
-
-```text
-ai_orchestrator/agents/base.py
-ai_orchestrator/agents/mock.py
-tests/test_mock_agent.py
-```
-
-DoD:
-
-- есть единый интерфейс агента;
-- mock adapter возвращает предсказуемый результат;
-- тесты проходят.
-
----
-
-### TASK-002: VerificationRunner
-
-Роль: Verification Agent
-Файлы:
-
-```text
-ai_orchestrator/verification/runner.py
-tests/test_verification.py
-```
-
-DoD:
-
-- умеет запускать shell-команду;
-- сохраняет exit code/stdout/stderr;
-- поддерживает timeout;
-- тесты success/failure проходят.
-
----
-
-### TASK-003: Supervisor FSM
-
-Роль: Supervisor Agent
-Файлы:
-
-```text
-ai_orchestrator/core/fsm.py
-ai_orchestrator/core/supervisor.py
-tests/test_supervisor.py
-```
-
-DoD:
-
-- состояния описаны enum;
-- есть минимальный цикл run-once;
-- есть status done/blocked;
-- тесты проходят.
-
----
-
-### TASK-004: CLI
-
-Роль: CLI/TUI Agent
-Файлы:
-
-```text
-ai_orchestrator/cli/app.py
-ai_orchestrator/__main__.py
-```
-
-DoD:
-
-- `python -m ai_orchestrator --help` работает;
-- `init`, `start`, `verify` доступны.
-
----
-
-### TASK-005: PolicyEngine
-
-Роль: Security Agent
-Файлы:
-
-```text
-ai_orchestrator/policy/engine.py
-tests/test_policy.py
-```
-
-DoD:
-
-- deny для `rm -rf /`;
-- ask для `git push`;
-- allow для безопасных read-only команд.
-
----
+No open P0 items.
 
 ## P1
 
-- SQLite storage.
-- Markdown report.
-- GenericCLIAdapter.
-- CodexExecAdapter.
+No open P1 items.
 
 ## P2
 
-- Claude adapter.
-- Kimi/Gemini specialized adapters beyond current config-driven CLI aliases.
-- TUI.
-- MCP/ACP research spikes.
+No open P2 items.
+
+## P3 / Deferred
+
+- Decide whether to replace the minimal built-in YAML parser with PyYAML.
+- Add deeper adapter contract tests for provider-specific CLI behavior.
+- Expand TUI beyond read-only views when interactive workflows are needed.
+- Continue MCP/ACP research spikes before adding runtime support.
+- Add release packaging checks when preparing a tagged release.
+
+## Documentation Cleanup
+
+- Normalize remaining legacy docs with mojibake text.
+- Keep review findings in `docs/review/` and local scratch notes out of git.
