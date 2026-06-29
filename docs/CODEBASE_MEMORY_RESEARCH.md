@@ -96,6 +96,7 @@ Current recommended manual flow before a risky task:
 ```bash
 python -m ai_orchestrator memory status --repo .
 python -m ai_orchestrator memory index --repo . --approve
+python -m ai_orchestrator memory preflight --repo . --area supervisor
 python -m ai_orchestrator memory architecture --repo .
 python -m ai_orchestrator memory search --repo . --pattern ".*Policy.*" --label Class
 python -m ai_orchestrator memory impact --repo .
@@ -103,6 +104,16 @@ python -m ai_orchestrator memory impact --repo .
 
 The next automation step should be opt-in, such as `start --use-memory`, and
 must stay read-only unless the user separately approves indexing.
+
+`memory preflight` is the manual bridge before supervisor automation. It runs
+the read-only architecture, symbol search, and impact queries for a selected
+work area:
+
+```bash
+python -m ai_orchestrator memory preflight --repo . --area supervisor
+python -m ai_orchestrator memory preflight --repo . --area adapter
+python -m ai_orchestrator memory preflight --repo . --area release
+```
 
 ## Manual Playbooks
 
@@ -116,6 +127,7 @@ Goal: find affected control-flow and safety boundaries before changing
 supervisor, policy, verification, subprocess, or state behavior.
 
 ```bash
+python -m ai_orchestrator memory preflight --repo . --area supervisor
 python -m ai_orchestrator memory status --repo .
 python -m ai_orchestrator memory architecture --repo .
 python -m ai_orchestrator memory search --repo . --pattern ".*Supervisor.*" --label Class
@@ -137,6 +149,7 @@ Goal: understand the adapter contract and nearby implementations before adding
 or changing a CLI agent adapter.
 
 ```bash
+python -m ai_orchestrator memory preflight --repo . --area adapter
 python -m ai_orchestrator memory architecture --repo .
 python -m ai_orchestrator memory search --repo . --pattern ".*Adapter.*"
 python -m ai_orchestrator memory search --repo . --pattern ".*CLI.*" --label Class
@@ -156,6 +169,7 @@ Capture:
 Goal: compile evidence for a shipping packet or final review.
 
 ```bash
+python -m ai_orchestrator memory preflight --repo . --area release
 python -m ai_orchestrator memory status --repo .
 python -m ai_orchestrator memory architecture --repo .
 python -m ai_orchestrator memory impact --repo .
@@ -208,6 +222,7 @@ python -m ai_orchestrator memory status --repo .
 python -m ai_orchestrator memory search --repo . --pattern ".*Supervisor.*" --label Class
 python -m ai_orchestrator memory architecture --repo .
 python -m ai_orchestrator memory impact --repo .
+python -m ai_orchestrator memory preflight --repo . --area supervisor
 python -m ai_orchestrator memory index --repo . --approve
 ```
 

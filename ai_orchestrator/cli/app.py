@@ -9,7 +9,7 @@ from ai_orchestrator.agents.base import AgentAdapter
 from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
 from ai_orchestrator.config.loader import ProjectConfig, load_project_config
 from ai_orchestrator.core.supervisor import Supervisor
-from ai_orchestrator.memory import CodebaseMemoryClient
+from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.reporting.markdown import render_task_report
 from ai_orchestrator.storage.db import StateStore
@@ -81,6 +81,17 @@ def build_parser() -> argparse.ArgumentParser:
     memory_architecture.add_argument("--repo", default=".")
     memory_impact = memory_sub.add_parser("impact", help="Map current git diff impact")
     memory_impact.add_argument("--repo", default=".")
+    memory_preflight = memory_sub.add_parser(
+        "preflight",
+        help="Run a read-only memory preflight for a work area",
+    )
+    memory_preflight.add_argument("--repo", default=".")
+    memory_preflight.add_argument(
+        "--area",
+        choices=["supervisor", "adapter", "release"],
+        required=True,
+    )
+    memory_preflight.add_argument("--limit", type=int, default=20)
     memory_index = memory_sub.add_parser("index", help="Index the repository after explicit approval")
     memory_index.add_argument("--repo", default=".")
     memory_index.add_argument(
@@ -372,6 +383,9 @@ def _run_memory_command(args: argparse.Namespace, parser: argparse.ArgumentParse
         print(f"available: {'yes' if client.check_available() else 'no'}")
         return 0
 
+    if args.memory_command == "preflight":
+        return _run_memory_preflight(args, config, client, project, repo)
+
     tool_args: dict[str, object]
     tool = args.memory_command
     if args.memory_command == "search":
@@ -402,6 +416,72 @@ def _run_memory_command(args: argparse.Namespace, parser: argparse.ArgumentParse
         return 1
 
     result = client.run_tool(tool, tool_args, cwd=repo)
+    _print_memory_result(tool, result)
+    return 0 if result.status == "passed" else 1
+
+
+def _run_memory_preflight(
+    args: argparse.Namespace,
+    config: ProjectConfig,
+    client: CodebaseMemoryClient,
+    project: str,
+    repo: Path,
+) -> int:
+    print(f"preflight: area={args.area}")
+    print(f"provider: {config.memory.provider or 'codebase-memory-mcp'}")
+    print(f"command: {' '.join(config.memory.command)}")
+    print(f"project: {project or '(default)'}")
+    print(f"available: {'yes' if client.check_available() else 'no'}")
+
+    statuses: list[str] = []
+    for label, tool, tool_args in _memory_preflight_steps(args.area, project, args.limit):
+        print(f"step: {label}")
+        result = client.run_tool(tool, tool_args, cwd=repo)
+        _print_memory_result(tool, result)
+        statuses.append(result.status)
+    return 0 if all(status == "passed" for status in statuses) else 1
+
+
+def _memory_preflight_steps(
+    area: str,
+    project: str,
+    limit: int,
+) -> list[tuple[str, str, dict[str, object]]]:
+    steps: list[tuple[str, str, dict[str, object]]] = [
+        ("architecture", "get_architecture", {"aspects": ["all"]}),
+    ]
+    patterns = {
+        "supervisor": [
+            (".*Supervisor.*", "Class"),
+            (".*Policy.*", "Class"),
+            (".*Verification.*", "Class"),
+            (".*State.*", "Class"),
+            (".*ProcessRunner.*", None),
+        ],
+        "adapter": [
+            (".*Adapter.*", None),
+            (".*CLI.*", "Class"),
+            (".*ProcessRunner.*", None),
+            (".*Policy.*", "Class"),
+        ],
+        "release": [],
+    }[area]
+    for pattern, label in patterns:
+        search_args: dict[str, object] = {"name_pattern": pattern, "limit": limit}
+        if label:
+            search_args["label"] = label
+        steps.append((f"search {pattern}", "search_graph", search_args))
+    steps.append(("impact", "detect_changes", {}))
+
+    if not project:
+        return steps
+    return [
+        (label, tool, {**tool_args, "project": project})
+        for label, tool, tool_args in steps
+    ]
+
+
+def _print_memory_result(tool: str, result: CodebaseMemoryResult) -> None:
     print(f"{tool}: {result.status} exit={result.exit_code}")
     if result.error:
         print(f"error: {result.error}")
@@ -409,7 +489,6 @@ def _run_memory_command(args: argparse.Namespace, parser: argparse.ArgumentParse
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
     if result.stderr:
         print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
-    return 0 if result.status == "passed" else 1
 
 
 def _configure_logging(log_level: str | None) -> None:

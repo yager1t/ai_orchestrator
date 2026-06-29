@@ -854,6 +854,104 @@ def test_memory_index_runs_with_approve_flag(capsys, monkeypatch, tmp_path: Path
     ]
 
 
+def test_memory_preflight_adapter_runs_read_only_steps(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured_argv: list[list[str]] = []
+
+    def fake_run(self: ProcessRunner, argv: list[str], **kwargs) -> ProcessResult:
+        captured_argv.append(argv)
+        return ProcessResult(status="success", exit_code=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(ProcessRunner, "check_available", lambda self, command: True)
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(tmp_path, include_memory=True, memory_project="demo")
+
+    exit_code = main(
+        [
+            "memory",
+            "preflight",
+            "--repo",
+            str(tmp_path),
+            "--area",
+            "adapter",
+            "--limit",
+            "7",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "preflight: area=adapter" in output
+    assert "available: yes" in output
+    assert captured_argv == [
+        [
+            "codebase-memory-mcp",
+            "cli",
+            "get_architecture",
+            '{"aspects": ["all"], "project": "demo"}',
+        ],
+        [
+            "codebase-memory-mcp",
+            "cli",
+            "search_graph",
+            '{"limit": 7, "name_pattern": ".*Adapter.*", "project": "demo"}',
+        ],
+        [
+            "codebase-memory-mcp",
+            "cli",
+            "search_graph",
+            '{"label": "Class", "limit": 7, "name_pattern": ".*CLI.*", "project": "demo"}',
+        ],
+        [
+            "codebase-memory-mcp",
+            "cli",
+            "search_graph",
+            '{"limit": 7, "name_pattern": ".*ProcessRunner.*", "project": "demo"}',
+        ],
+        [
+            "codebase-memory-mcp",
+            "cli",
+            "search_graph",
+            '{"label": "Class", "limit": 7, "name_pattern": ".*Policy.*", "project": "demo"}',
+        ],
+        [
+            "codebase-memory-mcp",
+            "cli",
+            "detect_changes",
+            '{"project": "demo"}',
+        ],
+    ]
+
+
+def test_memory_preflight_returns_failure_when_any_step_fails(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls = 0
+
+    def fake_run(self: ProcessRunner, argv: list[str], **kwargs) -> ProcessResult:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return ProcessResult(status="failed", exit_code=2, stdout="", stderr="bad")
+        return ProcessResult(status="success", exit_code=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(ProcessRunner, "check_available", lambda self, command: True)
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(tmp_path, include_memory=True)
+
+    exit_code = main(["memory", "preflight", "--repo", str(tmp_path), "--area", "release"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "detect_changes: failed exit=2" in output
+    assert calls == 2
+
+
 def write_config(
     repo: Path,
     command_name: str = "custom",

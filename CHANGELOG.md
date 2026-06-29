@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `ai-orch memory preflight --area supervisor|adapter|release` for read-only planning context.
 - Added manual Codebase Memory playbooks for supervisor, adapter, and release review work.
 - Documented the manual Codebase Memory workflow before supervisor planning automation.
 - Added CLI and config support for the optional Codebase Memory provider.

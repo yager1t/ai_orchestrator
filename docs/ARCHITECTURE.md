@@ -122,6 +122,7 @@ The initial CLI surface is read-mostly:
 - `memory search`
 - `memory architecture`
 - `memory impact`
+- `memory preflight --area supervisor|adapter|release`
 - `memory index --approve`
 
 ## Integration Priority
