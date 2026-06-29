@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from ai_orchestrator.process.runner import ProcessRunner
+from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 
 
 def test_process_runner_success() -> None:
@@ -104,6 +104,44 @@ def test_process_runner_terminates_process_on_cancel(monkeypatch) -> None:
     assert result.error == "Command cancelled"
     assert result.stdout == "partial stdout"
     assert result.stderr == "partial stderr"
+    assert processes[0].terminated is True
+    assert processes[0].killed is False
+
+
+def test_process_runner_accepts_run_options(monkeypatch) -> None:
+    processes = []
+
+    class FakePopen:
+        def __init__(self, *args, **kwargs) -> None:
+            self.terminated = False
+            self.killed = False
+            processes.append(self)
+
+        def communicate(self, timeout=None):
+            if not self.terminated:
+                raise subprocess.TimeoutExpired(cmd=["slow"], timeout=timeout)
+            return "cancel stdout", "cancel stderr"
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+    monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
+
+    result = ProcessRunner().run(
+        ["slow"],
+        options=RunOptions(
+            timeout_sec=30,
+            terminate_grace_sec=1,
+            should_cancel=lambda: True,
+        ),
+    )
+
+    assert result.status == "cancelled"
+    assert result.stdout == "cancel stdout"
+    assert result.stderr == "cancel stderr"
     assert processes[0].terminated is True
     assert processes[0].killed is False
 

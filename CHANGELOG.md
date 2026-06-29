@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `RunOptions` for ProcessRunner runtime controls.
 - Added pip dependency caching to GitHub Actions CI.
 - Added configurable scripted results for the mock agent.
 - Documented PolicyEngine scope as defense-in-depth and added redaction guidance.

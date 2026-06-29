@@ -21,6 +21,13 @@ class ProcessResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class RunOptions:
+    timeout_sec: int = 300
+    terminate_grace_sec: int = 5
+    should_cancel: Callable[[], bool] | None = None
+
+
 class ProcessRunner:
     def check_available(self, command: str) -> bool:
         return shutil.which(command) is not None
@@ -32,7 +39,13 @@ class ProcessRunner:
         timeout_sec: int = 300,
         terminate_grace_sec: int = 5,
         should_cancel: Callable[[], bool] | None = None,
+        options: RunOptions | None = None,
     ) -> ProcessResult:
+        if options is not None:
+            timeout_sec = options.timeout_sec
+            terminate_grace_sec = options.terminate_grace_sec
+            should_cancel = options.should_cancel
+
         if not argv:
             logger.warning("event=process.empty_argv")
             return ProcessResult(
