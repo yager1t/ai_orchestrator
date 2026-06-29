@@ -7,6 +7,7 @@
 - Updated review notes to mark minor P3 follow-ups as addressed.
 - Replaced the legacy mojibake backlog with a current deferred-work list.
 - Replaced the legacy mojibake MVP implementation plan with a current status plan.
+- Replaced the legacy mojibake architecture notes with a current component overview.
 - Changed internal ProcessRunner callers to use `RunOptions`.
 - Added Python 3.12/3.13 CI matrix coverage.
 - Added normalized round 2 review notes under `docs/review/`.
