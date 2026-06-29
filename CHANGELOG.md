@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added pip dependency caching to GitHub Actions CI.
 - Added configurable scripted results for the mock agent.
 - Documented PolicyEngine scope as defense-in-depth and added redaction guidance.
 - Improved follow-up prompts with original task context and tail-focused failure excerpts.
