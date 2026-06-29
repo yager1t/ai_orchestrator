@@ -81,7 +81,7 @@ memory:
 
 ## Supervisor Usage
 
-Before dispatching a risky task, the supervisor can enrich context with:
+Future supervisor planning can enrich context with:
 
 1. `get_architecture` for module overview.
 2. `search_graph` for relevant symbols.
@@ -90,6 +90,19 @@ Before dispatching a risky task, the supervisor can enrich context with:
 
 The enriched context should be summarized and stored as iteration metadata, not
 treated as verified truth.
+
+Current recommended manual flow before a risky task:
+
+```bash
+python -m ai_orchestrator memory status --repo .
+python -m ai_orchestrator memory index --repo . --approve
+python -m ai_orchestrator memory architecture --repo .
+python -m ai_orchestrator memory search --repo . --pattern ".*Policy.*" --label Class
+python -m ai_orchestrator memory impact --repo .
+```
+
+The next automation step should be opt-in, such as `start --use-memory`, and
+must stay read-only unless the user separately approves indexing.
 
 ## Shipping Packet Usage
 

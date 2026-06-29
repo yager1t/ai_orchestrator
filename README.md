@@ -25,6 +25,7 @@ Current working surface:
 - Safe metadata logs with stable `event=...` fields.
 - Markdown reports generated from stored task history.
 - Read-only TUI status, task list, approval, current iteration, and logs views.
+- Optional Codebase Memory CLI helpers for manual architecture, search, and impact context.
 
 Supported agent types:
 
@@ -37,7 +38,7 @@ Supported agent types:
 
 Latest verified baseline:
 
-- `python -m pytest`: 172 passed
+- `python -m pytest`: 182 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `git diff --check`: passed
@@ -64,6 +65,37 @@ explicit in config when real CLI flags differ from defaults.
 
 Verification commands can use structured `argv` config or legacy `run` strings.
 Structured `argv` is preferred for new configs.
+
+Optional code memory provider config:
+
+```yaml
+memory:
+  provider: "codebase-memory-mcp"
+  command:
+    - "codebase-memory-mcp"
+    - "cli"
+  project: "ai_orchestrator_starter"
+  timeout_sec: 120
+```
+
+## Manual Code Memory Workflow
+
+Code memory is currently an optional manual context tool. The supervisor does
+not automatically use memory output for planning, and verification remains the
+source of truth.
+
+Suggested flow before a risky change:
+
+```bash
+python -m ai_orchestrator memory status --repo .
+python -m ai_orchestrator memory index --repo . --approve
+python -m ai_orchestrator memory architecture --repo .
+python -m ai_orchestrator memory search --repo . --pattern ".*Supervisor.*" --label Class
+python -m ai_orchestrator memory impact --repo .
+```
+
+Use the output as planning context for the next bounded task. Do not treat it as
+proof that behavior is correct.
 
 ## Runtime Controls
 
@@ -118,6 +150,7 @@ in `ai_orchestrator/storage/migrations.py`.
 - `docs/MVP_IMPLEMENTATION_PLAN.md`: implemented phases and deferred work.
 - `docs/BACKLOG.md`: current backlog.
 - `docs/SECURITY.md`: security model and secret handling.
+- `docs/CODEBASE_MEMORY_RESEARCH.md`: optional Codebase Memory integration notes.
 - `docs/review/`: normalized review findings and follow-up notes.
 - `docs/RELEASE.md`: release checklist.
 - `CHANGELOG.md`: project change log.

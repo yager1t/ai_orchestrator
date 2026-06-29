@@ -22,6 +22,7 @@ No open P2 items.
 - Expand TUI beyond read-only views when interactive workflows are needed.
 - Continue MCP/ACP research spikes before adding runtime support.
 - Add an optional Codebase Memory provider spike through `ProcessRunner`.
+- Add opt-in supervisor planning enrichment with `--use-memory` after manual usage proves useful.
 - Add release packaging checks when preparing a tagged release.
 
 ## Documentation Cleanup

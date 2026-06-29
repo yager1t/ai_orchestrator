@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Documented the manual Codebase Memory workflow before supervisor planning automation.
 - Added CLI and config support for the optional Codebase Memory provider.
 - Added an optional Codebase Memory client wrapper behind `ProcessRunner` and policy approval.
 - Added Codebase Memory MCP research notes for optional external memory integration.
