@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 
-from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.storage.db import StateStore, StoredVerificationRun
 from ai_orchestrator.storage.redaction import redact_secrets
 
 
@@ -97,7 +98,7 @@ def _indent(text: str, prefix: str) -> str:
     return "\n".join(f"{prefix}{line}" for line in text.splitlines())
 
 
-def _status_summary(verification_runs: list[object]) -> str:
+def _status_summary(verification_runs: Sequence[StoredVerificationRun]) -> str:
     if not verification_runs:
         return ""
 

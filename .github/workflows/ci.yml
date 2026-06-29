@@ -34,6 +34,9 @@ jobs:
       - name: Lint
         run: python -m ruff check ai_orchestrator tests
 
+      - name: Type check
+        run: python -m mypy
+
       - name: Run tests
         run: python -m pytest
 

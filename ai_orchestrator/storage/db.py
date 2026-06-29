@@ -237,7 +237,9 @@ class StateStore:
                     _now(),
                 ),
             )
-            iteration_id = int(cursor.lastrowid)
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create state iteration")
+            iteration_id = cursor.lastrowid
         logger.debug(
             "state iteration added task_id=%s iteration_id=%s iteration_index=%s agent=%s status=%s",
             task_id,
@@ -290,7 +292,9 @@ class StateStore:
                     _now(),
                 ),
             )
-            verification_id = int(cursor.lastrowid)
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create verification run")
+            verification_id = cursor.lastrowid
         logger.debug(
             "state verification added task_id=%s iteration_id=%s verification_id=%s name=%s status=%s",
             task_id,

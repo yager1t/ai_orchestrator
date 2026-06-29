@@ -90,7 +90,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
     verification_commands: list[VerificationCommand] = []
     policy_deny_patterns: list[str] = []
     policy_ask_patterns: list[str] = []
-    current_command: dict[str, str] | None = None
+    current_command: dict[str, object] | None = None
     in_verification_argv = False
     section: str | None = None
     in_verification_commands = False
@@ -117,7 +117,8 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
             in_fallback_agents = False
             policy_list = None
             in_agent_args = False
-            current_command = _finish_command(current_command, verification_commands)
+            _finish_command(current_command, verification_commands)
+            current_command = None
             continue
 
         if section == "agents":
@@ -137,9 +138,11 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
                 continue
 
             if current_agent is not None and in_agent_args and stripped.startswith("- "):
-                args = current_agent.setdefault("args", [])
-                if isinstance(args, list):
-                    args.append(_strip_quotes(stripped[2:].strip()))
+                args = current_agent.get("args")
+                if not isinstance(args, list):
+                    args = []
+                    current_agent["args"] = args
+                args.append(_strip_quotes(stripped[2:].strip()))
                 continue
 
             if current_agent is not None and ":" in stripped:
@@ -225,7 +228,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
                     argv.append(_strip_quotes(stripped[2:].strip()))
                 continue
 
-            current_command = _finish_command(current_command, verification_commands)
+            _finish_command(current_command, verification_commands)
             current_command = {}
             in_verification_argv = False
             remainder = stripped[2:].strip()
@@ -277,7 +280,7 @@ def _finish_command(
 
     timeout_value = current_command.get("timeout_sec", "300")
     try:
-        timeout_sec = int(timeout_value)
+        timeout_sec = int(str(timeout_value))
     except ValueError:
         timeout_sec = 300
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added mypy type checking to the development dependencies and CI.
 - Changed internal ProcessRunner callers to use `RunOptions`.
 - Added Python 3.12/3.13 CI matrix coverage.
 - Added normalized round 2 review notes under `docs/review/`.

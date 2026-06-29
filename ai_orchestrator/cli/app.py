@@ -113,10 +113,10 @@ def main(argv: list[str] | None = None) -> int:
         repo = Path(args.repo)
         config = load_project_config(repo)
         runner = _verification_runner(config, approved_commands=set(args.approve_command))
-        result = runner.run_many(config.verification_commands, cwd=repo)
-        for item in result:
+        verification_results = runner.run_many(config.verification_commands, cwd=repo)
+        for item in verification_results:
             print(f"{item.name}: {item.status} exit={item.exit_code}")
-        return 0 if all(item.status == "passed" for item in result) else 1
+        return 0 if all(item.status == "passed" for item in verification_results) else 1
 
     if args.command == "status":
         store = _state_store_for_repo(Path(args.repo))
@@ -204,14 +204,14 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(str(exc))
             return 1
-        result = supervisor.run_existing(
+        supervisor_result = supervisor.run_existing(
             task_id=task.task_id,
             task=task.task,
             repo=Path(task.repo_path),
         )
-        task_prefix = f"{result.task_id}: " if result.task_id else ""
-        print(f"{task_prefix}{result.summary}")
-        return 0 if result.status == "done" else 1
+        task_prefix = f"{supervisor_result.task_id}: " if supervisor_result.task_id else ""
+        print(f"{task_prefix}{supervisor_result.summary}")
+        return 0 if supervisor_result.status == "done" else 1
 
     if args.command == "report":
         repo = Path(args.repo)
@@ -238,10 +238,10 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(str(exc))
             return 1
-        result = supervisor.run_once(task=args.task, repo=repo)
-        task_prefix = f"{result.task_id}: " if result.task_id else ""
-        print(f"{task_prefix}{result.summary}")
-        return 0 if result.status == "done" else 1
+        supervisor_result = supervisor.run_once(task=args.task, repo=repo)
+        task_prefix = f"{supervisor_result.task_id}: " if supervisor_result.task_id else ""
+        print(f"{task_prefix}{supervisor_result.summary}")
+        return 0 if supervisor_result.status == "done" else 1
 
     parser.print_help()
     return 0
