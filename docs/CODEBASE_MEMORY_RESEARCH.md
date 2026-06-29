@@ -104,6 +104,71 @@ python -m ai_orchestrator memory impact --repo .
 The next automation step should be opt-in, such as `start --use-memory`, and
 must stay read-only unless the user separately approves indexing.
 
+## Manual Playbooks
+
+Use these playbooks before opening a bounded implementation step. They are
+manual by design: copy the useful findings into the task notes or prompt, then
+let normal verification decide whether the task is done.
+
+### Supervisor / Security Change
+
+Goal: find affected control-flow and safety boundaries before changing
+supervisor, policy, verification, subprocess, or state behavior.
+
+```bash
+python -m ai_orchestrator memory status --repo .
+python -m ai_orchestrator memory architecture --repo .
+python -m ai_orchestrator memory search --repo . --pattern ".*Supervisor.*" --label Class
+python -m ai_orchestrator memory search --repo . --pattern ".*Policy.*" --label Class
+python -m ai_orchestrator memory search --repo . --pattern ".*Verification.*" --label Class
+python -m ai_orchestrator memory impact --repo .
+```
+
+Capture:
+
+- modules touched by the change;
+- command execution or approval boundaries;
+- verification ownership boundaries;
+- tests that should pin the negative path.
+
+### Adapter Change
+
+Goal: understand the adapter contract and nearby implementations before adding
+or changing a CLI agent adapter.
+
+```bash
+python -m ai_orchestrator memory architecture --repo .
+python -m ai_orchestrator memory search --repo . --pattern ".*Adapter.*"
+python -m ai_orchestrator memory search --repo . --pattern ".*CLI.*" --label Class
+python -m ai_orchestrator memory search --repo . --pattern ".*ProcessRunner.*"
+python -m ai_orchestrator memory impact --repo .
+```
+
+Capture:
+
+- adapter contract methods;
+- subprocess and timeout behavior;
+- policy checks before execution;
+- provider-specific tests to add or update.
+
+### Release / Review
+
+Goal: compile evidence for a shipping packet or final review.
+
+```bash
+python -m ai_orchestrator memory status --repo .
+python -m ai_orchestrator memory architecture --repo .
+python -m ai_orchestrator memory impact --repo .
+python -m ai_orchestrator verify --repo .
+```
+
+Capture:
+
+- architecture summary used or skipped;
+- changed symbols and likely blast radius;
+- high-risk boundaries affected by the diff;
+- checks run and remaining manual gaps.
+
 ## Shipping Packet Usage
 
 Shipping packets can include:

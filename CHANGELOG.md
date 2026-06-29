@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added manual Codebase Memory playbooks for supervisor, adapter, and release review work.
 - Documented the manual Codebase Memory workflow before supervisor planning automation.
 - Added CLI and config support for the optional Codebase Memory provider.
 - Added an optional Codebase Memory client wrapper behind `ProcessRunner` and policy approval.

@@ -97,6 +97,9 @@ python -m ai_orchestrator memory impact --repo .
 Use the output as planning context for the next bounded task. Do not treat it as
 proof that behavior is correct.
 
+See `docs/CODEBASE_MEMORY_RESEARCH.md` for supervisor/security, adapter, and
+release/review playbooks.
+
 ## Runtime Controls
 
 Use `ai-orch cancel <task_id>` to mark a stored task as `cancelled`. Running
