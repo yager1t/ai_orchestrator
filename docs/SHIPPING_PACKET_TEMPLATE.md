@@ -67,6 +67,16 @@ Repository state:
 | --- | --- | --- | --- |
 | ... | ... | ... | ... |
 
+## Code Memory Context
+
+| Item | Status | Evidence / notes |
+| --- | --- | --- |
+| Codebase Memory indexed | yes / no / n/a | ... |
+| Architecture summary used | yes / no / n/a | ... |
+| Change impact checked | yes / no / n/a | ... |
+| High-risk affected symbols | yes / no / n/a | ... |
+| ADR links or gaps | yes / no / n/a | ... |
+
 ## Security Summary
 
 | Finding | Severity | Evidence | Fix / next step | Status |

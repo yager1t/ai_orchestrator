@@ -9,6 +9,7 @@ from ai_orchestrator.agents.base import AgentAdapter
 from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
 from ai_orchestrator.config.loader import ProjectConfig, load_project_config
 from ai_orchestrator.core.supervisor import Supervisor
+from ai_orchestrator.memory import CodebaseMemoryClient
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.reporting.markdown import render_task_report
 from ai_orchestrator.storage.db import StateStore
@@ -67,6 +68,33 @@ def build_parser() -> argparse.ArgumentParser:
     agents.add_argument("--repo", default=".")
     agents.add_argument("--check", action="store_true", help="Check enabled agent availability")
 
+    memory = sub.add_parser("memory", help="Optional code memory provider helpers")
+    memory_sub = memory.add_subparsers(dest="memory_command")
+    memory_status = memory_sub.add_parser("status", help="Show memory provider status")
+    memory_status.add_argument("--repo", default=".")
+    memory_search = memory_sub.add_parser("search", help="Search indexed code symbols")
+    memory_search.add_argument("--repo", default=".")
+    memory_search.add_argument("--pattern", required=True)
+    memory_search.add_argument("--label")
+    memory_search.add_argument("--limit", type=int, default=20)
+    memory_architecture = memory_sub.add_parser("architecture", help="Show indexed architecture")
+    memory_architecture.add_argument("--repo", default=".")
+    memory_impact = memory_sub.add_parser("impact", help="Map current git diff impact")
+    memory_impact.add_argument("--repo", default=".")
+    memory_index = memory_sub.add_parser("index", help="Index the repository after explicit approval")
+    memory_index.add_argument("--repo", default=".")
+    memory_index.add_argument(
+        "--approve",
+        action="store_true",
+        help="Approve the exact Codebase Memory index command for this invocation",
+    )
+    memory_index.add_argument(
+        "--approve-command",
+        action="append",
+        default=[],
+        help="Approve one exact Codebase Memory command string",
+    )
+
     tui = sub.add_parser("tui", help="Read-only text UI helpers")
     tui_sub = tui.add_subparsers(dest="tui_command")
     tui_approvals = tui_sub.add_parser("approvals", help="Render pending verification approvals")
@@ -108,6 +136,9 @@ def main(argv: list[str] | None = None) -> int:
                 details += f" available={_agent_availability(config, agent.name)}"
             print(details)
         return 0
+
+    if args.command == "memory":
+        return _run_memory_command(args, parser)
 
     if args.command == "verify":
         repo = Path(args.repo)
@@ -309,6 +340,76 @@ def _verification_runner(
         policy_engine=_policy_engine(config),
         approved_commands=approved_commands,
     )
+
+
+def _memory_client(
+    config: ProjectConfig,
+    approved_commands: set[str] | None = None,
+) -> CodebaseMemoryClient:
+    return CodebaseMemoryClient(
+        command=config.memory.command,
+        policy_engine=_policy_engine(config),
+        approved_commands=approved_commands,
+        timeout_sec=config.memory.timeout_sec,
+    )
+
+
+def _run_memory_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.memory_command is None:
+        parser.print_help()
+        return 1
+
+    repo = Path(args.repo)
+    config = load_project_config(repo)
+    approved_commands = set(getattr(args, "approve_command", []) or [])
+    client = _memory_client(config, approved_commands=approved_commands)
+    project = config.memory.project
+
+    if args.memory_command == "status":
+        print(f"provider: {config.memory.provider or 'codebase-memory-mcp'}")
+        print(f"command: {' '.join(config.memory.command)}")
+        print(f"project: {project or '(default)'}")
+        print(f"available: {'yes' if client.check_available() else 'no'}")
+        return 0
+
+    tool_args: dict[str, object]
+    tool = args.memory_command
+    if args.memory_command == "search":
+        tool = "search_graph"
+        tool_args = {"name_pattern": args.pattern, "limit": args.limit}
+        if args.label:
+            tool_args["label"] = args.label
+        if project:
+            tool_args["project"] = project
+    elif args.memory_command == "architecture":
+        tool = "get_architecture"
+        tool_args = {"aspects": ["all"]}
+        if project:
+            tool_args["project"] = project
+    elif args.memory_command == "impact":
+        tool = "detect_changes"
+        tool_args = {}
+        if project:
+            tool_args["project"] = project
+    elif args.memory_command == "index":
+        tool = "index_repository"
+        tool_args = {"repo_path": str(repo.resolve())}
+        if args.approve:
+            approved_commands.add(client.build_command_string(tool=tool, args=tool_args))
+            client = _memory_client(config, approved_commands=approved_commands)
+    else:
+        parser.print_help()
+        return 1
+
+    result = client.run_tool(tool, tool_args, cwd=repo)
+    print(f"{tool}: {result.status} exit={result.exit_code}")
+    if result.error:
+        print(f"error: {result.error}")
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if result.stderr:
+        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
+    return 0 if result.status == "passed" else 1
 
 
 def _configure_logging(log_level: str | None) -> None:

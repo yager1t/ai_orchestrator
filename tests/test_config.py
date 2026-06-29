@@ -119,3 +119,27 @@ orchestrator:
     config = load_project_config(tmp_path)
 
     assert config.max_runtime_sec == 120
+
+
+def test_load_project_config_reads_memory_provider(tmp_path: Path) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+memory:
+  provider: "codebase-memory-mcp"
+  command:
+    - "codebase-memory-mcp"
+    - "cli"
+  project: "demo"
+  timeout_sec: 45
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = load_project_config(tmp_path)
+
+    assert config.memory.provider == "codebase-memory-mcp"
+    assert config.memory.command == ["codebase-memory-mcp", "cli"]
+    assert config.memory.project == "demo"
+    assert config.memory.timeout_sec == 45

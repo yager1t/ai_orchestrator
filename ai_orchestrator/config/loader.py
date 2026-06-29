@@ -27,6 +27,15 @@ class ProjectConfig:
     agents: dict[str, AgentConfig] = field(default_factory=dict)
     policy_deny_patterns: list[str] = field(default_factory=list)
     policy_ask_patterns: list[str] = field(default_factory=list)
+    memory: MemoryConfig = field(default_factory=lambda: MemoryConfig())
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    provider: str = ""
+    command: list[str] = field(default_factory=lambda: ["codebase-memory-mcp", "cli"])
+    project: str = ""
+    timeout_sec: int = 120
 
 
 def find_project_config(start: Path | None = None) -> Path | None:
@@ -58,6 +67,7 @@ def load_project_config(start: Path | None = None) -> ProjectConfig:
         agents=parsed.agents or default_agent_configs(),
         policy_deny_patterns=parsed.policy_deny_patterns,
         policy_ask_patterns=parsed.policy_ask_patterns,
+        memory=parsed.memory,
     )
 
 
@@ -90,8 +100,13 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
     verification_commands: list[VerificationCommand] = []
     policy_deny_patterns: list[str] = []
     policy_ask_patterns: list[str] = []
+    memory_provider = ""
+    memory_command: list[str] = []
+    memory_project = ""
+    memory_timeout_sec = 120
     current_command: dict[str, object] | None = None
     in_verification_argv = False
+    in_memory_command = False
     section: str | None = None
     in_verification_commands = False
     in_fallback_agents = False
@@ -117,6 +132,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
             in_fallback_agents = False
             policy_list = None
             in_agent_args = False
+            in_memory_command = False
             _finish_command(current_command, verification_commands)
             current_command = None
             continue
@@ -218,6 +234,30 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
                 policy_ask_patterns.append(value)
             continue
 
+        if section == "memory" and stripped.startswith("provider:"):
+            in_memory_command = False
+            memory_provider = _value_after_colon(stripped)
+            continue
+
+        if section == "memory" and stripped == "command:":
+            in_memory_command = True
+            memory_command = []
+            continue
+
+        if section == "memory" and in_memory_command and stripped.startswith("- "):
+            memory_command.append(_strip_quotes(stripped[2:].strip()))
+            continue
+
+        if section == "memory" and stripped.startswith("project:"):
+            in_memory_command = False
+            memory_project = _value_after_colon(stripped)
+            continue
+
+        if section == "memory" and stripped.startswith("timeout_sec:"):
+            in_memory_command = False
+            memory_timeout_sec = _as_int(_value_after_colon(stripped), default=120)
+            continue
+
         if not in_verification_commands:
             continue
 
@@ -261,6 +301,12 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
         agents=agents,
         policy_deny_patterns=policy_deny_patterns,
         policy_ask_patterns=policy_ask_patterns,
+        memory=MemoryConfig(
+            provider=memory_provider,
+            command=memory_command or ["codebase-memory-mcp", "cli"],
+            project=memory_project,
+            timeout_sec=memory_timeout_sec,
+        ),
     )
 
 

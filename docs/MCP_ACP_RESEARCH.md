@@ -17,6 +17,11 @@ Future MCP/ACP support should be introduced as adapter implementations, not as a
 Supervisor -> AgentAdapter -> MCP/ACP client -> external agent/server
 ```
 
+Code intelligence MCP servers such as `codebase-memory-mcp` should first be
+treated as optional context providers, not executor agents. They can enrich
+planning and review with read-only architecture or impact data while supervisor
+verification remains authoritative.
+
 ## First safe spike
 
 1. Add a read-only capability discovery command for an MCP/ACP endpoint.

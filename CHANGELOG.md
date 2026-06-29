@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added CLI and config support for the optional Codebase Memory provider.
+- Added an optional Codebase Memory client wrapper behind `ProcessRunner` and policy approval.
+- Added Codebase Memory MCP research notes for optional external memory integration.
 - Added a shipping packet template for reviewer-ready release handoffs.
 - Added PM-derived task template sections for intent, assumptions, negative scenarios, and verification mapping.
 - Added mypy type checking to the development dependencies and CI.

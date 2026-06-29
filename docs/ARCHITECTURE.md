@@ -108,6 +108,22 @@ read-only and mirrors stored state:
 - current iteration
 - iteration logs
 
+### Optional Memory Providers
+
+External code memory tools can provide planning and review context, but they do
+not replace supervisor decisions or verification. The preferred future shape is
+an optional provider invoked through `ProcessRunner`, with `PolicyEngine`
+approval for indexing or persistent writes. `docs/CODEBASE_MEMORY_RESEARCH.md`
+records the first candidate integration.
+
+The initial CLI surface is read-mostly:
+
+- `memory status`
+- `memory search`
+- `memory architecture`
+- `memory impact`
+- `memory index --approve`
+
 ## Integration Priority
 
 1. Headless CLI.

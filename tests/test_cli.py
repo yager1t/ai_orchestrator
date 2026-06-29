@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -746,6 +747,113 @@ def test_verify_approves_exact_command_from_cli(capsys, tmp_path: Path) -> None:
     assert "approval: passed exit=0" in output
 
 
+def test_memory_status_prints_provider_config(capsys, monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(ProcessRunner, "check_available", lambda self, command: True)
+    write_config(tmp_path, include_memory=True, memory_project="demo")
+
+    exit_code = main(["memory", "status", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "provider: codebase-memory-mcp" in output
+    assert "command: codebase-memory-mcp cli" in output
+    assert "project: demo" in output
+    assert "available: yes" in output
+
+
+def test_memory_search_runs_read_only_tool(capsys, monkeypatch, tmp_path: Path) -> None:
+    captured_argv: list[list[str]] = []
+
+    def fake_run(
+        self: ProcessRunner,
+        argv: list[str],
+        cwd: Path | None = None,
+        timeout_sec: int = 300,
+        terminate_grace_sec: int = 5,
+        should_cancel=None,
+        options: RunOptions | None = None,
+    ) -> ProcessResult:
+        captured_argv.append(argv)
+        return ProcessResult(
+            status="success",
+            exit_code=0,
+            stdout='{"results":[]}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(tmp_path, include_memory=True, memory_project="demo")
+
+    exit_code = main(
+        [
+            "memory",
+            "search",
+            "--repo",
+            str(tmp_path),
+            "--pattern",
+            ".*Supervisor.*",
+            "--label",
+            "Class",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "search_graph: passed exit=0" in output
+    assert captured_argv == [
+        [
+            "codebase-memory-mcp",
+            "cli",
+            "search_graph",
+            '{"label": "Class", "limit": 20, "name_pattern": ".*Supervisor.*", "project": "demo"}',
+        ]
+    ]
+
+
+def test_memory_index_requires_explicit_approval(capsys, monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(self: ProcessRunner, argv: list[str], **kwargs) -> ProcessResult:
+        calls.append(argv)
+        return ProcessResult(status="success", exit_code=0, stdout="indexed", stderr="")
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(tmp_path, include_memory=True)
+
+    exit_code = main(["memory", "index", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "index_repository: needs_approval exit=None" in output
+    assert "Codebase Memory tool requires approval: index_repository" in output
+    assert calls == []
+
+
+def test_memory_index_runs_with_approve_flag(capsys, monkeypatch, tmp_path: Path) -> None:
+    captured_argv: list[list[str]] = []
+
+    def fake_run(self: ProcessRunner, argv: list[str], **kwargs) -> ProcessResult:
+        captured_argv.append(argv)
+        return ProcessResult(status="success", exit_code=0, stdout="indexed", stderr="")
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(tmp_path, include_memory=True)
+
+    exit_code = main(["memory", "index", "--repo", str(tmp_path), "--approve"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "index_repository: passed exit=0" in output
+    assert captured_argv == [
+        [
+            "codebase-memory-mcp",
+            "cli",
+            "index_repository",
+            json.dumps({"repo_path": str(tmp_path.resolve())}, sort_keys=True),
+        ]
+    ]
+
+
 def write_config(
     repo: Path,
     command_name: str = "custom",
@@ -762,6 +870,8 @@ def write_config(
     cli_alias_args: dict[str, list[str] | None] | None = None,
     generic_command: str = "python",
     generic_args: list[str] | None = None,
+    include_memory: bool = False,
+    memory_project: str = "",
 ) -> None:
     config_dir = repo / ".ai-orch"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -861,6 +971,18 @@ def write_config(
     if fallback_agents:
         fallback_lines = "\n".join(f'    - "{agent}"' for agent in fallback_agents)
         fallback_section = f"  fallback_agents:\n{fallback_lines}\n"
+    memory_section = ""
+    if include_memory:
+        memory_section = f"""
+
+memory:
+  provider: "codebase-memory-mcp"
+  command:
+    - "codebase-memory-mcp"
+    - "cli"
+  project: "{memory_project}"
+  timeout_sec: 45
+"""
 
     (config_dir / "config.yaml").write_text(
         f"""
@@ -876,6 +998,7 @@ verification:
       run: "{command_run}"
       timeout_sec: 30
 {policy_section}
+{memory_section}
 """.lstrip(),
         encoding="utf-8",
     )

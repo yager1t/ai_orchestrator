@@ -21,6 +21,7 @@ No open P2 items.
 - Add deeper adapter contract tests for provider-specific CLI behavior.
 - Expand TUI beyond read-only views when interactive workflows are needed.
 - Continue MCP/ACP research spikes before adding runtime support.
+- Add an optional Codebase Memory provider spike through `ProcessRunner`.
 - Add release packaging checks when preparing a tagged release.
 
 ## Documentation Cleanup
