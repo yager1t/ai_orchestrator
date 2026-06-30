@@ -106,6 +106,33 @@ The first automation step is opt-in: `start --use-memory`. It appends read-only
 preflight context to the initial agent prompt and must stay read-only unless the
 user separately approves indexing.
 
+### Deeper Supervisor Planning Criteria
+
+Keep deeper memory integration out of the supervisor loop until repeated
+`start --use-memory` runs show that the preflight context changes planning
+quality in a measurable way.
+
+Promote beyond the current opt-in prompt enrichment only when:
+
+- memory preflight is used on multiple supervisor, adapter, or release tasks;
+- the captured context prevents concrete mistakes, missing tests, or unnecessary
+  file discovery work;
+- the supervisor can record which memory findings influenced the plan;
+- verification remains the completion authority, not memory output;
+- indexing and other write operations still require explicit approval.
+
+Do not promote if:
+
+- memory output is stale, noisy, or hard to connect to the task;
+- the added context makes prompts longer without changing decisions;
+- the supervisor would need to trust graph findings without normal tests;
+- the integration would require a production dependency on the external binary.
+
+The next safe implementation step, if these criteria are met, is to store a
+small `memory_context` summary in iteration metadata and include it in reports.
+That preserves auditability without making memory part of the done/blocked
+decision.
+
 `memory preflight` is the manual bridge before supervisor automation. It runs
 the read-only architecture, symbol search, and impact queries for a selected
 work area:
