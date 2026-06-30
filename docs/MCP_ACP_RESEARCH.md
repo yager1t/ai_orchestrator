@@ -29,6 +29,25 @@ verification remains authoritative.
 3. Return availability/status through `ai-orch agents --check`.
 4. Do not execute tools until policy and approval behavior is specified.
 
+## Runtime proposal gate
+
+Do not propose runtime MCP/ACP execution support until a research spike can
+answer the protocol boundaries in implementation-ready terms.
+
+Minimum evidence before moving beyond discovery:
+
+- a session/resume mapping for at least one protocol;
+- a normalized result envelope for tool output, final messages, and failures;
+- a policy matrix for read-only, write, network, filesystem, and shell-like
+  operations;
+- a credential loading model that does not store secrets in repository config;
+- adapter contract tests showing how availability, timeout, cancellation, and
+  error states map back to `AgentAdapter`.
+
+The first runtime proposal should still keep MCP/ACP behind `AgentAdapter`.
+Supervisor decisions, verification, and dangerous-command approval must remain
+owned by `ai-orch`, not delegated to the external protocol endpoint.
+
 ## Open questions
 
 - How should sessions/resume map to each protocol?
