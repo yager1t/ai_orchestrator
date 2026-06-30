@@ -17,6 +17,10 @@ No open P2 items.
 
 ## P3 / Deferred
 
+- Replace the minimal YAML parser with PyYAML only if broader YAML
+  compatibility is needed; see ADR-0002 in `docs/DECISIONS.md`.
+- Add deeper provider-specific adapter contract tests when provider behavior
+  diverges from the shared adapter contract.
 - Expand TUI beyond read-only views when interactive workflows are needed; see
   the expansion gate in `docs/ARCHITECTURE.md`.
 - Continue MCP/ACP research spikes before adding runtime support; see the
