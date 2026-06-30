@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Normalized the legacy CLI-supervisor ADR text.
 - Added `ai-orch release-check` for release packaging readiness checks.
 - Added opt-in `ai-orch start --use-memory` prompt enrichment from read-only memory preflight context.
 - Added `ai-orch memory preflight --area supervisor|adapter|release` for read-only planning context.

@@ -6,11 +6,14 @@ Date: 2026-06-28
 
 ### Context
 
-The MVP uses a small internal parser for `.ai-orch/config.yaml`. It supports the current starter config shape and avoids adding a production dependency.
+The MVP uses a small internal parser for `.ai-orch/config.yaml`. It supports the
+current starter config shape and avoids adding a production dependency.
 
 ### Decision
 
-Keep the minimal parser for now. Do not add PyYAML until the config format needs broader YAML features such as anchors, nested arbitrary maps, multiline scalars, or third-party generated YAML compatibility.
+Keep the minimal parser for now. Do not add PyYAML until the config format needs
+broader YAML features such as anchors, nested arbitrary maps, multiline scalars,
+or third-party generated YAML compatibility.
 
 ### Consequences
 
@@ -31,35 +34,37 @@ Cons:
 - config ownership moves beyond the starter schema;
 - schema validation is introduced alongside a full YAML parser.
 
-## ADR-0001: MVP строится как supervisor над CLI-агентами
+## ADR-0001: MVP Is a Supervisor over CLI Agents
 
-Дата: 2026-06-25
+Date: 2026-06-25
 
-### Контекст
+### Context
 
-Есть задача создать оркестратор для локальных ИИ-систем и CLI-агентов.
+The project needs a local orchestrator for CLI-capable AI systems and coding
+agents.
 
-### Решение
+### Decision
 
-Core-path MVP строится как control plane над CLI/headless-интерфейсами, а не как GUI-макрос поверх окон.
+The MVP core path is a control plane over CLI/headless interfaces, not a GUI
+macro layer over application windows.
 
-### Последствия
+### Consequences
 
-Плюсы:
+Pros:
 
-- выше надёжность;
-- проще логировать;
-- проще тестировать;
-- проще возобновлять задачи;
-- меньше зависимости от UI.
+- higher reliability;
+- simpler logging;
+- easier testing;
+- easier task resume behavior;
+- fewer UI dependencies.
 
-Минусы:
+Cons:
 
-- для некоторых агентов придётся писать adapter;
-- GUI automation останется только fallback.
+- some agents may need dedicated adapters;
+- GUI automation remains only a fallback outside the MVP core path.
 
-### Альтернативы
+### Alternatives
 
-- RPA-first подход поверх окон;
-- полноценная интеграция с OpenHands;
-- LangGraph/MAF как runtime с первого дня.
+- RPA-first automation over windows;
+- full OpenHands integration;
+- LangGraph/MAF as the first-day runtime.
