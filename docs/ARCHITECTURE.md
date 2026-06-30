@@ -108,6 +108,19 @@ read-only and mirrors stored state:
 - current iteration
 - iteration logs
 
+Interactive TUI workflows should not be added until a repeated manual workflow
+needs faster operator feedback than separate CLI commands can provide. The first
+interactive step should reuse existing CLI/supervisor operations rather than add
+parallel task-control logic inside the TUI.
+
+Minimum gate before expanding beyond read-only views:
+
+- the workflow is already supported by the CLI;
+- state-changing actions have explicit confirmation;
+- dangerous commands still go through `PolicyEngine`;
+- supervisor completion rules remain unchanged;
+- tests cover both the displayed state and the action boundary.
+
 ### Optional Memory Providers
 
 External code memory tools can provide planning and review context, but they do
