@@ -76,19 +76,22 @@ For `ai-orch`, this can improve `tasks/TASK_TEMPLATE.md` and review notes by
 making error-path coverage mandatory for logic that touches agents, policy,
 verification, storage, or subprocess execution.
 
-## Candidate Project Changes
+## Implemented Project Changes
 
 ### Low-risk docs-only
 
-- Extend `tasks/TASK_TEMPLATE.md` with:
+- Extended `tasks/TASK_TEMPLATE.md` with:
   - intent;
   - assumptions;
   - acceptance criteria;
   - negative scenarios;
   - existing vs proposed verification.
-- Add a review checklist for "intended vs implemented" checks.
-- Add a release/shipping packet template under `docs/`.
-- Refresh mojibake-affected docs while preserving their content.
+- Added an intended-vs-implemented checklist to
+  `docs/SHIPPING_PACKET_TEMPLATE.md`.
+- Added a release/shipping packet template under `docs/`.
+- Refreshed mojibake-affected docs while preserving their content.
+
+## Remaining Ideas
 
 ### Medium-risk process changes
 
@@ -108,6 +111,5 @@ verification, storage, or subprocess execution.
 
 ## Recommended First Bounded Step
 
-Update `tasks/TASK_TEMPLATE.md` to include acceptance criteria, assumptions,
-negative scenarios, and verification mapping. This is docs-only, low risk, and
-fits the existing project workflow.
+Completed: `tasks/TASK_TEMPLATE.md` now includes acceptance criteria,
+assumptions, negative scenarios, and verification mapping.

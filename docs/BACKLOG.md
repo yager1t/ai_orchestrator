@@ -24,4 +24,3 @@ No open P2 items.
 ## Documentation Cleanup
 
 - Keep review findings in `docs/review/` and local scratch notes out of git.
-- Adapt selected PM workflow practices from `docs/PM_SKILLS_ADAPTATION.md`.

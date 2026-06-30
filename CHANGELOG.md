@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Marked selected PM workflow adaptations as implemented.
 - Normalized the legacy CLI-supervisor ADR text.
 - Added `ai-orch release-check` for release packaging readiness checks.
 - Added opt-in `ai-orch start --use-memory` prompt enrichment from read-only memory preflight context.
