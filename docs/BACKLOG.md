@@ -17,9 +17,13 @@ No open P2 items.
 
 ## P3 / Deferred
 
-- Expand TUI beyond read-only views when interactive workflows are needed.
-- Continue MCP/ACP research spikes before adding runtime support.
-- Evaluate deeper supervisor planning integration after `start --use-memory` usage proves useful.
+- Expand TUI beyond read-only views when interactive workflows are needed; see
+  the expansion gate in `docs/ARCHITECTURE.md`.
+- Continue MCP/ACP research spikes before adding runtime support; see the
+  runtime proposal gate in `docs/MCP_ACP_RESEARCH.md`.
+- Evaluate deeper supervisor planning integration after `start --use-memory`
+  usage proves useful; see the planning criteria in
+  `docs/CODEBASE_MEMORY_RESEARCH.md`.
 
 ## Documentation Cleanup
 
