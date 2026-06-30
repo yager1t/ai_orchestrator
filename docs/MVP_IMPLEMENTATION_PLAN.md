@@ -93,6 +93,9 @@ python -m ai_orchestrator verify --repo .
 
 - Replace the minimal YAML parser with PyYAML only if broader YAML compatibility is needed.
 - Add deeper provider-specific adapter contract tests.
-- Expand TUI into interactive workflows when required.
-- Continue MCP/ACP research before runtime support.
-- Add release packaging checks before tagged releases.
+- Expand TUI into interactive workflows only when required by repeated manual
+  workflows; see `docs/ARCHITECTURE.md`.
+- Continue MCP/ACP research before runtime support; see
+  `docs/MCP_ACP_RESEARCH.md`.
+- Evaluate deeper supervisor planning integration after `start --use-memory`
+  usage proves useful; see `docs/CODEBASE_MEMORY_RESEARCH.md`.
