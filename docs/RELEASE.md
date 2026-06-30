@@ -7,6 +7,7 @@ Use this checklist before tagging or publishing an `ai-orch` release.
 - Keep `pyproject.toml` `[project].version` and `ai_orchestrator.__version__` in sync.
 - Run `python -m ai_orchestrator --version` and confirm the printed version.
 - Keep release notes in `CHANGELOG.md`.
+- Run `python -m ai_orchestrator release-check --repo .` before tagging.
 
 ## Verification
 
@@ -16,6 +17,7 @@ Run the project checks from the repository root:
 python -m pytest
 python -m compileall ai_orchestrator
 python -m ai_orchestrator verify --repo .
+python -m ai_orchestrator release-check --repo .
 git diff --check
 ```
 

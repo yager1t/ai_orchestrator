@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from ai_orchestrator import __version__
+from ai_orchestrator.verification.release import run_release_checks
+
+
+def test_release_checks_pass_for_minimal_release_tree(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+
+    results = run_release_checks(tmp_path)
+
+    assert [item.status for item in results] == ["passed", "passed", "passed", "passed"]
+
+
+def test_release_checks_report_version_mismatch(tmp_path: Path) -> None:
+    write_release_tree(tmp_path, version="9.9.9")
+
+    results = run_release_checks(tmp_path)
+
+    version_result = next(item for item in results if item.name == "version")
+    assert version_result.status == "failed"
+    assert f"package={__version__}" in version_result.detail
+
+
+def test_release_checks_require_unreleased_changelog_section(tmp_path: Path) -> None:
+    write_release_tree(tmp_path, changelog="# Changelog\n\n## 0.1.0\n")
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(item for item in results if item.name == "release-docs")
+    assert docs_result.status == "failed"
+    assert "Unreleased" in docs_result.detail
+
+
+def write_release_tree(
+    repo: Path,
+    version: str = __version__,
+    changelog: str = "# Changelog\n\n## Unreleased\n\n- Demo.\n",
+) -> None:
+    (repo / "ai_orchestrator" / "cli").mkdir(parents=True)
+    (repo / "docs").mkdir()
+    (repo / "pyproject.toml").write_text(
+        f"""
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-orchestrator"
+version = "{version}"
+description = "Local supervisor orchestrator for CLI AI agents"
+requires-python = ">=3.12"
+""".strip(),
+        encoding="utf-8",
+    )
+    (repo / "ai_orchestrator" / "__init__.py").write_text("", encoding="utf-8")
+    (repo / "ai_orchestrator" / "__main__.py").write_text("", encoding="utf-8")
+    (repo / "ai_orchestrator" / "cli" / "app.py").write_text("", encoding="utf-8")
+    (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+    (repo / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
+    (repo / "docs" / "RELEASE.md").write_text("# Release\n", encoding="utf-8")
+    (repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md").write_text(
+        "# Shipping\n",
+        encoding="utf-8",
+    )

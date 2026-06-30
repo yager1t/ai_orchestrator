@@ -5,6 +5,7 @@ import pytest
 
 from ai_orchestrator import __version__
 from ai_orchestrator.cli.app import main
+from ai_orchestrator.verification.release import run_release_checks
 from ai_orchestrator.process.runner import ProcessResult, ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
 from ai_orchestrator.verification.runner import VerificationResult, VerificationRunner
@@ -488,6 +489,18 @@ def test_verify_uses_project_config(capsys, tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "custom: passed exit=0" in output
+
+
+def test_release_check_reports_packaging_status(capsys) -> None:
+    exit_code = main(["release-check", "--repo", "."])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "pyproject: passed" in output
+    assert "version: passed" in output
+    assert "entrypoints: passed" in output
+    assert "release-docs: passed" in output
+    assert all(item.status == "passed" for item in run_release_checks(Path(".")))
 
 
 def test_start_uses_project_config(capsys, tmp_path: Path) -> None:

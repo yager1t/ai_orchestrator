@@ -17,7 +17,7 @@ The MVP control plane is implemented in the current local branch.
 
 Current working surface:
 
-- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `agents`, `tui`.
+- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `release-check`, `agents`, `tui`.
 - Supervisor loop with verification-gated completion.
 - SQLite task, iteration, verification, and schema-version storage.
 - Policy checks for agent and verification commands.
@@ -38,7 +38,7 @@ Supported agent types:
 
 Latest verified baseline:
 
-- `python -m pytest`: 182 passed
+- `python -m pytest`: 211 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `git diff --check`: passed

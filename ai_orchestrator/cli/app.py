@@ -20,6 +20,7 @@ from ai_orchestrator.tui.app import (
     render_status_view,
     render_tasks_view,
 )
+from ai_orchestrator.verification.release import run_release_checks
 from ai_orchestrator.verification.runner import VerificationRunner
 
 
@@ -74,6 +75,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Approve one exact verification command string that policy marked as requiring approval",
     )
+
+    release_check = sub.add_parser("release-check", help="Run release packaging readiness checks")
+    release_check.add_argument("--repo", default=".")
 
     agents = sub.add_parser("agents", help="List configured starter agents")
     agents.add_argument("--repo", default=".")
@@ -170,6 +174,12 @@ def main(argv: list[str] | None = None) -> int:
         for item in verification_results:
             print(f"{item.name}: {item.status} exit={item.exit_code}")
         return 0 if all(item.status == "passed" for item in verification_results) else 1
+
+    if args.command == "release-check":
+        results = run_release_checks(Path(args.repo))
+        for release_item in results:
+            print(f"{release_item.name}: {release_item.status} - {release_item.detail}")
+        return 0 if all(release_item.status == "passed" for release_item in results) else 1
 
     if args.command == "status":
         store = _state_store_for_repo(Path(args.repo))

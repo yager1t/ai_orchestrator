@@ -22,7 +22,6 @@ No open P2 items.
 - Continue MCP/ACP research spikes before adding runtime support.
 - Add an optional Codebase Memory provider spike through `ProcessRunner`.
 - Evaluate deeper supervisor planning integration after `start --use-memory` usage proves useful.
-- Add release packaging checks when preparing a tagged release.
 
 ## Documentation Cleanup
 
