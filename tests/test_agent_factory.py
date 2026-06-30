@@ -114,6 +114,26 @@ def test_build_agent_creates_kimi_cli_alias() -> None:
     assert agent.timeout_sec == 55
 
 
+def test_build_agent_creates_kimi_cli_alias_with_defaults() -> None:
+    config = ProjectConfig(
+        default_agent="kimi",
+        agents={
+            "kimi": AgentConfig(
+                name="kimi",
+                type="kimi_cli",
+                enabled=True,
+            )
+        },
+    )
+
+    agent = build_agent(config)
+
+    assert isinstance(agent, KimiCLIAdapter)
+    assert agent.name == "kimi"
+    assert agent.command == "kimi"
+    assert agent.args == ["{prompt}"]
+
+
 def test_build_agent_creates_gemini_cli_alias_with_defaults() -> None:
     config = ProjectConfig(
         default_agent="gemini",
