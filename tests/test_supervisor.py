@@ -2,6 +2,7 @@ from pathlib import Path
 
 from ai_orchestrator.agents.base import AgentResult, SessionRef, TaskContext
 from ai_orchestrator.agents.mock import MockAgentAdapter
+from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessResult, RunOptions
 from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.storage.db import StateStore
@@ -398,6 +399,34 @@ def test_supervisor_persists_iterations_and_verification_runs(tmp_path: Path) ->
     assert task.status == "done"
     assert [item.decision_status for item in iterations] == ["continue", "done"]
     assert [item.status for item in verification_runs] == ["failed", "passed"]
+
+
+def test_supervisor_persists_verification_approval_request(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    command = "git push origin main"
+    supervisor = Supervisor(
+        agent=MockAgentAdapter(),
+        verifier=VerificationRunner(policy_engine=PolicyEngine()),
+        verification_commands=[
+            VerificationCommand("deploy", command),
+        ],
+        state_store=store,
+        max_iterations=1,
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "blocked"
+    assert result.task_id is not None
+    approvals = store.list_approval_requests(task_id=result.task_id)
+    iterations = store.list_iterations(result.task_id)
+    assert len(approvals) == 1
+    assert len(iterations) == 1
+    assert approvals[0].status == "pending"
+    assert approvals[0].source == "verification"
+    assert approvals[0].command_string == command
+    assert approvals[0].iteration_id == iterations[0].iteration_id
+    assert "Requires approval" in approvals[0].reason
 
 
 def test_supervisor_resume_appends_next_iteration_index(tmp_path: Path) -> None:

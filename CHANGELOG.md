@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Added state-store persistence and migrations for approval requests.
+- Added a guarded `ai-orch autopilot` command for selecting and dry-running
+  roadmap items through the supervisor.
+- Added `ai-orch approvals list/show/approve/reject` for persisted approval
+  requests.
+- Persisted supervisor verification `needs_approval` results into the approval
+  inbox.
+- Rendered approval request history in Markdown reports and read-only TUI
+  approval/status views.
+- Added `verification.strict` to disable default verification fallback and make
+  missing checks fail closed.
+- Added explicit verified/not-verified wording to Markdown task reports.
+- Added ADR-0003 for the trusted completion and approval model.
+- Added the post-MVP roadmap for approval UX, launch, isolation, ecosystem, and
+  multi-agent development phases.
+- Updated the backlog with the next approval inbox and trust-building work.
 - Marked selected PM workflow adaptations as implemented.
 - Normalized the legacy CLI-supervisor ADR text.
 - Added `ai-orch release-check` for release packaging readiness checks.

@@ -88,6 +88,24 @@ def test_migrate_schema_sets_initial_version(tmp_path: Path) -> None:
     assert version == SCHEMA_VERSION
 
 
+def test_migrate_schema_upgrades_v1_store_with_approval_requests(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 1")
+        version = migrate_schema(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "approval_requests" in tables
+
+
 def test_state_store_rejects_future_schema_version(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     with sqlite3.connect(db_path) as connection:
@@ -196,6 +214,85 @@ def test_state_store_persists_iteration_and_verification(tmp_path: Path) -> None
     assert verification_details[0].stderr == "assertion failed"
     assert verification_details[0].stdout == ""
     assert verification_details[0].error is None
+
+
+def test_state_store_persists_and_resolves_approval_requests(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="do it",
+        raw_output="done",
+        decision_status="blocked",
+        decision_reason="approval required",
+    )
+
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        command_string="git push origin main",
+        reason="policy requires approval",
+    )
+    resolved = store.resolve_approval_request(
+        approval.approval_id,
+        status="approved",
+        resolution="approved by operator",
+    )
+
+    assert resolved is not None
+    assert resolved.status == "approved"
+    assert resolved.resolved_at is not None
+    assert resolved.resolution == "approved by operator"
+    assert store.get_approval_request(approval.approval_id) == resolved
+    assert store.list_approval_requests(task_id=task.task_id) == [resolved]
+    assert store.list_approval_requests(status="pending") == []
+    assert store.list_approval_requests(status="approved") == [resolved]
+
+
+def test_state_store_lists_pending_approval_requests_in_creation_order(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+
+    first = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="memory",
+        command_string="codebase-memory-mcp cli index_repository",
+        reason="memory indexing requires approval",
+    )
+    second = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="pip install demo",
+        reason="package install requires approval",
+    )
+
+    assert store.list_approval_requests(status="pending") == [first, second]
+
+
+def test_state_store_rejects_invalid_approval_status(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="git push origin main",
+        reason="policy requires approval",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported approval status"):
+        store.list_approval_requests(status="done")
+
+    with pytest.raises(ValueError, match="Unsupported approval resolution status"):
+        store.resolve_approval_request(approval.approval_id, status="pending")
 
 
 def test_state_store_redacts_secret_like_outputs(tmp_path: Path) -> None:

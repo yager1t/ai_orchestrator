@@ -7,12 +7,14 @@ from pathlib import Path
 from ai_orchestrator import __version__
 from ai_orchestrator.agents.base import AgentAdapter
 from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
+from ai_orchestrator.autopilot import AutopilotTask, load_plan_tasks, next_task
 from ai_orchestrator.config.loader import ProjectConfig, load_project_config
 from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
 from ai_orchestrator.policy.engine import PolicyEngine
+from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.reporting.markdown import render_task_report
-from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.storage.db import StateStore, StoredApprovalRequest
 from ai_orchestrator.tui.app import (
     render_approvals_view,
     render_current_view,
@@ -82,6 +84,52 @@ def build_parser() -> argparse.ArgumentParser:
     agents = sub.add_parser("agents", help="List configured starter agents")
     agents.add_argument("--repo", default=".")
     agents.add_argument("--check", action="store_true", help="Check enabled agent availability")
+
+    approvals = sub.add_parser("approvals", help="Manage persisted approval requests")
+    approvals_sub = approvals.add_subparsers(dest="approvals_command")
+    approvals_list = approvals_sub.add_parser("list", help="List approval requests")
+    approvals_list.add_argument("--repo", default=".")
+    approvals_list.add_argument("--task-id")
+    approvals_list.add_argument(
+        "--status",
+        choices=["pending", "approved", "rejected", "all"],
+        default="pending",
+    )
+    approvals_show = approvals_sub.add_parser("show", help="Show approval request details")
+    approvals_show.add_argument("approval_id", type=int)
+    approvals_show.add_argument("--repo", default=".")
+    approvals_approve = approvals_sub.add_parser("approve", help="Approve an approval request")
+    approvals_approve.add_argument("approval_id", type=int)
+    approvals_approve.add_argument("--repo", default=".")
+    approvals_approve.add_argument("--resolution", default="approved by operator")
+    approvals_reject = approvals_sub.add_parser("reject", help="Reject an approval request")
+    approvals_reject.add_argument("approval_id", type=int)
+    approvals_reject.add_argument("--repo", default=".")
+    approvals_reject.add_argument("--resolution", default="rejected by operator")
+
+    autopilot = sub.add_parser("autopilot", help="Run roadmap tasks through the supervisor")
+    autopilot_sub = autopilot.add_subparsers(dest="autopilot_command")
+    autopilot_next = autopilot_sub.add_parser("next", help="Show the next unstarted plan item")
+    autopilot_next.add_argument("--repo", default=".")
+    autopilot_next.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_run = autopilot_sub.add_parser("run", help="Run the next plan item")
+    autopilot_run.add_argument("--repo", default=".")
+    autopilot_run.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_run.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually start the next plan item; without this flag the command is a dry run",
+    )
+    autopilot_run.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow execution when the repository has uncommitted changes",
+    )
+    autopilot_run.add_argument(
+        "--allow-mock-agent",
+        action="store_true",
+        help="Allow execution with the mock agent for smoke tests",
+    )
 
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
     memory_sub = memory.add_subparsers(dest="memory_command")
@@ -166,9 +214,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "memory":
         return _run_memory_command(args, parser)
 
+    if args.command == "approvals":
+        return _run_approvals_command(args, parser)
+
+    if args.command == "autopilot":
+        return _run_autopilot_command(args, parser)
+
     if args.command == "verify":
         repo = Path(args.repo)
         config = load_project_config(repo)
+        if not config.verification_commands:
+            print("No verification commands configured.")
+            return 1
         runner = _verification_runner(config, approved_commands=set(args.approve_command))
         verification_results = runner.run_many(config.verification_commands, cwd=repo)
         for item in verification_results:
@@ -389,6 +446,158 @@ def _verification_runner(
         policy_engine=_policy_engine(config),
         approved_commands=approved_commands,
     )
+
+
+def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.approvals_command is None:
+        parser.print_help()
+        return 1
+
+    store = _state_store_for_repo(Path(args.repo))
+    if args.approvals_command == "list":
+        status = None if args.status == "all" else args.status
+        approvals = store.list_approval_requests(task_id=args.task_id, status=status)
+        if not approvals:
+            print("No approval requests found.")
+            return 0
+        for approval in approvals:
+            print(_format_approval_summary(approval))
+        return 0
+
+    if args.approvals_command == "show":
+        shown_approval = store.get_approval_request(args.approval_id)
+        if shown_approval is None:
+            print(f"Approval request not found: {args.approval_id}")
+            return 1
+        print(_format_approval_detail(shown_approval), end="")
+        return 0
+
+    if args.approvals_command in {"approve", "reject"}:
+        status = "approved" if args.approvals_command == "approve" else "rejected"
+        resolved_approval = store.resolve_approval_request(
+            args.approval_id,
+            status=status,
+            resolution=args.resolution,
+        )
+        if resolved_approval is None:
+            print(f"Approval request not found: {args.approval_id}")
+            return 1
+        print(_format_approval_summary(resolved_approval))
+        return 0
+
+    parser.print_help()
+    return 1
+
+
+def _format_approval_summary(approval: StoredApprovalRequest) -> str:
+    iteration = "none" if approval.iteration_id is None else str(approval.iteration_id)
+    return (
+        f"{approval.approval_id}: status={approval.status} "
+        f"source={approval.source} task={approval.task_id} "
+        f"iteration={iteration} command={approval.command_string}"
+    )
+
+
+def _format_approval_detail(approval: StoredApprovalRequest) -> str:
+    iteration = "none" if approval.iteration_id is None else str(approval.iteration_id)
+    lines = [
+        f"Approval: {approval.approval_id}",
+        f"Status: {approval.status}",
+        f"Task: {approval.task_id}",
+        f"Iteration: {iteration}",
+        f"Source: {approval.source}",
+        f"Command: {approval.command_string}",
+        f"Reason: {approval.reason}",
+        f"Created: {approval.created_at}",
+    ]
+    if approval.resolved_at is not None:
+        lines.append(f"Resolved: {approval.resolved_at}")
+    if approval.resolution is not None:
+        lines.append(f"Resolution: {approval.resolution}")
+    return "\n".join(lines) + "\n"
+
+
+def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.autopilot_command is None:
+        parser.print_help()
+        return 1
+
+    repo = Path(args.repo)
+    plan_path = _resolve_plan_path(repo, Path(args.plan))
+    if not plan_path.exists():
+        print(f"Plan not found: {plan_path}")
+        return 1
+
+    store = _state_store_for_repo(repo)
+    tasks = load_plan_tasks(plan_path)
+    selected = next_task(tasks, store)
+    if selected is None:
+        print(f"No unstarted plan items found in {plan_path}")
+        return 0
+
+    if args.autopilot_command == "next":
+        _print_autopilot_task(selected)
+        return 0
+
+    if args.autopilot_command != "run":
+        parser.print_help()
+        return 1
+
+    config = load_project_config(repo)
+    policy_engine = _policy_engine(config)
+    agent = _select_agent(config, policy_engine)
+    print("Autopilot selected:")
+    _print_autopilot_task(selected)
+    print(f"Agent: {agent.name}")
+
+    if not args.execute:
+        print("Dry run: add --execute to start this plan item.")
+        return 0
+
+    if agent.name == "mock" and not args.allow_mock_agent:
+        print("Execution blocked: mock agent selected. Enable a real agent or pass --allow-mock-agent.")
+        return 1
+
+    if _repo_has_uncommitted_changes(repo) and not args.allow_dirty:
+        print("Execution blocked: repository has uncommitted changes. Commit/stash them or pass --allow-dirty.")
+        return 1
+
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=VerificationRunner(policy_engine=policy_engine),
+        verification_commands=config.verification_commands,
+        state_store=store,
+        max_iterations=config.max_iterations,
+        max_no_change_iterations=config.max_no_change_iterations,
+        max_runtime_sec=config.max_runtime_sec,
+    )
+    result = supervisor.run_once(task=selected.to_prompt(), repo=repo)
+    task_prefix = f"{result.task_id}: " if result.task_id else ""
+    print(f"{task_prefix}{result.summary}")
+    return 0 if result.status == "done" else 1
+
+
+def _resolve_plan_path(repo: Path, plan_path: Path) -> Path:
+    if plan_path.is_absolute():
+        return plan_path
+    return repo / plan_path
+
+
+def _print_autopilot_task(task: AutopilotTask) -> None:
+    print(f"Source: {task.source_label}")
+    print(f"Section: {task.section or 'Unsectioned'}")
+    print(f"Task: {task.text}")
+
+
+def _repo_has_uncommitted_changes(repo: Path) -> bool:
+    result = ProcessRunner().run(
+        ["git", "status", "--porcelain=v1"],
+        cwd=repo,
+        options=RunOptions(timeout_sec=30),
+    )
+    if result.status != "success":
+        return True
+    return bool(result.stdout.strip())
 
 
 def _memory_client(

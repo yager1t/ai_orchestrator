@@ -35,6 +35,54 @@ def test_log_level_configures_logging(monkeypatch, tmp_path: Path) -> None:
     assert calls[0]["level"] == 10
 
 
+def test_autopilot_next_prints_next_plan_item(capsys, tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    exit_code = main(["autopilot", "next", "--repo", str(tmp_path), "--plan", str(plan)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Task: Add approval CLI" in output
+    assert "Source:" in output
+
+
+def test_autopilot_run_defaults_to_dry_run(capsys, tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    exit_code = main(["autopilot", "run", "--repo", str(tmp_path), "--plan", str(plan)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Autopilot selected:" in output
+    assert "Dry run: add --execute" in output
+
+
+def test_autopilot_run_blocks_mock_agent_without_explicit_allow(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "autopilot",
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Execution blocked: mock agent selected" in output
+
+
 def test_status_prints_stored_task(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo task", repo_path=tmp_path)
@@ -101,6 +149,129 @@ def test_cancel_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
     assert "Task not found: missing-task" in output
 
 
+def test_approvals_list_prints_pending_requests(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="git push origin main",
+        reason="policy requires approval",
+    )
+
+    exit_code = main(["approvals", "list", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"{approval.approval_id}: status=pending" in output
+    assert "source=verification" in output
+    assert "command=git push origin main" in output
+
+
+def test_approvals_list_prints_empty_state(capsys, tmp_path: Path) -> None:
+    exit_code = main(["approvals", "list", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "No approval requests found." in output
+
+
+def test_approvals_show_prints_details(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="memory",
+        command_string="codebase-memory-mcp cli index_repository",
+        reason="memory indexing requires approval",
+    )
+
+    exit_code = main(
+        ["approvals", "show", str(approval.approval_id), "--repo", str(tmp_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Approval: {approval.approval_id}" in output
+    assert "Status: pending" in output
+    assert "Source: memory" in output
+    assert "Reason: memory indexing requires approval" in output
+
+
+def test_approvals_approve_resolves_request(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="git push origin main",
+        reason="policy requires approval",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "approve",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--resolution",
+            "looks safe",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_approval_request(approval.approval_id)
+
+    assert exit_code == 0
+    assert f"{approval.approval_id}: status=approved" in output
+    assert loaded is not None
+    assert loaded.status == "approved"
+    assert loaded.resolution == "looks safe"
+
+
+def test_approvals_reject_resolves_request(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="pip install demo",
+        reason="package install requires approval",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "reject",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--resolution",
+            "not needed",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_approval_request(approval.approval_id)
+
+    assert exit_code == 0
+    assert f"{approval.approval_id}: status=rejected" in output
+    assert loaded is not None
+    assert loaded.status == "rejected"
+    assert loaded.resolution == "not needed"
+
+
+def test_approvals_returns_error_for_missing_request(capsys, tmp_path: Path) -> None:
+    exit_code = main(["approvals", "show", "404", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Approval request not found: 404" in output
+
+
 def test_tui_status_prints_read_only_task_view(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo task", repo_path=tmp_path)
@@ -134,6 +305,44 @@ def test_tui_status_prints_read_only_task_view(capsys, tmp_path: Path) -> None:
     assert "Status: created" in output
     assert "Iterations" in output
     assert "check: unit passed exit=0" in output
+
+
+def test_tui_status_prints_task_approval_history(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo approval task", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo approval task",
+        raw_output="done",
+        decision_status="blocked",
+        decision_reason="Approval required",
+    )
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        command_string="deploy production",
+        reason="Policy requires approval",
+    )
+    store.resolve_approval_request(
+        approval.approval_id,
+        "rejected",
+        resolution="Not safe enough",
+    )
+
+    exit_code = main(["tui", "status", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Approvals" in output
+    assert f"approval={approval.approval_id} status=rejected" in output
+    assert f"task={task.task_id} iteration={iteration.iteration_id}" in output
+    assert "command: deploy production" in output
+    assert "reason: Policy requires approval" in output
+    assert "resolution: Not safe enough" in output
 
 
 def test_tui_status_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
@@ -185,17 +394,12 @@ def test_tui_approvals_prints_pending_verification_approvals(
         decision_status="blocked",
         decision_reason="Approval required",
     )
-    store.add_verification_run(
+    approval = store.add_approval_request(
         task_id=task.task_id,
         iteration_id=iteration.iteration_id,
-        result=VerificationResult(
-            name="deploy",
-            status="needs_approval",
-            exit_code=None,
-            stdout="",
-            stderr="",
-            error="Requires approval: deploy",
-        ),
+        source="verification",
+        command_string="deploy production",
+        reason="Requires approval: deploy",
     )
 
     exit_code = main(["tui", "approvals", "--repo", str(tmp_path)])
@@ -203,7 +407,9 @@ def test_tui_approvals_prints_pending_verification_approvals(
 
     assert exit_code == 0
     assert "Approvals" in output
-    assert "task-approval iteration=1 check=deploy" in output
+    assert f"approval={approval.approval_id} status=pending" in output
+    assert f"task=task-approval iteration={iteration.iteration_id}" in output
+    assert "command: deploy production" in output
     assert "reason: Requires approval: deploy" in output
 
 
@@ -212,7 +418,7 @@ def test_tui_approvals_prints_empty_state(capsys, tmp_path: Path) -> None:
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "No pending approvals." in output
+    assert "No approval requests recorded." in output
 
 
 def test_tui_current_prints_latest_iteration(capsys, tmp_path: Path) -> None:
@@ -491,6 +697,24 @@ def test_verify_uses_project_config(capsys, tmp_path: Path) -> None:
     assert "custom: passed exit=0" in output
 
 
+def test_verify_strict_mode_fails_without_commands(capsys, tmp_path: Path) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+verification:
+  strict: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["verify", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "No verification commands configured." in output
+
+
 def test_release_check_reports_packaging_status(capsys) -> None:
     exit_code = main(["release-check", "--repo", "."])
     output = capsys.readouterr().out
@@ -511,6 +735,32 @@ def test_start_uses_project_config(capsys, tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "Verification passed: custom" in output
+
+
+def test_start_strict_mode_blocks_without_verification_commands(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+verification:
+  strict: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["start", "--task", "demo", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+    task_id = output.split(":", 1)[0]
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.get_task(task_id)
+
+    assert exit_code == 1
+    assert "No verification commands configured" in output
+    assert task is not None
+    assert task.status == "blocked"
 
 
 def test_start_with_use_memory_enriches_initial_prompt(

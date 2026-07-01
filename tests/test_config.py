@@ -30,6 +30,7 @@ agents:
     timeout_sec: 12
 
 verification:
+  strict: true
   commands:
     - name: "unit"
       run: "python -m pytest"
@@ -59,6 +60,7 @@ policy:
     assert config.agents["generic"].command == "python"
     assert config.agents["generic"].args == ["-c", "print('generic')"]
     assert config.agents["generic"].timeout_sec == 12
+    assert config.verification_strict is True
     assert [item.name for item in config.verification_commands] == ["unit", "compile"]
     assert config.verification_commands[0].run == "python -m pytest"
     assert config.verification_commands[0].timeout_sec == 30
@@ -77,6 +79,25 @@ def test_load_project_config_uses_compile_fallback_without_config(tmp_path: Path
     assert len(config.verification_commands) == 1
     assert config.verification_commands[0].name == "compile"
     assert config.verification_commands[0].run == "python -m compileall ."
+
+
+def test_load_project_config_strict_mode_disables_default_verification_fallback(
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+verification:
+  strict: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = load_project_config(tmp_path)
+
+    assert config.verification_strict is True
+    assert config.verification_commands == []
 
 
 def test_load_project_config_reads_structured_verification_argv(tmp_path: Path) -> None:

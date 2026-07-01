@@ -9,11 +9,21 @@ No open P0 items.
 
 ## P1
 
-No open P1 items.
+- Complete the remaining trusted approval inbox pieces described in ADR-0003:
+  approval retry and Codebase Memory approval integration.
+- Harden the guarded autopilot path so it can execute real configured agents
+  unattended after approval and dirty-worktree safeguards are satisfied.
+- Prepare the release and install path described in
+  `docs/POST_MVP_ROADMAP.md`.
 
 ## P2
 
-No open P2 items.
+- Add quick-start examples for Python, Node, and docs-only repositories.
+- Add opt-in git worktree isolation for task runs.
+- Add structured adapter output fields for reports and future agent fallback
+  scoring.
+- Add basic local metrics for iterations, verification pass rate, approvals,
+  and adapter failures.
 
 ## P3 / Deferred
 
@@ -28,6 +38,8 @@ No open P2 items.
 - Evaluate deeper supervisor planning integration after `start --use-memory`
   usage proves useful; see the planning criteria in
   `docs/CODEBASE_MEMORY_RESEARCH.md`.
+- Defer MCP server mode, web dashboard, parallel agent swarm, and auto-merge
+  until the trusted approval, audit, and isolation foundations are in place.
 
 ## Documentation Cleanup
 

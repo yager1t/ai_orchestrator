@@ -10,7 +10,11 @@ from ai_orchestrator.agents.base import AgentAdapter, SessionRef, TaskContext
 from ai_orchestrator.core.decision import Decision, DecisionEngine
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
-from ai_orchestrator.verification.runner import VerificationCommand, VerificationRunner
+from ai_orchestrator.verification.runner import (
+    VerificationCommand,
+    VerificationResult,
+    VerificationRunner,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -307,6 +311,12 @@ class Supervisor:
                         iteration_id=stored_iteration.iteration_id,
                         result=verification_result,
                     )
+                    if verification_result.status == "needs_approval":
+                        self._add_verification_approval_request(
+                            task_id=stored_task_id,
+                            iteration_id=stored_iteration.iteration_id,
+                            verification_result=verification_result,
+                        )
 
             if decision.status == "done":
                 logger.debug(
@@ -355,6 +365,22 @@ class Supervisor:
             return False
         task = self.state_store.get_task(task_id)
         return task is not None and task.status == "cancelled"
+
+    def _add_verification_approval_request(
+        self,
+        task_id: str,
+        iteration_id: int,
+        verification_result: VerificationResult,
+    ) -> None:
+        if self.state_store is None or not verification_result.command_string:
+            return
+        self.state_store.add_approval_request(
+            task_id=task_id,
+            iteration_id=iteration_id,
+            source="verification",
+            command_string=verification_result.command_string,
+            reason=verification_result.error or "Verification command requires approval",
+        )
 
     def _is_runtime_budget_exhausted(self, started_at: float) -> bool:
         if self.max_runtime_sec is None:

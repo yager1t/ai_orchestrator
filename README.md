@@ -17,7 +17,7 @@ The MVP control plane is implemented in the current local branch.
 
 Current working surface:
 
-- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `release-check`, `agents`, `tui`.
+- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `release-check`, `agents`, `approvals`, `autopilot`, `tui`.
 - Supervisor loop with verification-gated completion.
 - SQLite task, iteration, verification, and schema-version storage.
 - Policy checks for agent and verification commands.
@@ -38,9 +38,9 @@ Supported agent types:
 
 Latest verified baseline:
 
-- `python -m ruff check ai_orchestrator tests`: passed
-- `python -m mypy`: passed
-- `python -m pytest`: 212 passed
+- `ruff check .`: passed
+- `mypy ai_orchestrator`: passed
+- `python -m pytest`: 233 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -68,6 +68,20 @@ explicit in config when real CLI flags differ from defaults.
 
 Verification commands can use structured `argv` config or legacy `run` strings.
 Structured `argv` is preferred for new configs.
+
+Set `verification.strict: true` to require explicitly configured verification
+commands. In strict mode, `ai-orch` will not fall back to the default compile
+check when commands are missing; `verify` fails and supervisor tasks remain
+blocked instead of being treated as verified.
+
+```yaml
+verification:
+  strict: true
+  commands:
+    - name: "compile"
+      run: "python -m compileall ai_orchestrator"
+      timeout_sec: 120
+```
 
 Optional code memory provider config:
 
@@ -123,6 +137,21 @@ Default runtime values:
 - fallback verification compile command: `120` seconds
 - configured verification commands without `timeout_sec`: `300` seconds
 
+## Autopilot
+
+`ai-orch autopilot` is a guarded post-MVP helper for taking the next unstarted
+item from a Markdown plan and routing it through the existing supervisor.
+
+```bash
+python -m ai_orchestrator autopilot next --repo . --plan docs/POST_MVP_ROADMAP.md
+python -m ai_orchestrator autopilot run --repo . --plan docs/POST_MVP_ROADMAP.md
+```
+
+`autopilot run` is a dry run unless `--execute` is passed. Execution is blocked
+when the selected agent is `mock` unless `--allow-mock-agent` is passed, and it
+is blocked on dirty repositories unless `--allow-dirty` is passed. These guards
+keep unattended operation from pretending that mock output completed real work.
+
 ## Verification Approvals
 
 `ai-orch verify` blocks commands that match `policy.require_approval` unless the
@@ -134,6 +163,23 @@ python -m ai_orchestrator verify --repo . --approve-command "git push origin mai
 
 Approvals are not stored in `.ai-orch/config.yaml`, do not override deny rules,
 and apply only to verification commands.
+
+Persisted approval requests can be inspected and resolved through the approval
+inbox commands:
+
+```bash
+python -m ai_orchestrator approvals list --repo .
+python -m ai_orchestrator approvals show 1 --repo .
+python -m ai_orchestrator approvals approve 1 --repo . --resolution "approved by operator"
+python -m ai_orchestrator approvals reject 1 --repo . --resolution "not safe"
+```
+
+Supervisor runs persist `needs_approval` verification results into the approval
+inbox automatically. Approval still only grants permission to execute the exact
+command; it does not mark the task as done.
+
+Approval request history is shown in generated Markdown reports and in the
+read-only `ai-orch tui approvals` and `ai-orch tui status <task_id>` views.
 
 ## Secrets
 
@@ -154,6 +200,7 @@ in `ai_orchestrator/storage/migrations.py`.
 
 - `docs/ARCHITECTURE.md`: current component overview.
 - `docs/MVP_IMPLEMENTATION_PLAN.md`: implemented phases and deferred work.
+- `docs/POST_MVP_ROADMAP.md`: post-MVP product and engineering roadmap.
 - `docs/BACKLOG.md`: current backlog.
 - `docs/SECURITY.md`: security model and secret handling.
 - `docs/CODEBASE_MEMORY_RESEARCH.md`: optional Codebase Memory integration notes.

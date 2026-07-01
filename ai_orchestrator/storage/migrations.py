@@ -4,9 +4,40 @@ import sqlite3
 from collections.abc import Callable
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 Migration = Callable[[sqlite3.Connection], None]
-MIGRATIONS: dict[int, Migration] = {}
+
+
+def _migrate_1_to_2(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS approval_requests (
+            approval_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            iteration_id INTEGER,
+            source TEXT NOT NULL,
+            command_string TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            resolution TEXT,
+            FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+            FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_approval_requests_task_status
+        ON approval_requests (task_id, status, approval_id)
+        """
+    )
+
+
+MIGRATIONS: dict[int, Migration] = {
+    1: _migrate_1_to_2,
+}
 
 
 def migrate_schema(connection: sqlite3.Connection) -> int:

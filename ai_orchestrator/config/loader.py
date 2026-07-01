@@ -19,6 +19,7 @@ class AgentConfig:
 @dataclass(frozen=True)
 class ProjectConfig:
     verification_commands: list[VerificationCommand] = field(default_factory=list)
+    verification_strict: bool = False
     max_iterations: int = 2
     max_no_change_iterations: int = 2
     max_runtime_sec: int | None = None
@@ -56,9 +57,12 @@ def load_project_config(start: Path | None = None) -> ProjectConfig:
         )
 
     parsed = _parse_minimal_config(config_path.read_text(encoding="utf-8"))
-    commands = parsed.verification_commands or default_verification_commands()
+    commands = parsed.verification_commands
+    if not commands and not parsed.verification_strict:
+        commands = default_verification_commands()
     return ProjectConfig(
         verification_commands=commands,
+        verification_strict=parsed.verification_strict,
         max_iterations=parsed.max_iterations,
         max_no_change_iterations=parsed.max_no_change_iterations,
         max_runtime_sec=parsed.max_runtime_sec,
@@ -98,6 +102,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
     current_agent: dict[str, object] | None = None
     in_agent_args = False
     verification_commands: list[VerificationCommand] = []
+    verification_strict = False
     policy_deny_patterns: list[str] = []
     policy_ask_patterns: list[str] = []
     memory_provider = ""
@@ -222,6 +227,12 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
             in_verification_commands = True
             continue
 
+        if section == "verification" and stripped.startswith("strict:"):
+            in_verification_commands = False
+            in_verification_argv = False
+            verification_strict = _as_bool(_value_after_colon(stripped), default=False)
+            continue
+
         if section == "policy" and stripped in {"deny:", "require_approval:"}:
             policy_list = stripped[:-1]
             continue
@@ -293,6 +304,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
     _finish_agent(current_agent_name, current_agent, agents)
     return ProjectConfig(
         verification_commands=verification_commands,
+        verification_strict=verification_strict,
         max_iterations=max_iterations,
         max_no_change_iterations=max_no_change_iterations,
         max_runtime_sec=max_runtime_sec,

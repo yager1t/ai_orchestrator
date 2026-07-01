@@ -71,6 +71,7 @@ agents:
     timeout_sec: 1800
 
 verification:
+  strict: true
   commands:
     - name: "compile"
       run: "python -m compileall ai_orchestrator"

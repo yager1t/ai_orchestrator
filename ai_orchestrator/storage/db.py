@@ -72,6 +72,20 @@ class StoredVerificationDetail:
     error: str | None
 
 
+@dataclass(frozen=True)
+class StoredApprovalRequest:
+    approval_id: int
+    task_id: str
+    iteration_id: int | None
+    source: str
+    command_string: str
+    reason: str
+    status: str
+    created_at: str
+    resolved_at: str | None
+    resolution: str | None
+
+
 class StateStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -118,6 +132,24 @@ class StateStore:
                     FOREIGN KEY (task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS approval_requests (
+                    approval_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    iteration_id INTEGER,
+                    source TEXT NOT NULL,
+                    command_string TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    resolution TEXT,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_approval_requests_task_status
+                ON approval_requests (task_id, status, approval_id);
                 """
             )
             migrate_schema(connection)
@@ -311,6 +343,163 @@ class StateStore:
             status=result.status,
             exit_code=result.exit_code,
         )
+
+    def add_approval_request(
+        self,
+        task_id: str,
+        iteration_id: int | None,
+        source: str,
+        command_string: str,
+        reason: str,
+    ) -> StoredApprovalRequest:
+        self.initialize()
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO approval_requests (
+                    task_id,
+                    iteration_id,
+                    source,
+                    command_string,
+                    reason,
+                    status,
+                    created_at,
+                    resolved_at,
+                    resolution
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    iteration_id,
+                    source,
+                    command_string,
+                    redact_secrets(reason) or "",
+                    "pending",
+                    now,
+                    None,
+                    None,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create approval request")
+            approval_id = cursor.lastrowid
+        logger.debug(
+            "state approval added task_id=%s approval_id=%s source=%s status=pending",
+            task_id,
+            approval_id,
+            source,
+        )
+        return StoredApprovalRequest(
+            approval_id=approval_id,
+            task_id=task_id,
+            iteration_id=iteration_id,
+            source=source,
+            command_string=command_string,
+            reason=redact_secrets(reason) or "",
+            status="pending",
+            created_at=now,
+            resolved_at=None,
+            resolution=None,
+        )
+
+    def get_approval_request(self, approval_id: int) -> StoredApprovalRequest | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    approval_id,
+                    task_id,
+                    iteration_id,
+                    source,
+                    command_string,
+                    reason,
+                    status,
+                    created_at,
+                    resolved_at,
+                    resolution
+                FROM approval_requests
+                WHERE approval_id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredApprovalRequest(**dict(row))
+
+    def list_approval_requests(
+        self,
+        task_id: str | None = None,
+        status: str | None = None,
+    ) -> list[StoredApprovalRequest]:
+        self.initialize()
+        if status is not None and status not in {"pending", "approved", "rejected"}:
+            raise ValueError(f"Unsupported approval status: {status}")
+
+        query = """
+            SELECT
+                approval_id,
+                task_id,
+                iteration_id,
+                source,
+                command_string,
+                reason,
+                status,
+                created_at,
+                resolved_at,
+                resolution
+            FROM approval_requests
+            WHERE 1 = 1
+        """
+        params: list[str] = []
+        if task_id is not None:
+            query += " AND task_id = ?"
+            params.append(task_id)
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at ASC, approval_id ASC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [StoredApprovalRequest(**dict(row)) for row in rows]
+
+    def resolve_approval_request(
+        self,
+        approval_id: int,
+        status: str,
+        resolution: str | None = None,
+    ) -> StoredApprovalRequest | None:
+        self.initialize()
+        if status not in {"approved", "rejected"}:
+            raise ValueError(f"Unsupported approval resolution status: {status}")
+
+        resolved_at = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approval_requests
+                SET status = ?, resolved_at = ?, resolution = ?
+                WHERE approval_id = ?
+                """,
+                (
+                    status,
+                    resolved_at,
+                    redact_secrets(resolution),
+                    approval_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+
+        logger.debug(
+            "state approval resolved approval_id=%s status=%s",
+            approval_id,
+            status,
+        )
+        return self.get_approval_request(approval_id)
 
     def list_iterations(self, task_id: str) -> list[StoredIteration]:
         self.initialize()
