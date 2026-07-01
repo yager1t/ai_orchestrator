@@ -10,7 +10,7 @@ No open P0 items.
 ## P1
 
 - Complete the remaining trusted approval inbox pieces described in ADR-0003:
-  approval retry and Codebase Memory approval integration.
+  Codebase Memory approval integration and stale approval handling.
 - Harden the guarded autopilot path so it can execute real configured agents
   unattended after approval and dirty-worktree safeguards are satisfied.
 - Prepare the release and install path described in

@@ -23,7 +23,7 @@ from ai_orchestrator.tui.app import (
     render_tasks_view,
 )
 from ai_orchestrator.verification.release import run_release_checks
-from ai_orchestrator.verification.runner import VerificationRunner
+from ai_orchestrator.verification.runner import VerificationCommand, VerificationRunner
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -106,6 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
     approvals_reject.add_argument("approval_id", type=int)
     approvals_reject.add_argument("--repo", default=".")
     approvals_reject.add_argument("--resolution", default="rejected by operator")
+    approvals_retry = approvals_sub.add_parser("retry", help="Retry an approved request")
+    approvals_retry.add_argument("approval_id", type=int)
+    approvals_retry.add_argument("--repo", default=".")
 
     autopilot = sub.add_parser("autopilot", help="Run roadmap tasks through the supervisor")
     autopilot_sub = autopilot.add_subparsers(dest="autopilot_command")
@@ -485,6 +488,13 @@ def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentPa
         print(_format_approval_summary(resolved_approval))
         return 0
 
+    if args.approvals_command == "retry":
+        retried_approval = store.get_approval_request(args.approval_id)
+        if retried_approval is None:
+            print(f"Approval request not found: {args.approval_id}")
+            return 1
+        return _retry_approval_request(store, retried_approval)
+
     parser.print_help()
     return 1
 
@@ -515,6 +525,45 @@ def _format_approval_detail(approval: StoredApprovalRequest) -> str:
     if approval.resolution is not None:
         lines.append(f"Resolution: {approval.resolution}")
     return "\n".join(lines) + "\n"
+
+
+def _retry_approval_request(
+    store: StateStore,
+    approval: StoredApprovalRequest,
+) -> int:
+    if approval.status != "approved":
+        print(
+            "Approval request is not approved: "
+            f"{approval.approval_id} status={approval.status}"
+        )
+        return 1
+
+    task = store.get_task(approval.task_id)
+    if task is None:
+        print(f"Task not found for approval request: {approval.task_id}")
+        return 1
+
+    repo = Path(task.repo_path)
+    config = load_project_config(repo)
+    runner = _verification_runner(
+        config,
+        approved_commands={approval.command_string},
+    )
+    result = runner.run(
+        VerificationCommand(
+            name=f"approval-{approval.approval_id}",
+            run=approval.command_string,
+        ),
+        cwd=repo,
+    )
+    print(f"retry: {result.status} exit={result.exit_code}")
+    if result.error:
+        print(f"error: {result.error}")
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if result.stderr:
+        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
+    return 0 if result.status == "passed" else 1
 
 
 def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:

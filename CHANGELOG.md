@@ -7,6 +7,8 @@
   roadmap items through the supervisor.
 - Added `ai-orch approvals list/show/approve/reject` for persisted approval
   requests.
+- Added `ai-orch approvals retry` for rerunning approved request commands while
+  preserving deny-rule precedence.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Rendered approval request history in Markdown reports and read-only TUI

@@ -264,6 +264,130 @@ def test_approvals_reject_resolves_request(capsys, tmp_path: Path) -> None:
     assert loaded.resolution == "not needed"
 
 
+def test_approvals_retry_runs_approved_request(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[tuple[list[str], Path | None]] = []
+
+    def fake_run(
+        self: ProcessRunner,
+        argv: list[str],
+        cwd: Path | None = None,
+        timeout_sec: int = 300,
+        should_cancel=None,
+        options: RunOptions | None = None,
+    ) -> ProcessResult:
+        captured.append((argv, cwd))
+        return ProcessResult(
+            status="success",
+            exit_code=0,
+            stdout="retry ok",
+            stderr="",
+        )
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(
+        tmp_path,
+        command_name="approval",
+        command_run="retry-token command",
+        require_approval_patterns=["retry-token"],
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="retry-token command",
+        reason="policy requires approval",
+    )
+    store.resolve_approval_request(
+        approval.approval_id,
+        "approved",
+        resolution="looks safe",
+    )
+
+    exit_code = main(
+        ["approvals", "retry", str(approval.approval_id), "--repo", str(tmp_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "retry: passed exit=0" in output
+    assert "retry ok" in output
+    assert captured == [(["retry-token", "command"], tmp_path)]
+
+
+def test_approvals_retry_requires_approved_request(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="retry-token command",
+        reason="policy requires approval",
+    )
+
+    exit_code = main(
+        ["approvals", "retry", str(approval.approval_id), "--repo", str(tmp_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert f"Approval request is not approved: {approval.approval_id} status=pending" in output
+
+
+def test_approvals_retry_does_not_override_deny_rules(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(self: ProcessRunner, argv: list[str], **kwargs) -> ProcessResult:
+        calls.append(argv)
+        return ProcessResult(status="success", exit_code=0, stdout="ran", stderr="")
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(
+        tmp_path,
+        command_name="danger",
+        command_run="dangerous command",
+        deny_patterns=["dangerous"],
+        require_approval_patterns=["dangerous"],
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="dangerous command",
+        reason="policy requires approval",
+    )
+    store.resolve_approval_request(
+        approval.approval_id,
+        "approved",
+        resolution="operator approved",
+    )
+
+    exit_code = main(
+        ["approvals", "retry", str(approval.approval_id), "--repo", str(tmp_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "retry: policy_denied exit=None" in output
+    assert "Denied by pattern: dangerous" in output
+    assert calls == []
+
+
 def test_approvals_returns_error_for_missing_request(capsys, tmp_path: Path) -> None:
     exit_code = main(["approvals", "show", "404", "--repo", str(tmp_path)])
     output = capsys.readouterr().out

@@ -125,6 +125,17 @@ The next bounded work should follow this sequence:
 - [x] Render approval history in reports and TUI.
 - [x] Add strict mode and verified report wording.
 
+## Next Autopilot Track
+
+The next bounded work should make unattended development practical while keeping
+the supervisor conservative:
+
+- [x] Add `approvals retry` for approved requests.
+- [ ] Persist Codebase Memory approval requests through the shared approval model.
+- [ ] Add a real-agent execution profile before autopilot execution.
+- [ ] Add opt-in git worktree isolation for autopilot runs.
+- [ ] Add an autopilot operator runbook with dry-run, execute, approval, retry, and report commands.
+
 ## Explicit Non-Goals For The Next Iteration
 
 - Web dashboard.
