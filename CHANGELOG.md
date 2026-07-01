@@ -15,6 +15,8 @@
   requests.
 - Added `ai-orch approvals retry` for rerunning approved request commands while
   preserving deny-rule precedence.
+- Added stale approval detection and persisted retry result history for
+  approval requests.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -445,8 +446,14 @@ def test_approvals_retry_runs_approved_request(
 
     assert exit_code == 0
     assert "retry: passed exit=0" in output
+    assert "retry history: count=1 last_status=passed last_exit=0" in output
     assert "retry ok" in output
     assert captured == [(["retry-token", "command"], tmp_path)]
+    loaded = store.get_approval_request(approval.approval_id)
+    assert loaded is not None
+    assert loaded.retry_count == 1
+    assert loaded.last_retry_status == "passed"
+    assert loaded.last_retry_exit_code == 0
 
 
 def test_approvals_retry_requires_approved_request(
@@ -470,6 +477,57 @@ def test_approvals_retry_requires_approved_request(
 
     assert exit_code == 1
     assert f"Approval request is not approved: {approval.approval_id} status=pending" in output
+
+
+def test_approvals_stale_marks_old_pending_requests(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    old_approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="old command",
+        reason="old approval",
+    )
+    fresh_approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="fresh command",
+        reason="fresh approval",
+    )
+    old_created_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE approval_requests SET created_at = ? WHERE approval_id = ?",
+            (old_created_at, old_approval.approval_id),
+        )
+
+    exit_code = main(
+        [
+            "approvals",
+            "stale",
+            "--repo",
+            str(tmp_path),
+            "--older-than-hours",
+            "24",
+            "--resolution",
+            "too old",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"{old_approval.approval_id}: status=stale" in output
+    assert "old command" in output
+    assert "fresh command" not in output
+    assert store.list_approval_requests(status="pending") == [fresh_approval]
+    stale = store.list_approval_requests(status="stale")
+    assert len(stale) == 1
+    assert stale[0].resolution == "too old"
 
 
 def test_approvals_retry_does_not_override_deny_rules(

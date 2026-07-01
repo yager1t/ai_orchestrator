@@ -84,6 +84,11 @@ class StoredApprovalRequest:
     created_at: str
     resolved_at: str | None
     resolution: str | None
+    retry_count: int = 0
+    last_retry_at: str | None = None
+    last_retry_status: str | None = None
+    last_retry_exit_code: int | None = None
+    last_retry_error: str | None = None
 
 
 class StateStore:
@@ -140,10 +145,15 @@ class StateStore:
                     source TEXT NOT NULL,
                     command_string TEXT NOT NULL,
                     reason TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')),
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'stale')),
                     created_at TEXT NOT NULL,
                     resolved_at TEXT,
                     resolution TEXT,
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    last_retry_at TEXT,
+                    last_retry_status TEXT,
+                    last_retry_exit_code INTEGER,
+                    last_retry_error TEXT,
                     FOREIGN KEY (task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id)
                 );
@@ -366,9 +376,14 @@ class StateStore:
                     status,
                     created_at,
                     resolved_at,
-                    resolution
+                    resolution,
+                    retry_count,
+                    last_retry_at,
+                    last_retry_status,
+                    last_retry_exit_code,
+                    last_retry_error
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -378,6 +393,11 @@ class StateStore:
                     redact_secrets(reason) or "",
                     "pending",
                     now,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
                     None,
                     None,
                 ),
@@ -402,6 +422,11 @@ class StateStore:
             created_at=now,
             resolved_at=None,
             resolution=None,
+            retry_count=0,
+            last_retry_at=None,
+            last_retry_status=None,
+            last_retry_exit_code=None,
+            last_retry_error=None,
         )
 
     def get_approval_request(self, approval_id: int) -> StoredApprovalRequest | None:
@@ -419,7 +444,12 @@ class StateStore:
                     status,
                     created_at,
                     resolved_at,
-                    resolution
+                    resolution,
+                    retry_count,
+                    last_retry_at,
+                    last_retry_status,
+                    last_retry_exit_code,
+                    last_retry_error
                 FROM approval_requests
                 WHERE approval_id = ?
                 """,
@@ -435,7 +465,7 @@ class StateStore:
         status: str | None = None,
     ) -> list[StoredApprovalRequest]:
         self.initialize()
-        if status is not None and status not in {"pending", "approved", "rejected"}:
+        if status is not None and status not in {"pending", "approved", "rejected", "stale"}:
             raise ValueError(f"Unsupported approval status: {status}")
 
         query = """
@@ -449,7 +479,12 @@ class StateStore:
                 status,
                 created_at,
                 resolved_at,
-                resolution
+                resolution,
+                retry_count,
+                last_retry_at,
+                last_retry_status,
+                last_retry_exit_code,
+                last_retry_error
             FROM approval_requests
             WHERE 1 = 1
         """
@@ -473,7 +508,7 @@ class StateStore:
         resolution: str | None = None,
     ) -> StoredApprovalRequest | None:
         self.initialize()
-        if status not in {"approved", "rejected"}:
+        if status not in {"approved", "rejected", "stale"}:
             raise ValueError(f"Unsupported approval resolution status: {status}")
 
         resolved_at = _now()
@@ -499,6 +534,84 @@ class StateStore:
             approval_id,
             status,
         )
+        return self.get_approval_request(approval_id)
+
+    def mark_stale_approval_requests(
+        self,
+        cutoff_created_at: str,
+        task_id: str | None = None,
+        resolution: str | None = None,
+    ) -> list[StoredApprovalRequest]:
+        self.initialize()
+        resolved_at = _now()
+        resolved_message = resolution or f"stale approval older than {cutoff_created_at}"
+        query = """
+            SELECT approval_id
+            FROM approval_requests
+            WHERE status = 'pending'
+              AND created_at < ?
+        """
+        params: list[str] = [cutoff_created_at]
+        if task_id is not None:
+            query += " AND task_id = ?"
+            params.append(task_id)
+        query += " ORDER BY created_at ASC, approval_id ASC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            approval_ids = [int(row["approval_id"]) for row in rows]
+            if approval_ids:
+                placeholders = ", ".join("?" for _ in approval_ids)
+                connection.execute(
+                    f"""
+                    UPDATE approval_requests
+                    SET status = 'stale', resolved_at = ?, resolution = ?
+                    WHERE approval_id IN ({placeholders})
+                    """,
+                    (
+                        resolved_at,
+                        redact_secrets(resolved_message),
+                        *approval_ids,
+                    ),
+                )
+
+        return [
+            approval
+            for approval_id in approval_ids
+            if (approval := self.get_approval_request(approval_id)) is not None
+        ]
+
+    def record_approval_retry(
+        self,
+        approval_id: int,
+        status: str,
+        exit_code: int | None,
+        error: str | None = None,
+    ) -> StoredApprovalRequest | None:
+        self.initialize()
+        retry_at = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approval_requests
+                SET
+                    retry_count = retry_count + 1,
+                    last_retry_at = ?,
+                    last_retry_status = ?,
+                    last_retry_exit_code = ?,
+                    last_retry_error = ?
+                WHERE approval_id = ?
+                """,
+                (
+                    retry_at,
+                    status,
+                    exit_code,
+                    redact_secrets(error),
+                    approval_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
         return self.get_approval_request(approval_id)
 
     def list_iterations(self, task_id: str) -> list[StoredIteration]:

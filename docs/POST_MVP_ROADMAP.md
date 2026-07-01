@@ -141,7 +141,7 @@ the supervisor conservative:
 The next bounded work should move `ai-orch` from guarded autopilot mechanics to
 repeatable real-agent operation:
 
-- [ ] Add stale approval detection and clearer retry result history.
+- [x] Add stale approval detection and clearer retry result history.
 - [ ] Add a real-agent smoke-run fixture and documented operator script.
 - [ ] Add structured adapter output fields:
   `summary`, `files_changed`, `tool_actions`, `exit_reason`, and `uncertainty`.

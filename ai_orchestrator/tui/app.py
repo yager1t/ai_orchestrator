@@ -144,7 +144,8 @@ def _format_approval_lines(approvals: list[StoredApprovalRequest]) -> list[str]:
             [
                 (
                     f"  approval={approval.approval_id} status={approval.status} "
-                    f"source={approval.source} task={approval.task_id} iteration={iteration}"
+                    f"source={approval.source} task={approval.task_id} "
+                    f"iteration={iteration} retries={approval.retry_count}"
                 ),
                 f"     command: {redact_secrets(approval.command_string) or ''}",
                 f"     reason: {redact_secrets(approval.reason) or ''}",
@@ -154,4 +155,12 @@ def _format_approval_lines(approvals: list[StoredApprovalRequest]) -> list[str]:
             lines.append(f"     resolved_at: {approval.resolved_at}")
         if approval.resolution:
             lines.append(f"     resolution: {redact_secrets(approval.resolution) or ''}")
+        if approval.last_retry_at is not None:
+            lines.append(f"     last_retry_at: {approval.last_retry_at}")
+            lines.append(
+                "     last_retry: "
+                f"{approval.last_retry_status} exit={approval.last_retry_exit_code}"
+            )
+        if approval.last_retry_error:
+            lines.append(f"     last_retry_error: {redact_secrets(approval.last_retry_error) or ''}")
     return lines

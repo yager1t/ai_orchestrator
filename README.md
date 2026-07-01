@@ -40,7 +40,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 239 passed
+- `python -m pytest`: 242 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -186,6 +186,7 @@ python -m ai_orchestrator approvals list --repo .
 python -m ai_orchestrator approvals show 1 --repo .
 python -m ai_orchestrator approvals approve 1 --repo . --resolution "approved by operator"
 python -m ai_orchestrator approvals reject 1 --repo . --resolution "not safe"
+python -m ai_orchestrator approvals stale --repo . --older-than-hours 24
 python -m ai_orchestrator approvals retry 1 --repo .
 ```
 
@@ -195,7 +196,10 @@ command; it does not mark the task as done.
 
 `approvals retry` reruns the exact command from an approved request with the
 task repository as the working directory. Deny rules still take precedence over
-approved requests.
+approved requests. Retry results are written back to the approval request as
+`retry_count`, `last_retry_status`, `last_retry_exit_code`, and retry metadata.
+Use `approvals stale` to close old pending approvals without treating them as
+operator rejections.
 
 Approval request history is shown in generated Markdown reports and in the
 read-only `ai-orch tui approvals` and `ai-orch tui status <task_id>` views.

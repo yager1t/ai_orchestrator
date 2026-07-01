@@ -129,6 +129,12 @@ Reject a request that is unsafe, unclear, or outside scope:
 python -m ai_orchestrator approvals reject 1 --repo . --resolution "rejected: command is outside this bounded step"
 ```
 
+Mark old pending requests stale when the task context has moved on:
+
+```bash
+python -m ai_orchestrator approvals stale --repo . --older-than-hours 24 --resolution "stale after newer run"
+```
+
 ## 6. Retry After Approval
 
 Retry only approved requests:
@@ -137,7 +143,9 @@ Retry only approved requests:
 python -m ai_orchestrator approvals retry 1 --repo .
 ```
 
-If retry succeeds, run the normal verification gate again:
+`approvals retry` records retry count, last retry status, exit code, and error
+metadata on the approval request. If retry succeeds, run the normal verification
+gate again:
 
 ```bash
 python -m pytest

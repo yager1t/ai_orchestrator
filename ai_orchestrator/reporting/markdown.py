@@ -182,6 +182,20 @@ def _render_approval_lines(
             lines.append(f"  - Resolved: `{approval.resolved_at}`")
         if approval.resolution:
             lines.append(f"  - Resolution: {redact_secrets(approval.resolution) or ''}")
+        if approval.retry_count:
+            exit_code = (
+                "none"
+                if approval.last_retry_exit_code is None
+                else str(approval.last_retry_exit_code)
+            )
+            lines.append(f"  - Retry count: `{approval.retry_count}`")
+            lines.append(f"  - Last retry: `{approval.last_retry_status}` exit=`{exit_code}`")
+            if approval.last_retry_at is not None:
+                lines.append(f"  - Last retry at: `{approval.last_retry_at}`")
+            if approval.last_retry_error:
+                lines.append(
+                    f"  - Last retry error: {redact_secrets(approval.last_retry_error) or ''}"
+                )
     return lines
 
 

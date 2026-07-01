@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -104,6 +105,17 @@ def test_migrate_schema_upgrades_v1_store_with_approval_requests(
 
     assert version == SCHEMA_VERSION
     assert "approval_requests" in tables
+    with sqlite3.connect(db_path) as connection:
+        approval_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(approval_requests)")
+        }
+    assert {
+        "retry_count",
+        "last_retry_at",
+        "last_retry_status",
+        "last_retry_exit_code",
+        "last_retry_error",
+    }.issubset(approval_columns)
 
 
 def test_state_store_rejects_future_schema_version(tmp_path: Path) -> None:
@@ -251,6 +263,71 @@ def test_state_store_persists_and_resolves_approval_requests(tmp_path: Path) -> 
     assert store.list_approval_requests(task_id=task.task_id) == [resolved]
     assert store.list_approval_requests(status="pending") == []
     assert store.list_approval_requests(status="approved") == [resolved]
+
+
+def test_state_store_marks_old_pending_approval_requests_stale(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    old_approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="git push origin main",
+        reason="policy requires approval",
+    )
+    fresh_approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="pip install demo",
+        reason="package install requires approval",
+    )
+    old_created_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE approval_requests SET created_at = ? WHERE approval_id = ?",
+            (old_created_at, old_approval.approval_id),
+        )
+
+    stale = store.mark_stale_approval_requests(
+        cutoff_created_at=cutoff,
+        task_id=task.task_id,
+        resolution="stale after operator review",
+    )
+
+    assert [approval.approval_id for approval in stale] == [old_approval.approval_id]
+    assert stale[0].status == "stale"
+    assert stale[0].resolved_at is not None
+    assert stale[0].resolution == "stale after operator review"
+    assert store.list_approval_requests(status="pending") == [fresh_approval]
+    assert store.list_approval_requests(status="stale") == stale
+
+
+def test_state_store_records_approval_retry_history(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="python -m pytest",
+        reason="policy requires approval",
+    )
+
+    retried = store.record_approval_retry(
+        approval.approval_id,
+        status="failed",
+        exit_code=1,
+        error="assertion failed",
+    )
+
+    assert retried is not None
+    assert retried.retry_count == 1
+    assert retried.last_retry_at is not None
+    assert retried.last_retry_status == "failed"
+    assert retried.last_retry_exit_code == 1
+    assert retried.last_retry_error == "assertion failed"
 
 
 def test_state_store_lists_pending_approval_requests_in_creation_order(

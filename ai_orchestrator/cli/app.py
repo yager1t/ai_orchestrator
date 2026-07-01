@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ai_orchestrator import __version__
@@ -92,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     approvals_list.add_argument("--task-id")
     approvals_list.add_argument(
         "--status",
-        choices=["pending", "approved", "rejected", "all"],
+        choices=["pending", "approved", "rejected", "stale", "all"],
         default="pending",
     )
     approvals_show = approvals_sub.add_parser("show", help="Show approval request details")
@@ -109,6 +110,14 @@ def build_parser() -> argparse.ArgumentParser:
     approvals_retry = approvals_sub.add_parser("retry", help="Retry an approved request")
     approvals_retry.add_argument("approval_id", type=int)
     approvals_retry.add_argument("--repo", default=".")
+    approvals_stale = approvals_sub.add_parser(
+        "stale",
+        help="Mark old pending approval requests as stale",
+    )
+    approvals_stale.add_argument("--repo", default=".")
+    approvals_stale.add_argument("--task-id")
+    approvals_stale.add_argument("--older-than-hours", type=int, default=24)
+    approvals_stale.add_argument("--resolution", default="marked stale by operator")
 
     autopilot = sub.add_parser("autopilot", help="Run roadmap tasks through the supervisor")
     autopilot_sub = autopilot.add_subparsers(dest="autopilot_command")
@@ -502,6 +511,23 @@ def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentPa
             return 1
         return _retry_approval_request(store, retried_approval)
 
+    if args.approvals_command == "stale":
+        if args.older_than_hours < 1:
+            print("--older-than-hours must be at least 1")
+            return 1
+        cutoff = datetime.now(UTC) - timedelta(hours=args.older_than_hours)
+        stale_approvals = store.mark_stale_approval_requests(
+            cutoff_created_at=cutoff.isoformat(),
+            task_id=args.task_id,
+            resolution=args.resolution,
+        )
+        if not stale_approvals:
+            print("No stale approval requests found.")
+            return 0
+        for stale_approval in stale_approvals:
+            print(_format_approval_summary(stale_approval))
+        return 0
+
     parser.print_help()
     return 1
 
@@ -511,7 +537,9 @@ def _format_approval_summary(approval: StoredApprovalRequest) -> str:
     return (
         f"{approval.approval_id}: status={approval.status} "
         f"source={approval.source} task={approval.task_id} "
-        f"iteration={iteration} command={approval.command_string}"
+        f"iteration={iteration} retries={approval.retry_count} "
+        f"last_retry={approval.last_retry_status or 'none'} "
+        f"command={approval.command_string}"
     )
 
 
@@ -526,11 +554,18 @@ def _format_approval_detail(approval: StoredApprovalRequest) -> str:
         f"Command: {approval.command_string}",
         f"Reason: {approval.reason}",
         f"Created: {approval.created_at}",
+        f"Retries: {approval.retry_count}",
     ]
     if approval.resolved_at is not None:
         lines.append(f"Resolved: {approval.resolved_at}")
     if approval.resolution is not None:
         lines.append(f"Resolution: {approval.resolution}")
+    if approval.last_retry_at is not None:
+        lines.append(f"Last retry: {approval.last_retry_at}")
+        lines.append(f"Last retry status: {approval.last_retry_status}")
+        lines.append(f"Last retry exit: {approval.last_retry_exit_code}")
+    if approval.last_retry_error is not None:
+        lines.append(f"Last retry error: {approval.last_retry_error}")
     return "\n".join(lines) + "\n"
 
 
@@ -563,7 +598,20 @@ def _retry_approval_request(
         ),
         cwd=repo,
     )
+    updated_approval = store.record_approval_retry(
+        approval_id=approval.approval_id,
+        status=result.status,
+        exit_code=result.exit_code,
+        error=result.error or result.stderr,
+    )
     print(f"retry: {result.status} exit={result.exit_code}")
+    if updated_approval is not None:
+        print(
+            "retry history: "
+            f"count={updated_approval.retry_count} "
+            f"last_status={updated_approval.last_retry_status} "
+            f"last_exit={updated_approval.last_retry_exit_code}"
+        )
     if result.error:
         print(f"error: {result.error}")
     if result.stdout:

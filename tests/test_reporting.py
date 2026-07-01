@@ -112,6 +112,12 @@ def test_render_task_report_includes_approval_history(tmp_path: Path) -> None:
         "approved",
         resolution="Approved by operator",
     )
+    store.record_approval_retry(
+        approval.approval_id,
+        status="failed",
+        exit_code=1,
+        error="retry failed",
+    )
 
     report = render_task_report(store, task.task_id)
 
@@ -123,6 +129,9 @@ def test_render_task_report_includes_approval_history(tmp_path: Path) -> None:
     assert "- Command: `git push origin main`" in report
     assert "- Reason: Policy requires approval" in report
     assert "- Resolution: Approved by operator" in report
+    assert "- Retry count: `1`" in report
+    assert "- Last retry: `failed` exit=`1`" in report
+    assert "- Last retry error: retry failed" in report
 
 
 def test_render_task_report_redacts_secret_like_verification_output(tmp_path: Path) -> None:
