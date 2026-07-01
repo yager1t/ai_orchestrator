@@ -17,6 +17,11 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
         raw_output="done",
         decision_status="done",
         decision_reason="Verification passed: unit",
+        agent_summary="updated report fixture",
+        files_changed=["README.md"],
+        tool_actions=["write README.md"],
+        exit_reason="success",
+        uncertainty="low",
     )
     store.add_verification_run(
         task_id=task.task_id,
@@ -43,6 +48,13 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
     assert "- Final decision: `done`" in report
     assert "- Final reason: Verification passed: unit" in report
     assert "### Iteration 1" in report
+    assert "- Agent summary: updated report fixture" in report
+    assert "- Files changed: `1`" in report
+    assert "- Tool actions: `1`" in report
+    assert "- Exit reason: success" in report
+    assert "- Uncertainty: low" in report
+    assert "- `README.md`" in report
+    assert "- write README.md" in report
     assert "- `unit`: `passed` exit=`0`" in report
 
 

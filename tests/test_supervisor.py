@@ -377,15 +377,20 @@ def test_supervisor_continues_after_failed_verification() -> None:
 
 def test_supervisor_persists_iterations_and_verification_runs(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
-    verifier = SequencedVerifier(["failed", "passed"])
+    verifier = SequencedVerifier(["passed"])
     supervisor = Supervisor(
-        agent=RetryingAgent(),
+        agent=MockAgentAdapter(
+            scripted_output="structured output",
+            scripted_files_changed=["README.md"],
+            scripted_tool_actions=["write README.md"],
+            scripted_uncertainty="low",
+        ),
         verifier=verifier,
         verification_commands=[
             VerificationCommand("unit", "ignored"),
         ],
         state_store=store,
-        max_iterations=2,
+        max_iterations=1,
     )
     result = supervisor.run_once(task="demo", repo=tmp_path)
 
@@ -397,8 +402,13 @@ def test_supervisor_persists_iterations_and_verification_runs(tmp_path: Path) ->
 
     assert task is not None
     assert task.status == "done"
-    assert [item.decision_status for item in iterations] == ["continue", "done"]
-    assert [item.status for item in verification_runs] == ["failed", "passed"]
+    assert [item.decision_status for item in iterations] == ["done"]
+    assert iterations[0].agent_summary == "structured output"
+    assert iterations[0].files_changed == ["README.md"]
+    assert iterations[0].tool_actions == ["write README.md"]
+    assert iterations[0].exit_reason == "success"
+    assert iterations[0].uncertainty == "low"
+    assert [item.status for item in verification_runs] == ["passed"]
 
 
 def test_supervisor_persists_verification_approval_request(tmp_path: Path) -> None:

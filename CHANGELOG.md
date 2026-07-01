@@ -19,6 +19,8 @@
   approval requests.
 - Added a real-agent smoke fixture and operator script for exercising the
   `generic_cli` adapter without external AI credentials.
+- Added structured adapter output fields on `AgentResult` and persisted them in
+  iteration history, reports, status, and TUI views.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

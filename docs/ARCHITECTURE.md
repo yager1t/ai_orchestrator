@@ -55,7 +55,13 @@ start_session(context) -> SessionRef
 run_step(session, prompt) -> AgentResult
 continue_session(session, prompt) -> AgentResult
 stop_session(session) -> None
-get_status(session) -> AgentStatus
+```
+
+`AgentResult` carries raw output plus structured fields for reports and future
+adapter scoring:
+
+```text
+summary | files_changed | tool_actions | exit_reason | uncertainty
 ```
 
 Current adapters:
@@ -95,12 +101,14 @@ Custom patterns remain backward compatible.
 ### StateStore
 
 The SQLite store persists tasks, iterations, verification runs, and schema
-version. Runtime pragmas enable WAL, busy timeout, and foreign keys.
+version. Iterations persist both raw agent output and structured adapter result
+fields. Runtime pragmas enable WAL, busy timeout, and foreign keys.
 
 ### Reporting And TUI
 
-Markdown reports summarize stored task history. The current TUI surface is
-read-only and mirrors stored state:
+Markdown reports summarize stored task history, including structured adapter
+signals when present. The current TUI surface is read-only and mirrors stored
+state:
 
 - task status
 - task list

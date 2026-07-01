@@ -279,6 +279,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"agent_status={iteration.agent_status} "
                 f"decision={iteration.decision_status}"
             )
+            print(f"     summary={iteration.agent_summary or 'none'}")
+            print(f"     files_changed={len(iteration.files_changed)}")
+            print(f"     tool_actions={len(iteration.tool_actions)}")
+            print(f"     exit_reason={iteration.exit_reason or 'none'}")
+            print(f"     uncertainty={iteration.uncertainty or 'none'}")
             print(f"     reason={iteration.decision_reason}")
             for check in checks:
                 print(f"     check={check.name} status={check.status} exit={check.exit_code}")

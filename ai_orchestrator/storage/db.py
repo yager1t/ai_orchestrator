@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -34,6 +35,11 @@ class StoredIteration:
     agent_status: str
     decision_status: str
     decision_reason: str
+    agent_summary: str | None = None
+    files_changed: list[str] = field(default_factory=list)
+    tool_actions: list[str] = field(default_factory=list)
+    exit_reason: str | None = None
+    uncertainty: str | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +53,11 @@ class StoredIterationDetail:
     raw_output: str
     decision_status: str
     decision_reason: str
+    agent_summary: str | None = None
+    files_changed: list[str] = field(default_factory=list)
+    tool_actions: list[str] = field(default_factory=list)
+    exit_reason: str | None = None
+    uncertainty: str | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +130,11 @@ class StateStore:
                     raw_output TEXT NOT NULL,
                     decision_status TEXT NOT NULL,
                     decision_reason TEXT NOT NULL,
+                    agent_summary TEXT,
+                    files_changed TEXT NOT NULL DEFAULT '[]',
+                    tool_actions TEXT NOT NULL DEFAULT '[]',
+                    exit_reason TEXT,
+                    uncertainty TEXT,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (task_id) REFERENCES tasks(task_id)
                 );
@@ -250,6 +266,11 @@ class StateStore:
         raw_output: str,
         decision_status: str,
         decision_reason: str,
+        agent_summary: str | None = None,
+        files_changed: list[str] | None = None,
+        tool_actions: list[str] | None = None,
+        exit_reason: str | None = None,
+        uncertainty: str | None = None,
     ) -> StoredIteration:
         with self._connect() as connection:
             cursor = connection.execute(
@@ -263,9 +284,14 @@ class StateStore:
                     raw_output,
                     decision_status,
                     decision_reason,
+                    agent_summary,
+                    files_changed,
+                    tool_actions,
+                    exit_reason,
+                    uncertainty,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -276,6 +302,11 @@ class StateStore:
                     redact_secrets(raw_output) or "",
                     decision_status,
                     decision_reason,
+                    redact_secrets(agent_summary),
+                    _encode_json_list(files_changed),
+                    _encode_json_list(tool_actions),
+                    redact_secrets(exit_reason),
+                    redact_secrets(uncertainty),
                     _now(),
                 ),
             )
@@ -298,6 +329,11 @@ class StateStore:
             agent_status=agent_status,
             decision_status=decision_status,
             decision_reason=decision_reason,
+            agent_summary=redact_secrets(agent_summary),
+            files_changed=_decode_json_list(_encode_json_list(files_changed)),
+            tool_actions=_decode_json_list(_encode_json_list(tool_actions)),
+            exit_reason=redact_secrets(exit_reason),
+            uncertainty=redact_secrets(uncertainty),
         )
 
     def add_verification_run(
@@ -626,14 +662,19 @@ class StateStore:
                     agent_name,
                     agent_status,
                     decision_status,
-                    decision_reason
+                    decision_reason,
+                    agent_summary,
+                    files_changed,
+                    tool_actions,
+                    exit_reason,
+                    uncertainty
                 FROM iterations
                 WHERE task_id = ?
                 ORDER BY iteration_index ASC, iteration_id ASC
                 """,
                 (task_id,),
             ).fetchall()
-        return [StoredIteration(**dict(row)) for row in rows]
+        return [_stored_iteration_from_row(row) for row in rows]
 
     def list_iteration_details(self, task_id: str) -> list[StoredIterationDetail]:
         self.initialize()
@@ -649,14 +690,19 @@ class StateStore:
                     prompt,
                     raw_output,
                     decision_status,
-                    decision_reason
+                    decision_reason,
+                    agent_summary,
+                    files_changed,
+                    tool_actions,
+                    exit_reason,
+                    uncertainty
                 FROM iterations
                 WHERE task_id = ?
                 ORDER BY iteration_index ASC, iteration_id ASC
                 """,
                 (task_id,),
             ).fetchall()
-        return [StoredIterationDetail(**dict(row)) for row in rows]
+        return [_stored_iteration_detail_from_row(row) for row in rows]
 
     def list_verification_runs(
         self,
@@ -720,3 +766,34 @@ class StateStore:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _encode_json_list(values: list[str] | None) -> str:
+    redacted = [redact_secrets(value) or "" for value in values or []]
+    return json.dumps(redacted)
+
+
+def _decode_json_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(decoded, list):
+        return []
+    return [str(item) for item in decoded if isinstance(item, str)]
+
+
+def _stored_iteration_from_row(row: sqlite3.Row) -> StoredIteration:
+    values = dict(row)
+    values["files_changed"] = _decode_json_list(values.get("files_changed"))
+    values["tool_actions"] = _decode_json_list(values.get("tool_actions"))
+    return StoredIteration(**values)
+
+
+def _stored_iteration_detail_from_row(row: sqlite3.Row) -> StoredIterationDetail:
+    values = dict(row)
+    values["files_changed"] = _decode_json_list(values.get("files_changed"))
+    values["tool_actions"] = _decode_json_list(values.get("tool_actions"))
+    return StoredIterationDetail(**values)

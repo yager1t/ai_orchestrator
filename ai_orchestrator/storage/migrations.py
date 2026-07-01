@@ -4,7 +4,7 @@ import sqlite3
 from collections.abc import Callable
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 Migration = Callable[[sqlite3.Connection], None]
 
 
@@ -97,9 +97,49 @@ def _migrate_2_to_3(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_3_to_4(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "iterations"):
+        return
+    _add_column_if_missing(connection, "iterations", "agent_summary", "TEXT")
+    _add_column_if_missing(
+        connection,
+        "iterations",
+        "files_changed",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
+    _add_column_if_missing(
+        connection,
+        "iterations",
+        "tool_actions",
+        "TEXT NOT NULL DEFAULT '[]'",
+    )
+    _add_column_if_missing(connection, "iterations", "exit_reason", "TEXT")
+    _add_column_if_missing(connection, "iterations", "uncertainty", "TEXT")
+
+
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _add_column_if_missing(
+    connection: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    definition: str,
+) -> None:
+    columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table_name})")}
+    if column_name not in columns:
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+
 MIGRATIONS: dict[int, Migration] = {
     1: _migrate_1_to_2,
     2: _migrate_2_to_3,
+    3: _migrate_3_to_4,
 }
 
 

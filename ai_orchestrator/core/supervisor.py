@@ -131,6 +131,7 @@ class Supervisor:
                     raw_output="",
                     decision_status="blocked",
                     decision_reason="Agent is not available",
+                    exit_reason="agent_unavailable",
                 )
                 self.state_store.update_task_status(stored_task_id, "blocked")
             return SupervisorResult(
@@ -304,6 +305,11 @@ class Supervisor:
                     raw_output=result.raw_output,
                     decision_status=decision.status,
                     decision_reason=decision.reason,
+                    agent_summary=result.summary,
+                    files_changed=result.files_changed,
+                    tool_actions=result.tool_actions,
+                    exit_reason=result.exit_reason,
+                    uncertainty=result.uncertainty,
                 )
                 for verification_result in verification_results:
                     self.state_store.add_verification_run(

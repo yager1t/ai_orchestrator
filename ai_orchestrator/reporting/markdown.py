@@ -67,13 +67,25 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
                 "",
                 f"- Agent: `{iteration.agent_name}`",
                 f"- Agent status: `{iteration.agent_status}`",
+                f"- Agent summary: {iteration.agent_summary or 'none'}",
+                f"- Files changed: `{len(iteration.files_changed)}`",
+                f"- Tool actions: `{len(iteration.tool_actions)}`",
+                f"- Exit reason: {iteration.exit_reason or 'none'}",
+                f"- Uncertainty: {iteration.uncertainty or 'none'}",
                 f"- Decision: `{iteration.decision_status}`",
                 f"- Reason: {iteration.decision_reason}",
                 "",
-                "Verification:",
-                "",
             ]
         )
+        if iteration.files_changed:
+            lines.extend(["Files changed:", ""])
+            lines.extend(f"- `{path}`" for path in iteration.files_changed)
+            lines.append("")
+        if iteration.tool_actions:
+            lines.extend(["Tool actions:", ""])
+            lines.extend(f"- {action}" for action in iteration.tool_actions)
+            lines.append("")
+        lines.extend(["Verification:", ""])
         checks = store.list_verification_details(task.task_id, iteration.iteration_id)
         if not checks:
             lines.extend(["- No verification runs recorded.", ""])

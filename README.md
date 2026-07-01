@@ -25,6 +25,8 @@ Current working surface:
 - Safe metadata logs with stable `event=...` fields.
 - Markdown reports generated from stored task history.
 - Read-only TUI status, task list, approval, current iteration, and logs views.
+- Structured adapter output fields stored with each iteration:
+  `summary`, `files_changed`, `tool_actions`, `exit_reason`, and `uncertainty`.
 - Optional Codebase Memory CLI helpers for manual architecture, search, and impact context.
 
 Supported agent types:
@@ -40,7 +42,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 244 passed
+- `python -m pytest`: 246 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed

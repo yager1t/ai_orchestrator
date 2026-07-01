@@ -118,6 +118,55 @@ def test_migrate_schema_upgrades_v1_store_with_approval_requests(
     }.issubset(approval_columns)
 
 
+def test_migrate_schema_upgrades_v3_store_with_structured_iteration_fields(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 3")
+        connection.execute(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                task TEXT NOT NULL,
+                repo_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE iterations (
+                iteration_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                iteration_index INTEGER NOT NULL,
+                agent_name TEXT NOT NULL,
+                agent_status TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                raw_output TEXT NOT NULL,
+                decision_status TEXT NOT NULL,
+                decision_reason TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        version = migrate_schema(connection)
+        iteration_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(iterations)")
+        }
+
+    assert version == SCHEMA_VERSION
+    assert {
+        "agent_summary",
+        "files_changed",
+        "tool_actions",
+        "exit_reason",
+        "uncertainty",
+    }.issubset(iteration_columns)
+
+
 def test_state_store_rejects_future_schema_version(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     with sqlite3.connect(db_path) as connection:
@@ -221,11 +270,47 @@ def test_state_store_persists_iteration_and_verification(tmp_path: Path) -> None
     assert iterations == [iteration]
     assert iteration_details[0].prompt == "do it"
     assert iteration_details[0].raw_output == "done"
+    assert iteration_details[0].agent_summary is None
+    assert iteration_details[0].files_changed == []
+    assert iteration_details[0].tool_actions == []
+    assert iteration_details[0].exit_reason is None
+    assert iteration_details[0].uncertainty is None
     assert verification_runs == [verification]
     assert verification_runs[0].iteration_id == iteration.iteration_id
     assert verification_details[0].stderr == "assertion failed"
     assert verification_details[0].stdout == ""
     assert verification_details[0].error is None
+
+
+def test_state_store_persists_structured_iteration_fields(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="generic",
+        agent_status="success",
+        prompt="do it",
+        raw_output="done",
+        decision_status="done",
+        decision_reason="Verification passed",
+        agent_summary="updated docs",
+        files_changed=["README.md"],
+        tool_actions=["write README.md"],
+        exit_reason="success",
+        uncertainty="low",
+    )
+
+    iterations = store.list_iterations(task.task_id)
+    details = store.list_iteration_details(task.task_id)
+
+    assert iterations == [iteration]
+    assert details[0].agent_summary == "updated docs"
+    assert details[0].files_changed == ["README.md"]
+    assert details[0].tool_actions == ["write README.md"]
+    assert details[0].exit_reason == "success"
+    assert details[0].uncertainty == "low"
 
 
 def test_state_store_persists_and_resolves_approval_requests(tmp_path: Path) -> None:
