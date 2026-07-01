@@ -28,6 +28,29 @@ def test_process_runner_missing_command() -> None:
     assert result.error == "Command not found: definitely-missing-ai-orch-command"
 
 
+def test_process_runner_uses_resolved_executable(monkeypatch) -> None:
+    captured_argv = []
+
+    class FakePopen:
+        def __init__(self, argv, *args, **kwargs) -> None:
+            captured_argv.append(argv)
+            self.returncode = 0
+
+        def communicate(self, timeout=None):
+            return "ok", ""
+
+    monkeypatch.setattr(
+        "ai_orchestrator.process.runner.shutil.which",
+        lambda command: "C:\\Tools\\demo.cmd" if command == "demo" else None,
+    )
+    monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
+
+    result = ProcessRunner().run(["demo", "--version"])
+
+    assert result.status == "success"
+    assert captured_argv == [["C:\\Tools\\demo.cmd", "--version"]]
+
+
 def test_process_runner_terminates_process_on_timeout(monkeypatch) -> None:
     processes = []
 
@@ -51,6 +74,7 @@ def test_process_runner_terminates_process_on_timeout(monkeypatch) -> None:
         def kill(self) -> None:
             self.killed = True
 
+    monkeypatch.setattr("ai_orchestrator.process.runner.shutil.which", lambda command: command)
     monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
 
     result = ProcessRunner().run(["slow"], timeout_sec=1, terminate_grace_sec=1)
@@ -91,6 +115,7 @@ def test_process_runner_terminates_process_on_cancel(monkeypatch) -> None:
         cancel_checks += 1
         return cancel_checks >= 2
 
+    monkeypatch.setattr("ai_orchestrator.process.runner.shutil.which", lambda command: command)
     monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
 
     result = ProcessRunner().run(
@@ -128,6 +153,7 @@ def test_process_runner_accepts_run_options(monkeypatch) -> None:
         def kill(self) -> None:
             self.killed = True
 
+    monkeypatch.setattr("ai_orchestrator.process.runner.shutil.which", lambda command: command)
     monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
 
     result = ProcessRunner().run(
@@ -168,6 +194,7 @@ def test_process_runner_terminates_process_on_keyboard_interrupt(monkeypatch) ->
         def kill(self) -> None:
             self.killed = True
 
+    monkeypatch.setattr("ai_orchestrator.process.runner.shutil.which", lambda command: command)
     monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
 
     with pytest.raises(KeyboardInterrupt):

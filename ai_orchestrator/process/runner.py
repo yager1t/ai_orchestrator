@@ -56,6 +56,17 @@ class ProcessRunner:
                 error="No command provided",
             )
 
+        run_argv = _resolve_executable(argv)
+        if run_argv is None:
+            logger.warning("event=process.command_not_found executable=%s", argv[0])
+            return ProcessResult(
+                status="failed",
+                exit_code=None,
+                stdout="",
+                stderr="",
+                error=f"Command not found: {argv[0]}",
+            )
+
         try:
             logger.debug(
                 "event=process.started executable=%s argc=%s cwd=%s timeout_sec=%s",
@@ -65,7 +76,7 @@ class ProcessRunner:
                 timeout_sec,
             )
             process = subprocess.Popen(
-                argv,
+                run_argv,
                 cwd=str(cwd) if cwd else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -145,7 +156,6 @@ class ProcessRunner:
             stdout=stdout,
             stderr=stderr,
         )
-
     def _communicate_with_cancel(
         self,
         process: subprocess.Popen[str],
@@ -188,3 +198,11 @@ class ProcessRunner:
                 return process.communicate(timeout=min(0.2, remaining))
             except subprocess.TimeoutExpired:
                 continue
+
+
+def _resolve_executable(argv: list[str]) -> list[str] | None:
+    executable = argv[0]
+    resolved = shutil.which(executable)
+    if resolved is None:
+        return None
+    return [resolved, *argv[1:]]

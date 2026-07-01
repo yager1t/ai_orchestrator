@@ -26,6 +26,8 @@
   adapter failure summaries.
 - Added the `ai-orch` console script and install guide for local release smoke
   testing.
+- Switched the project autopilot config to the available Claude real-agent path
+  with mock fallback, and resolved CLI shims before subprocess execution.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

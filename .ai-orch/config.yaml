@@ -3,13 +3,9 @@ project:
   repo: "."
 
 orchestrator:
-  default_agent: "mock"
+  default_agent: "claude"
   fallback_agents:
-    - "generic"
-    - "codex"
-    - "claude"
-    - "kimi"
-    - "gemini"
+    - "mock"
   max_iterations: 10
   max_no_change_iterations: 2
   max_runtime_sec: 7200
@@ -40,7 +36,7 @@ agents:
     timeout_sec: 1800
 
   claude:
-    enabled: false
+    enabled: true
     type: "claude_headless"
     command: "claude"
     args:
