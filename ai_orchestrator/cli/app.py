@@ -225,6 +225,8 @@ def main(argv: list[str] | None = None) -> int:
         for agent in config.agents.values():
             state = "enabled" if agent.enabled else "disabled"
             details = f"{agent.name}: {state} type={agent.type}"
+            if agent.profile:
+                details += f" profile={agent.profile}"
             if args.check:
                 details += f" available={_agent_availability(config, agent.name)}"
             print(details)
@@ -769,6 +771,7 @@ def _print_autopilot_agent_profile(
     print("Agent profile:")
     print(f"  name: {agent.name}")
     print(f"  type: {_agent_config_value(agent_config, 'type')}")
+    print(f"  profile: {_agent_config_value(agent_config, 'profile')}")
     print(f"  mode: {'mock' if agent.name == 'mock' else 'real'}")
     print(f"  command: {_agent_config_value(agent_config, 'command')}")
     print(f"  available: {'yes' if available else 'no'}")

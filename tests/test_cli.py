@@ -902,6 +902,34 @@ def test_agents_lists_project_config(capsys, tmp_path: Path) -> None:
     assert "generic: enabled type=generic_cli" in output
 
 
+def test_agents_lists_adapter_profile(capsys, tmp_path: Path) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+orchestrator:
+  default_agent: "generic"
+
+adapter_profiles:
+  python-profile:
+    type: "generic_cli"
+    command: "python"
+
+agents:
+  generic:
+    enabled: true
+    profile: "python-profile"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["agents", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "generic: enabled type=generic_cli profile=python-profile" in output
+
+
 def test_agents_check_reports_availability(capsys, tmp_path: Path) -> None:
     write_config(
         tmp_path,

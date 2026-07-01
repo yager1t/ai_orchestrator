@@ -21,6 +21,7 @@
   `generic_cli` adapter without external AI credentials.
 - Added structured adapter output fields on `AgentResult` and persisted them in
   iteration history, reports, status, and TUI views.
+- Added YAML-configured generic adapter profiles for reusable CLI defaults.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

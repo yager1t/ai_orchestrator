@@ -9,7 +9,7 @@ from ai_orchestrator.agents.gemini import GeminiCLIAdapter
 from ai_orchestrator.agents.generic import GenericCLIAdapter
 from ai_orchestrator.agents.kimi import KimiCLIAdapter
 from ai_orchestrator.agents.mock import MockAgentAdapter
-from ai_orchestrator.config.loader import AgentConfig, ProjectConfig
+from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
 from ai_orchestrator.policy.engine import PolicyEngine
 
 
@@ -41,6 +41,39 @@ def test_build_agent_creates_generic_adapter() -> None:
 
     assert isinstance(agent, GenericCLIAdapter)
     assert agent.command == "python"
+    assert agent.timeout_sec == 12
+
+
+def test_build_agent_creates_generic_adapter_from_profile(tmp_path: Path) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+orchestrator:
+  default_agent: "generic"
+
+adapter_profiles:
+  python-profile:
+    type: "generic_cli"
+    command: "python"
+    args:
+      - "-c"
+      - "print('profile')"
+    timeout_sec: 12
+
+agents:
+  generic:
+    enabled: true
+    profile: "python-profile"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    agent = build_agent(load_project_config(tmp_path))
+
+    assert isinstance(agent, GenericCLIAdapter)
+    assert agent.command == "python"
+    assert agent.args == ["-c", "print('profile')"]
     assert agent.timeout_sec == 12
 
 

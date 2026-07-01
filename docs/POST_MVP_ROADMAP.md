@@ -145,7 +145,7 @@ repeatable real-agent operation:
 - [x] Add a real-agent smoke-run fixture and documented operator script.
 - [x] Add structured adapter output fields:
   `summary`, `files_changed`, `tool_actions`, `exit_reason`, and `uncertainty`.
-- [ ] Add YAML-configured generic adapter profiles.
+- [x] Add YAML-configured generic adapter profiles.
 - [ ] Add a local metrics summary for iterations, verification pass rate,
   approvals, and adapter failures.
 - [ ] Prepare the release and install path.

@@ -73,6 +73,11 @@ Current adapters:
 - Kimi CLI alias
 - Gemini CLI alias
 
+Generic CLI adapters can also be configured through reusable
+`adapter_profiles` in `.ai-orch/config.yaml`. The config loader resolves profile
+defaults into concrete `AgentConfig` values before the agent factory builds an
+adapter.
+
 ### ProcessRunner
 
 `ProcessRunner` is the only subprocess execution path for adapters and

@@ -42,7 +42,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 246 passed
+- `python -m pytest`: 249 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -70,6 +70,30 @@ explicit in config when real CLI flags differ from defaults.
 
 Verification commands can use structured `argv` config or legacy `run` strings.
 Structured `argv` is preferred for new configs.
+
+Reusable generic adapter profiles can be defined once and referenced by one or
+more agents. Agent-level `command`, `args`, and `timeout_sec` values override
+the profile defaults.
+
+```yaml
+orchestrator:
+  default_agent: "docs-agent"
+
+adapter_profiles:
+  python-echo:
+    type: "generic_cli"
+    command: "python"
+    args:
+      - "-c"
+      - "import sys; print(sys.argv[1])"
+      - "{prompt}"
+    timeout_sec: 30
+
+agents:
+  docs-agent:
+    enabled: true
+    profile: "python-echo"
+```
 
 Set `verification.strict: true` to require explicitly configured verification
 commands. In strict mode, `ai-orch` will not fall back to the default compile

@@ -68,6 +68,59 @@ policy:
     assert config.policy_ask_patterns == ["deploy"]
 
 
+def test_load_project_config_reads_generic_adapter_profiles(tmp_path: Path) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+orchestrator:
+  default_agent: "docs-agent"
+  fallback_agents:
+    - "review-agent"
+
+adapter_profiles:
+  python-echo:
+    type: "generic_cli"
+    command: "python"
+    args:
+      - "-c"
+      - "import sys; print(sys.argv[1])"
+      - "{prompt}"
+    timeout_sec: 30
+
+agents:
+  docs-agent:
+    enabled: true
+    profile: "python-echo"
+  review-agent:
+    enabled: true
+    profile: "python-echo"
+    command: "python3"
+    args:
+      - "-c"
+      - "print('override')"
+    timeout_sec: 12
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = load_project_config(tmp_path)
+
+    assert config.adapter_profiles["python-echo"].type == "generic_cli"
+    assert config.agents["docs-agent"].type == "generic_cli"
+    assert config.agents["docs-agent"].profile == "python-echo"
+    assert config.agents["docs-agent"].command == "python"
+    assert config.agents["docs-agent"].args == [
+        "-c",
+        "import sys; print(sys.argv[1])",
+        "{prompt}",
+    ]
+    assert config.agents["docs-agent"].timeout_sec == 30
+    assert config.agents["review-agent"].command == "python3"
+    assert config.agents["review-agent"].args == ["-c", "print('override')"]
+    assert config.agents["review-agent"].timeout_sec == 12
+
+
 def test_load_project_config_uses_compile_fallback_without_config(tmp_path: Path) -> None:
     config = load_project_config(tmp_path)
 
