@@ -38,9 +38,12 @@ Supported agent types:
 
 Latest verified baseline:
 
-- `python -m pytest`: 211 passed
+- `python -m ruff check ai_orchestrator tests`: passed
+- `python -m mypy`: passed
+- `python -m pytest`: 212 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
+- `python -m ai_orchestrator release-check --repo .`: passed
 - `git diff --check`: passed
 
 ## Quick Start
