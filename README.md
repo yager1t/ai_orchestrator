@@ -114,6 +114,11 @@ python -m ai_orchestrator memory impact --repo .
 Use the output as planning context for the next bounded task. Do not treat it as
 proof that behavior is correct.
 
+Write-like memory tools such as `memory index` create persisted approval
+requests in the shared approval inbox when they are not explicitly approved.
+Resolve them with `ai-orch approvals approve` and rerun the exact command with
+`ai-orch approvals retry`.
+
 See `docs/CODEBASE_MEMORY_RESEARCH.md` for supervisor/security, adapter, and
 release/review playbooks.
 

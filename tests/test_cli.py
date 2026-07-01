@@ -1259,11 +1259,20 @@ def test_memory_index_requires_explicit_approval(capsys, monkeypatch, tmp_path: 
 
     exit_code = main(["memory", "index", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
+    approvals = StateStore(
+        tmp_path / ".ai-orch" / "state" / "ai-orch.db"
+    ).list_approval_requests(status="pending")
 
     assert exit_code == 1
+    assert "approval_request:" in output
     assert "index_repository: needs_approval exit=None" in output
     assert "Codebase Memory tool requires approval: index_repository" in output
     assert calls == []
+    assert len(approvals) == 1
+    assert approvals[0].source == "memory"
+    assert approvals[0].command_string.startswith("codebase-memory-mcp cli index_repository")
+    assert "repo_path" in approvals[0].command_string
+    assert approvals[0].reason == "Codebase Memory tool requires approval: index_repository"
 
 
 def test_memory_index_runs_with_approve_flag(capsys, monkeypatch, tmp_path: Path) -> None:
@@ -1278,9 +1287,13 @@ def test_memory_index_runs_with_approve_flag(capsys, monkeypatch, tmp_path: Path
 
     exit_code = main(["memory", "index", "--repo", str(tmp_path), "--approve"])
     output = capsys.readouterr().out
+    approvals = StateStore(
+        tmp_path / ".ai-orch" / "state" / "ai-orch.db"
+    ).list_approval_requests()
 
     assert exit_code == 0
     assert "index_repository: passed exit=0" in output
+    assert approvals == []
     assert captured_argv == [
         [
             "codebase-memory-mcp",

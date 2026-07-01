@@ -712,8 +712,39 @@ def _run_memory_command(args: argparse.Namespace, parser: argparse.ArgumentParse
         return 1
 
     result = client.run_tool(tool, tool_args, cwd=repo)
+    if result.status == "needs_approval":
+        approval = _persist_memory_approval_request(
+            repo=repo,
+            tool=tool,
+            tool_args=tool_args,
+            client=client,
+            result=result,
+        )
+        print(f"approval_request: {approval.approval_id}")
     _print_memory_result(tool, result)
     return 0 if result.status == "passed" else 1
+
+
+def _persist_memory_approval_request(
+    repo: Path,
+    tool: str,
+    tool_args: dict[str, object],
+    client: CodebaseMemoryClient,
+    result: CodebaseMemoryResult,
+) -> StoredApprovalRequest:
+    store = _state_store_for_repo(repo)
+    task = store.create_task(
+        task=f"Memory approval request: {tool}",
+        repo_path=repo,
+    )
+    store.update_task_status(task.task_id, "blocked")
+    return store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="memory",
+        command_string=client.build_command_string(tool=tool, args=tool_args),
+        reason=result.error or f"Codebase Memory tool requires approval: {tool}",
+    )
 
 
 def _run_memory_preflight(

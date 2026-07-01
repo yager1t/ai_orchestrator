@@ -11,6 +11,8 @@
   preserving deny-rule precedence.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
+- Persisted Codebase Memory `needs_approval` results into the shared approval
+  inbox.
 - Rendered approval request history in Markdown reports and read-only TUI
   approval/status views.
 - Added `verification.strict` to disable default verification fallback and make
