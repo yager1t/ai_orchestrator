@@ -40,7 +40,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 236 passed
+- `python -m pytest`: 237 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -156,6 +156,9 @@ python -m ai_orchestrator autopilot run --repo . --plan docs/POST_MVP_ROADMAP.md
 when the selected agent is `mock` unless `--allow-mock-agent` is passed, and it
 is blocked on dirty repositories unless `--allow-dirty` is passed. These guards
 keep unattended operation from pretending that mock output completed real work.
+The command prints an agent execution profile before running, including the
+selected agent name, type, command, mock/real mode, and availability. Unavailable
+non-mock agents are blocked before supervisor execution starts.
 
 ## Verification Approvals
 

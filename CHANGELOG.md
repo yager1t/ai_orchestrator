@@ -5,6 +5,8 @@
 - Added state-store persistence and migrations for approval requests.
 - Added a guarded `ai-orch autopilot` command for selecting and dry-running
   roadmap items through the supervisor.
+- Added an autopilot agent execution profile and pre-execution availability
+  check for non-mock agents.
 - Added `ai-orch approvals list/show/approve/reject` for persisted approval
   requests.
 - Added `ai-orch approvals retry` for rerunning approved request commands while

@@ -56,7 +56,47 @@ def test_autopilot_run_defaults_to_dry_run(capsys, tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "Autopilot selected:" in output
+    assert "Agent profile:" in output
+    assert "name: mock" in output
+    assert "mode: mock" in output
+    assert "available: yes" in output
     assert "Dry run: add --execute" in output
+
+
+def test_autopilot_run_blocks_unavailable_real_agent_before_execution(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+    write_config(
+        tmp_path,
+        default_agent="generic",
+        include_generic_agent=True,
+        generic_command="missing-ai-orch-agent-binary",
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Agent profile:" in output
+    assert "name: generic" in output
+    assert "type: generic_cli" in output
+    assert "mode: real" in output
+    assert "command: missing-ai-orch-agent-binary" in output
+    assert "available: no" in output
+    assert "Execution blocked: selected agent is unavailable: generic" in output
 
 
 def test_autopilot_run_blocks_mock_agent_without_explicit_allow(

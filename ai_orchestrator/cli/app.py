@@ -8,7 +8,7 @@ from ai_orchestrator import __version__
 from ai_orchestrator.agents.base import AgentAdapter
 from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
 from ai_orchestrator.autopilot import AutopilotTask, load_plan_tasks, next_task
-from ai_orchestrator.config.loader import ProjectConfig, load_project_config
+from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
 from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
 from ai_orchestrator.policy.engine import PolicyEngine
@@ -595,9 +595,11 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
     config = load_project_config(repo)
     policy_engine = _policy_engine(config)
     agent = _select_agent(config, policy_engine)
+    agent_config = config.agents.get(agent.name)
+    agent_available = agent.check_available()
     print("Autopilot selected:")
     _print_autopilot_task(selected)
-    print(f"Agent: {agent.name}")
+    _print_autopilot_agent_profile(agent, agent_config, agent_available)
 
     if not args.execute:
         print("Dry run: add --execute to start this plan item.")
@@ -605,6 +607,10 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
 
     if agent.name == "mock" and not args.allow_mock_agent:
         print("Execution blocked: mock agent selected. Enable a real agent or pass --allow-mock-agent.")
+        return 1
+
+    if agent.name != "mock" and not agent_available:
+        print(f"Execution blocked: selected agent is unavailable: {agent.name}")
         return 1
 
     if _repo_has_uncommitted_changes(repo) and not args.allow_dirty:
@@ -636,6 +642,28 @@ def _print_autopilot_task(task: AutopilotTask) -> None:
     print(f"Source: {task.source_label}")
     print(f"Section: {task.section or 'Unsectioned'}")
     print(f"Task: {task.text}")
+
+
+def _print_autopilot_agent_profile(
+    agent: AgentAdapter,
+    agent_config: AgentConfig | None,
+    available: bool,
+) -> None:
+    print("Agent profile:")
+    print(f"  name: {agent.name}")
+    print(f"  type: {_agent_config_value(agent_config, 'type')}")
+    print(f"  mode: {'mock' if agent.name == 'mock' else 'real'}")
+    print(f"  command: {_agent_config_value(agent_config, 'command')}")
+    print(f"  available: {'yes' if available else 'no'}")
+
+
+def _agent_config_value(agent_config: AgentConfig | None, field: str) -> str:
+    if agent_config is None:
+        return "(unknown)"
+    value = getattr(agent_config, field)
+    if value == "":
+        return "(default)"
+    return str(value)
 
 
 def _repo_has_uncommitted_changes(repo: Path) -> bool:
