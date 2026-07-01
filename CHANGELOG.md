@@ -7,6 +7,8 @@
   roadmap items through the supervisor.
 - Added an autopilot agent execution profile and pre-execution availability
   check for non-mock agents.
+- Added opt-in `--worktree` isolation for autopilot execution in an existing
+  linked git worktree.
 - Added `ai-orch approvals list/show/approve/reject` for persisted approval
   requests.
 - Added `ai-orch approvals retry` for rerunning approved request commands while

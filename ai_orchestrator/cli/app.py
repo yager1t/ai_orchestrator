@@ -133,6 +133,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow execution with the mock agent for smoke tests",
     )
+    autopilot_run.add_argument(
+        "--worktree",
+        help=(
+            "Run the supervisor in an existing separate git worktree. "
+            "Relative paths are resolved from --repo."
+        ),
+    )
 
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
     memory_sub = memory.add_subparsers(dest="memory_command")
@@ -597,9 +604,11 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
     agent = _select_agent(config, policy_engine)
     agent_config = config.agents.get(agent.name)
     agent_available = agent.check_available()
+    execution_repo = _autopilot_execution_repo(repo, getattr(args, "worktree", None))
     print("Autopilot selected:")
     _print_autopilot_task(selected)
     _print_autopilot_agent_profile(agent, agent_config, agent_available)
+    print(f"Execution repo: {execution_repo}")
 
     if not args.execute:
         print("Dry run: add --execute to start this plan item.")
@@ -613,7 +622,13 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
         print(f"Execution blocked: selected agent is unavailable: {agent.name}")
         return 1
 
-    if _repo_has_uncommitted_changes(repo) and not args.allow_dirty:
+    if args.worktree:
+        worktree_error = _validate_autopilot_worktree(repo, execution_repo)
+        if worktree_error is not None:
+            print(f"Execution blocked: {worktree_error}")
+            return 1
+
+    if _repo_has_uncommitted_changes(execution_repo) and not args.allow_dirty:
         print("Execution blocked: repository has uncommitted changes. Commit/stash them or pass --allow-dirty.")
         return 1
 
@@ -626,10 +641,59 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
         max_no_change_iterations=config.max_no_change_iterations,
         max_runtime_sec=config.max_runtime_sec,
     )
-    result = supervisor.run_once(task=selected.to_prompt(), repo=repo)
+    result = supervisor.run_once(task=selected.to_prompt(), repo=execution_repo)
     task_prefix = f"{result.task_id}: " if result.task_id else ""
     print(f"{task_prefix}{result.summary}")
     return 0 if result.status == "done" else 1
+
+
+def _autopilot_execution_repo(repo: Path, worktree: str | None) -> Path:
+    if not worktree:
+        return repo
+    worktree_path = Path(worktree)
+    if not worktree_path.is_absolute():
+        worktree_path = repo / worktree_path
+    return worktree_path.resolve()
+
+
+def _validate_autopilot_worktree(repo: Path, worktree: Path) -> str | None:
+    if not worktree.exists():
+        return f"worktree path does not exist: {worktree}"
+    if not worktree.is_dir():
+        return f"worktree path is not a directory: {worktree}"
+
+    repo_root = _git_rev_parse_path(repo, "--show-toplevel")
+    if repo_root is None:
+        return f"repo is not a git repository: {repo}"
+    worktree_root = _git_rev_parse_path(worktree, "--show-toplevel")
+    if worktree_root is None:
+        return f"worktree path is not a git repository: {worktree}"
+    if worktree_root != worktree.resolve():
+        return f"worktree path must be the git worktree root: {worktree_root}"
+    if worktree_root == repo_root:
+        return "worktree path must be a separate git worktree, not the main repo"
+
+    repo_common = _git_rev_parse_path(repo, "--git-common-dir")
+    worktree_common = _git_rev_parse_path(worktree, "--git-common-dir")
+    if repo_common is None or worktree_common is None:
+        return "unable to inspect git worktree metadata"
+    if repo_common != worktree_common:
+        return f"worktree path is not linked to repo: {worktree}"
+    return None
+
+
+def _git_rev_parse_path(repo: Path, flag: str) -> Path | None:
+    result = ProcessRunner().run(
+        ["git", "rev-parse", "--path-format=absolute", flag],
+        cwd=repo,
+        options=RunOptions(timeout_sec=30),
+    )
+    if result.status != "success":
+        return None
+    value = result.stdout.strip().splitlines()
+    if not value:
+        return None
+    return Path(value[0]).resolve()
 
 
 def _resolve_plan_path(repo: Path, plan_path: Path) -> Path:

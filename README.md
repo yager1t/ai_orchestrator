@@ -40,7 +40,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 237 passed
+- `python -m pytest`: 239 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -150,6 +150,7 @@ item from a Markdown plan and routing it through the existing supervisor.
 ```bash
 python -m ai_orchestrator autopilot next --repo . --plan docs/POST_MVP_ROADMAP.md
 python -m ai_orchestrator autopilot run --repo . --plan docs/POST_MVP_ROADMAP.md
+python -m ai_orchestrator autopilot run --repo . --execute --worktree ../ai-orch-autopilot
 ```
 
 `autopilot run` is a dry run unless `--execute` is passed. Execution is blocked
@@ -159,6 +160,8 @@ keep unattended operation from pretending that mock output completed real work.
 The command prints an agent execution profile before running, including the
 selected agent name, type, command, mock/real mode, and availability. Unavailable
 non-mock agents are blocked before supervisor execution starts.
+Pass `--worktree` to run the supervisor inside an existing separate git worktree
+linked to `--repo`; dirty checks then apply to that execution worktree.
 
 ## Verification Approvals
 

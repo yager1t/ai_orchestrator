@@ -5,9 +5,10 @@ import pytest
 
 from ai_orchestrator import __version__
 from ai_orchestrator.cli.app import main
-from ai_orchestrator.verification.release import run_release_checks
+from ai_orchestrator.core.supervisor import SupervisorResult
 from ai_orchestrator.process.runner import ProcessResult, ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.verification.release import run_release_checks
 from ai_orchestrator.verification.runner import VerificationResult, VerificationRunner
 
 
@@ -121,6 +122,94 @@ def test_autopilot_run_blocks_mock_agent_without_explicit_allow(
 
     assert exit_code == 1
     assert "Execution blocked: mock agent selected" in output
+
+
+def test_autopilot_run_uses_opt_in_worktree_for_execution(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    worktree = tmp_path / "autopilot-worktree"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+    worktree.mkdir()
+    captured_repos: list[Path] = []
+
+    def fake_validate(repo: Path, candidate: Path) -> str | None:
+        assert repo == tmp_path
+        assert candidate == worktree.resolve()
+        return None
+
+    def fake_dirty(repo: Path) -> bool:
+        assert repo == worktree.resolve()
+        return False
+
+    def fake_run_once(self, task: str, repo: Path, planning_context=None) -> SupervisorResult:
+        captured_repos.append(repo)
+        return SupervisorResult(status="done", summary="Verification passed: custom", task_id="task-1")
+
+    monkeypatch.setattr("ai_orchestrator.cli.app._validate_autopilot_worktree", fake_validate)
+    monkeypatch.setattr("ai_orchestrator.cli.app._repo_has_uncommitted_changes", fake_dirty)
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--worktree",
+            str(worktree),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Execution repo: {worktree.resolve()}" in output
+    assert "task-1: Verification passed: custom" in output
+    assert captured_repos == [worktree.resolve()]
+
+
+def test_autopilot_run_blocks_invalid_worktree_before_execution(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    worktree = tmp_path / "not-worktree"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    def fake_validate(repo: Path, candidate: Path) -> str | None:
+        return f"worktree path does not exist: {candidate}"
+
+    def fake_run_once(self, task: str, repo: Path, planning_context=None) -> SupervisorResult:
+        raise AssertionError("supervisor should not start with an invalid worktree")
+
+    monkeypatch.setattr("ai_orchestrator.cli.app._validate_autopilot_worktree", fake_validate)
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--worktree",
+            str(worktree),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Execution blocked: worktree path does not exist:" in output
 
 
 def test_status_prints_stored_task(capsys, tmp_path: Path) -> None:
