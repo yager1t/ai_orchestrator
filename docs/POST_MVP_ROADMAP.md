@@ -136,6 +136,20 @@ the supervisor conservative:
 - [x] Add opt-in git worktree isolation for autopilot runs.
 - [x] Add an autopilot operator runbook with dry-run, execute, approval, retry, and report commands.
 
+## Next Development Track
+
+The next bounded work should move `ai-orch` from guarded autopilot mechanics to
+repeatable real-agent operation:
+
+- [ ] Add stale approval detection and clearer retry result history.
+- [ ] Add a real-agent smoke-run fixture and documented operator script.
+- [ ] Add structured adapter output fields:
+  `summary`, `files_changed`, `tool_actions`, `exit_reason`, and `uncertainty`.
+- [ ] Add YAML-configured generic adapter profiles.
+- [ ] Add a local metrics summary for iterations, verification pass rate,
+  approvals, and adapter failures.
+- [ ] Prepare the release and install path.
+
 ## Explicit Non-Goals For The Next Iteration
 
 - Web dashboard.
