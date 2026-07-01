@@ -34,13 +34,43 @@ def test_release_checks_require_unreleased_changelog_section(tmp_path: Path) -> 
     assert "Unreleased" in docs_result.detail
 
 
+def test_release_checks_require_console_script(tmp_path: Path) -> None:
+    write_release_tree(tmp_path, include_console_script=False)
+
+    results = run_release_checks(tmp_path)
+
+    entrypoint_result = next(item for item in results if item.name == "entrypoints")
+    assert entrypoint_result.status == "failed"
+    assert "ai-orch" in entrypoint_result.detail
+
+
+def test_release_checks_require_install_doc(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "INSTALL.md").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(item for item in results if item.name == "release-docs")
+    assert docs_result.status == "failed"
+    assert "docs/INSTALL.md" in docs_result.detail
+
+
 def write_release_tree(
     repo: Path,
     version: str = __version__,
     changelog: str = "# Changelog\n\n## Unreleased\n\n- Demo.\n",
+    include_console_script: bool = True,
 ) -> None:
     (repo / "ai_orchestrator" / "cli").mkdir(parents=True)
     (repo / "docs").mkdir()
+    scripts_section = (
+        """
+[project.scripts]
+ai-orch = "ai_orchestrator.cli.app:main"
+"""
+        if include_console_script
+        else ""
+    )
     (repo / "pyproject.toml").write_text(
         f"""
 [build-system]
@@ -52,6 +82,7 @@ name = "ai-orchestrator"
 version = "{version}"
 description = "Local supervisor orchestrator for CLI AI agents"
 requires-python = ">=3.12"
+{scripts_section}
 """.strip(),
         encoding="utf-8",
     )
@@ -60,6 +91,7 @@ requires-python = ">=3.12"
     (repo / "ai_orchestrator" / "cli" / "app.py").write_text("", encoding="utf-8")
     (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
     (repo / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
+    (repo / "docs" / "INSTALL.md").write_text("# Install\n", encoding="utf-8")
     (repo / "docs" / "RELEASE.md").write_text("# Release\n", encoding="utf-8")
     (repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md").write_text(
         "# Shipping\n",

@@ -24,6 +24,8 @@
 - Added YAML-configured generic adapter profiles for reusable CLI defaults.
 - Added `ai-orch metrics` for local iteration, verification, approval, and
   adapter failure summaries.
+- Added the `ai-orch` console script and install guide for local release smoke
+  testing.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

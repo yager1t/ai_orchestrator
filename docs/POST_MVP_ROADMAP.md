@@ -148,7 +148,7 @@ repeatable real-agent operation:
 - [x] Add YAML-configured generic adapter profiles.
 - [x] Add a local metrics summary for iterations, verification pass rate,
   approvals, and adapter failures.
-- [ ] Prepare the release and install path.
+- [x] Prepare the release and install path.
 
 ## Explicit Non-Goals For The Next Iteration
 

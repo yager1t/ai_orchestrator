@@ -42,7 +42,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 251 passed
+- `python -m pytest`: 253 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -54,11 +54,15 @@ Latest verified baseline:
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 python -m pip install -e ".[dev]"
-python -m ai_orchestrator --help
-python -m ai_orchestrator init
-python -m ai_orchestrator start --task "Check the MVP scaffold" --repo .
+ai-orch --help
+ai-orch init
+ai-orch start --task "Check the MVP scaffold" --repo .
 python -m pytest
 ```
+
+For a non-editable local install, run `python -m pip install .`. See
+[`docs/INSTALL.md`](docs/INSTALL.md) for the install smoke path and release
+verification commands.
 
 ## Configuration
 

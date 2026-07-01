@@ -21,7 +21,7 @@ def run_release_checks(repo: Path) -> list[ReleaseCheckResult]:
     return [
         _check_pyproject_metadata(pyproject_path, pyproject),
         _check_version_sync(pyproject),
-        _check_package_entrypoints(repo),
+        _check_package_entrypoints(repo, pyproject),
         _check_release_docs(repo),
     ]
 
@@ -95,23 +95,40 @@ def _check_version_sync(pyproject: dict[str, Any] | None) -> ReleaseCheckResult:
     )
 
 
-def _check_package_entrypoints(repo: Path) -> ReleaseCheckResult:
+def _check_package_entrypoints(
+    repo: Path,
+    pyproject: dict[str, Any] | None,
+) -> ReleaseCheckResult:
     required_files = [
         repo / "ai_orchestrator" / "__init__.py",
         repo / "ai_orchestrator" / "__main__.py",
         repo / "ai_orchestrator" / "cli" / "app.py",
     ]
-    missing = [str(path.relative_to(repo)) for path in required_files if not path.exists()]
+    missing = [_relative_label(path, repo) for path in required_files if not path.exists()]
     if missing:
         return ReleaseCheckResult(
             name="entrypoints",
             status="failed",
             detail=f"Missing files: {', '.join(missing)}",
         )
+
+    project = pyproject.get("project") if pyproject is not None else None
+    scripts = project.get("scripts") if isinstance(project, dict) else None
+    console_script = scripts.get("ai-orch") if isinstance(scripts, dict) else None
+    expected_script = "ai_orchestrator.cli.app:main"
+    if console_script != expected_script:
+        return ReleaseCheckResult(
+            name="entrypoints",
+            status="failed",
+            detail=(
+                "Missing project script: "
+                f"ai-orch = {expected_script}"
+            ),
+        )
     return ReleaseCheckResult(
         name="entrypoints",
         status="passed",
-        detail="python -m ai_orchestrator entrypoint files present",
+        detail="python -m ai_orchestrator and ai-orch console entrypoints present",
     )
 
 
@@ -119,10 +136,11 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
     required_docs = [
         repo / "README.md",
         repo / "CHANGELOG.md",
+        repo / "docs" / "INSTALL.md",
         repo / "docs" / "RELEASE.md",
         repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md",
     ]
-    missing = [str(path.relative_to(repo)) for path in required_docs if not path.exists()]
+    missing = [_relative_label(path, repo) for path in required_docs if not path.exists()]
     if missing:
         return ReleaseCheckResult(
             name="release-docs",
@@ -140,5 +158,9 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
     return ReleaseCheckResult(
         name="release-docs",
         status="passed",
-        detail="README, changelog, release checklist, and shipping template present",
+        detail="README, changelog, install guide, release checklist, and shipping template present",
     )
+
+
+def _relative_label(path: Path, repo: Path) -> str:
+    return path.relative_to(repo).as_posix()
