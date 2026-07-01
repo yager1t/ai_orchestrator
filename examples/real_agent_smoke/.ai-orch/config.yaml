@@ -1,0 +1,23 @@
+orchestrator:
+  default_agent: "generic"
+  max_iterations: 2
+  max_no_change_iterations: 2
+  max_runtime_sec: 120
+
+agents:
+  generic:
+    enabled: true
+    type: "generic_cli"
+    command: "python"
+    args:
+      - "tools/smoke_agent.py"
+      - "{repo}"
+      - "{prompt}"
+    timeout_sec: 30
+
+verification:
+  strict: true
+  commands:
+    - name: "smoke-result"
+      run: "python tools/verify_smoke.py"
+      timeout_sec: 30

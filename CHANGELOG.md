@@ -17,6 +17,8 @@
   preserving deny-rule precedence.
 - Added stale approval detection and persisted retry result history for
   approval requests.
+- Added a real-agent smoke fixture and operator script for exercising the
+  `generic_cli` adapter without external AI credentials.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

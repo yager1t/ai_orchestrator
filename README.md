@@ -40,7 +40,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 242 passed
+- `python -m pytest`: 244 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -165,6 +165,14 @@ linked to `--repo`; dirty checks then apply to that execution worktree.
 See [docs/AUTOPILOT_RUNBOOK.md](docs/AUTOPILOT_RUNBOOK.md) for the operator
 loop covering dry runs, execution, approvals, retry, reports, and stop
 conditions.
+
+Use the real-agent smoke fixture before unattended runs to confirm that a
+non-mock adapter can execute through subprocesses and pass independent
+verification:
+
+```bash
+python scripts/run_real_agent_smoke.py
+```
 
 ## Verification Approvals
 

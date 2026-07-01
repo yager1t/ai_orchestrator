@@ -28,6 +28,12 @@ Check the configured agents and make sure the intended real agent is available:
 python -m ai_orchestrator agents --repo . --check
 ```
 
+Run the local real-agent smoke fixture before unattended work:
+
+```bash
+python scripts/run_real_agent_smoke.py
+```
+
 Show the next roadmap item without starting work:
 
 ```bash
