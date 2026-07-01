@@ -162,6 +162,9 @@ selected agent name, type, command, mock/real mode, and availability. Unavailabl
 non-mock agents are blocked before supervisor execution starts.
 Pass `--worktree` to run the supervisor inside an existing separate git worktree
 linked to `--repo`; dirty checks then apply to that execution worktree.
+See [docs/AUTOPILOT_RUNBOOK.md](docs/AUTOPILOT_RUNBOOK.md) for the operator
+loop covering dry runs, execution, approvals, retry, reports, and stop
+conditions.
 
 ## Verification Approvals
 

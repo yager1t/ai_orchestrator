@@ -134,7 +134,7 @@ the supervisor conservative:
 - [x] Persist Codebase Memory approval requests through the shared approval model.
 - [x] Add a real-agent execution profile before autopilot execution.
 - [x] Add opt-in git worktree isolation for autopilot runs.
-- [ ] Add an autopilot operator runbook with dry-run, execute, approval, retry, and report commands.
+- [x] Add an autopilot operator runbook with dry-run, execute, approval, retry, and report commands.
 
 ## Explicit Non-Goals For The Next Iteration
 
