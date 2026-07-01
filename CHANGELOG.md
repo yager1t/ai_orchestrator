@@ -22,6 +22,8 @@
 - Added structured adapter output fields on `AgentResult` and persisted them in
   iteration history, reports, status, and TUI views.
 - Added YAML-configured generic adapter profiles for reusable CLI defaults.
+- Added `ai-orch metrics` for local iteration, verification, approval, and
+  adapter failure summaries.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

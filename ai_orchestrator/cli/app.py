@@ -15,7 +15,7 @@ from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.reporting.markdown import render_task_report
-from ai_orchestrator.storage.db import StateStore, StoredApprovalRequest
+from ai_orchestrator.storage.db import StateStore, StoredApprovalRequest, StoredMetricsSummary
 from ai_orchestrator.tui.app import (
     render_approvals_view,
     render_current_view,
@@ -85,6 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
     agents = sub.add_parser("agents", help="List configured starter agents")
     agents.add_argument("--repo", default=".")
     agents.add_argument("--check", action="store_true", help="Check enabled agent availability")
+
+    metrics = sub.add_parser("metrics", help="Show local execution metrics")
+    metrics.add_argument("--repo", default=".")
 
     approvals = sub.add_parser("approvals", help="Manage persisted approval requests")
     approvals_sub = approvals.add_subparsers(dest="approvals_command")
@@ -240,6 +243,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "autopilot":
         return _run_autopilot_command(args, parser)
+
+    if args.command == "metrics":
+        store = _state_store_for_repo(Path(args.repo))
+        print(_format_metrics_summary(store.metrics_summary()), end="")
+        return 0
 
     if args.command == "verify":
         repo = Path(args.repo)
@@ -412,6 +420,33 @@ def main(argv: list[str] | None = None) -> int:
 
 def _state_store_for_repo(repo: Path) -> StateStore:
     return StateStore(repo / ".ai-orch" / "state" / "ai-orch.db")
+
+
+def _format_metrics_summary(summary: StoredMetricsSummary) -> str:
+    verification_failed_count = summary.verification_count - summary.verification_passed_count
+    return "\n".join(
+        [
+            "Metrics",
+            f"  tasks: {summary.task_count}",
+            f"  iterations: {summary.iteration_count}",
+            (
+                "  verification: "
+                f"total={summary.verification_count} "
+                f"passed={summary.verification_passed_count} "
+                f"not_passed={verification_failed_count} "
+                f"pass_rate={summary.verification_pass_rate:.1%}"
+            ),
+            (
+                "  approvals: "
+                f"total={summary.approval_count} "
+                f"pending={summary.approval_pending_count} "
+                f"approved={summary.approval_approved_count} "
+                f"rejected={summary.approval_rejected_count} "
+                f"stale={summary.approval_stale_count}"
+            ),
+            f"  adapter_failures: {summary.adapter_failure_count}",
+        ]
+    ) + "\n"
 
 
 def _build_supervisor(state_store: StateStore, config: ProjectConfig) -> Supervisor:

@@ -257,6 +257,51 @@ def test_status_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
     assert "Task not found: missing-task" in output
 
 
+def test_metrics_prints_local_summary(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="generic",
+        agent_status="failed",
+        prompt="demo task",
+        raw_output="failed",
+        decision_status="blocked",
+        decision_reason="agent failed",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="failed",
+            exit_code=1,
+            stdout="",
+            stderr="failed",
+        ),
+    )
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        command_string="git push",
+        reason="approval required",
+    )
+    store.resolve_approval_request(approval.approval_id, status="approved")
+
+    exit_code = main(["metrics", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Metrics" in output
+    assert "tasks: 1" in output
+    assert "iterations: 1" in output
+    assert "verification: total=1 passed=0 not_passed=1 pass_rate=0.0%" in output
+    assert "approvals: total=1 pending=0 approved=1 rejected=0 stale=0" in output
+    assert "adapter_failures: 1" in output
+
+
 def test_cancel_marks_task_cancelled(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("cancel me", repo_path=tmp_path)

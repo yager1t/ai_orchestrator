@@ -102,6 +102,26 @@ class StoredApprovalRequest:
     last_retry_error: str | None = None
 
 
+@dataclass(frozen=True)
+class StoredMetricsSummary:
+    task_count: int
+    iteration_count: int
+    verification_count: int
+    verification_passed_count: int
+    approval_count: int
+    approval_pending_count: int
+    approval_approved_count: int
+    approval_rejected_count: int
+    approval_stale_count: int
+    adapter_failure_count: int
+
+    @property
+    def verification_pass_rate(self) -> float:
+        if self.verification_count == 0:
+            return 0.0
+        return self.verification_passed_count / self.verification_count
+
+
 class StateStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -650,6 +670,24 @@ class StateStore:
                 return None
         return self.get_approval_request(approval_id)
 
+    def metrics_summary(self) -> StoredMetricsSummary:
+        self.initialize()
+        with self._connect() as connection:
+            approval_counts = _approval_status_counts(connection)
+            verification_counts = _verification_status_counts(connection)
+            return StoredMetricsSummary(
+                task_count=_task_count(connection),
+                iteration_count=_iteration_count(connection),
+                verification_count=sum(verification_counts.values()),
+                verification_passed_count=verification_counts.get("passed", 0),
+                approval_count=sum(approval_counts.values()),
+                approval_pending_count=approval_counts.get("pending", 0),
+                approval_approved_count=approval_counts.get("approved", 0),
+                approval_rejected_count=approval_counts.get("rejected", 0),
+                approval_stale_count=approval_counts.get("stale", 0),
+                adapter_failure_count=_adapter_failure_count(connection),
+            )
+
     def list_iterations(self, task_id: str) -> list[StoredIteration]:
         self.initialize()
         with self._connect() as connection:
@@ -783,6 +821,41 @@ def _decode_json_list(value: str | None) -> list[str]:
     if not isinstance(decoded, list):
         return []
     return [str(item) for item in decoded if isinstance(item, str)]
+
+
+def _task_count(connection: sqlite3.Connection) -> int:
+    row = connection.execute("SELECT COUNT(*) AS count FROM tasks").fetchone()
+    return int(row["count"])
+
+
+def _iteration_count(connection: sqlite3.Connection) -> int:
+    row = connection.execute("SELECT COUNT(*) AS count FROM iterations").fetchone()
+    return int(row["count"])
+
+
+def _verification_status_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    rows = connection.execute(
+        "SELECT status, COUNT(*) AS count FROM verification_runs GROUP BY status"
+    ).fetchall()
+    return {str(row["status"]): int(row["count"]) for row in rows}
+
+
+def _approval_status_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    rows = connection.execute(
+        "SELECT status, COUNT(*) AS count FROM approval_requests GROUP BY status"
+    ).fetchall()
+    return {str(row["status"]): int(row["count"]) for row in rows}
+
+
+def _adapter_failure_count(connection: sqlite3.Connection) -> int:
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM iterations
+        WHERE agent_status IN ('failed', 'timeout', 'unavailable')
+        """
+    ).fetchone()
+    return int(row["count"])
 
 
 def _stored_iteration_from_row(row: sqlite3.Row) -> StoredIteration:

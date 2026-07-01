@@ -180,6 +180,7 @@ python -m ai_orchestrator tui current TASK_ID --repo .
 python -m ai_orchestrator tui logs TASK_ID --repo .
 python -m ai_orchestrator tui approvals --repo .
 python -m ai_orchestrator tui status TASK_ID --repo .
+python -m ai_orchestrator metrics --repo .
 ```
 
 ## 8. Finish The Iteration

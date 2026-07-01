@@ -146,7 +146,7 @@ repeatable real-agent operation:
 - [x] Add structured adapter output fields:
   `summary`, `files_changed`, `tool_actions`, `exit_reason`, and `uncertainty`.
 - [x] Add YAML-configured generic adapter profiles.
-- [ ] Add a local metrics summary for iterations, verification pass rate,
+- [x] Add a local metrics summary for iterations, verification pass rate,
   approvals, and adapter failures.
 - [ ] Prepare the release and install path.
 

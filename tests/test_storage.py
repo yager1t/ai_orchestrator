@@ -415,6 +415,121 @@ def test_state_store_records_approval_retry_history(tmp_path: Path) -> None:
     assert retried.last_retry_error == "assertion failed"
 
 
+def test_state_store_summarizes_local_metrics(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    first_task = store.create_task("first", repo_path=tmp_path)
+    second_task = store.create_task("second", repo_path=tmp_path)
+    success_iteration = store.add_iteration(
+        task_id=first_task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="do it",
+        raw_output="done",
+        decision_status="continue",
+        decision_reason="verification failed",
+    )
+    failed_iteration = store.add_iteration(
+        task_id=second_task.task_id,
+        iteration_index=1,
+        agent_name="generic",
+        agent_status="failed",
+        prompt="do it",
+        raw_output="error",
+        decision_status="blocked",
+        decision_reason="agent failed",
+    )
+    unavailable_iteration = store.add_iteration(
+        task_id=second_task.task_id,
+        iteration_index=2,
+        agent_name="generic",
+        agent_status="unavailable",
+        prompt="do it",
+        raw_output="",
+        decision_status="blocked",
+        decision_reason="agent unavailable",
+    )
+    store.add_verification_run(
+        task_id=first_task.task_id,
+        iteration_id=success_iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="",
+            stderr="",
+        ),
+    )
+    store.add_verification_run(
+        task_id=first_task.task_id,
+        iteration_id=success_iteration.iteration_id,
+        result=VerificationResult(
+            name="lint",
+            status="failed",
+            exit_code=1,
+            stdout="",
+            stderr="lint failed",
+        ),
+    )
+    store.add_verification_run(
+        task_id=second_task.task_id,
+        iteration_id=failed_iteration.iteration_id,
+        result=VerificationResult(
+            name="approval",
+            status="needs_approval",
+            exit_code=None,
+            stdout="",
+            stderr="",
+        ),
+    )
+    pending = store.add_approval_request(
+        task_id=first_task.task_id,
+        iteration_id=success_iteration.iteration_id,
+        source="verification",
+        command_string="git push",
+        reason="approval required",
+    )
+    approved = store.add_approval_request(
+        task_id=first_task.task_id,
+        iteration_id=success_iteration.iteration_id,
+        source="verification",
+        command_string="pip install demo",
+        reason="approval required",
+    )
+    rejected = store.add_approval_request(
+        task_id=second_task.task_id,
+        iteration_id=failed_iteration.iteration_id,
+        source="verification",
+        command_string="deploy",
+        reason="approval required",
+    )
+    stale = store.add_approval_request(
+        task_id=second_task.task_id,
+        iteration_id=unavailable_iteration.iteration_id,
+        source="memory",
+        command_string="codebase-memory-mcp cli index_repository",
+        reason="approval required",
+    )
+    store.resolve_approval_request(approved.approval_id, status="approved")
+    store.resolve_approval_request(rejected.approval_id, status="rejected")
+    store.resolve_approval_request(stale.approval_id, status="stale")
+
+    summary = store.metrics_summary()
+
+    assert pending.status == "pending"
+    assert summary.task_count == 2
+    assert summary.iteration_count == 3
+    assert summary.verification_count == 3
+    assert summary.verification_passed_count == 1
+    assert summary.verification_pass_rate == pytest.approx(1 / 3)
+    assert summary.approval_count == 4
+    assert summary.approval_pending_count == 1
+    assert summary.approval_approved_count == 1
+    assert summary.approval_rejected_count == 1
+    assert summary.approval_stale_count == 1
+    assert summary.adapter_failure_count == 2
+
+
 def test_state_store_lists_pending_approval_requests_in_creation_order(
     tmp_path: Path,
 ) -> None:

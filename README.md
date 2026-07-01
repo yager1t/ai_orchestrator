@@ -17,7 +17,7 @@ The MVP control plane is implemented in the current local branch.
 
 Current working surface:
 
-- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `release-check`, `agents`, `approvals`, `autopilot`, `tui`.
+- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `release-check`, `agents`, `metrics`, `approvals`, `autopilot`, `tui`.
 - Supervisor loop with verification-gated completion.
 - SQLite task, iteration, verification, and schema-version storage.
 - Policy checks for agent and verification commands.
@@ -42,7 +42,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 249 passed
+- `python -m pytest`: 251 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -156,6 +156,10 @@ termination.
 
 Use global `--log-level debug|info|warning|error` before the subcommand to enable
 safe metadata logs on stderr.
+
+Use `ai-orch metrics --repo .` to print a local execution summary covering task
+and iteration counts, verification pass rate, approval request states, and
+adapter failures.
 
 Timeouts are configured per agent and verification command with `timeout_sec`.
 Use `orchestrator.max_runtime_sec` as an outer cooperative budget for the
