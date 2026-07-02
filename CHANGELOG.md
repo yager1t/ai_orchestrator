@@ -48,6 +48,9 @@
 - Added `verification.strict` to disable default verification fallback and make
   missing checks fail closed.
 - Added explicit verified/not-verified wording to Markdown task reports.
+- Added ADR-0004 for the autopilot queue and batch execution model, covering
+  persisted plan queues, single-step loop mode, worktree isolation,
+  approvals/blockers, and per-run reports.
 - Added ADR-0003 for the trusted completion and approval model.
 - Added the post-MVP roadmap for approval UX, launch, isolation, ecosystem, and
   multi-agent development phases.
