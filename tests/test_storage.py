@@ -653,6 +653,38 @@ def test_state_store_records_and_lists_plan_items(tmp_path: Path) -> None:
     assert store.get_plan_item(first.plan_item_id) == first
 
 
+def test_state_store_records_selected_worktree_path_for_plan_items(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    worktree = tmp_path / "worktrees" / "task-1"
+
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Demo item",
+        selected_worktree_path=worktree,
+    )
+
+    assert item.selected_worktree_path == str(worktree)
+    assert store.get_plan_item(item.plan_item_id) == item
+
+    next_worktree = tmp_path / "worktrees" / "task-2"
+    updated = store.update_plan_item_status(
+        item.plan_item_id,
+        status="in_progress",
+        task_id=task.task_id,
+        selected_worktree_path=next_worktree,
+    )
+
+    assert updated is not None
+    assert updated.task_id == task.task_id
+    assert updated.selected_worktree_path == str(next_worktree)
+    assert store.list_plan_items(status="in_progress") == [updated]
+
+
 def test_state_store_updates_plan_item_status(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo", repo_path=tmp_path)
@@ -755,7 +787,38 @@ def test_migrate_schema_upgrades_v4_store_with_plan_items(tmp_path: Path) -> Non
         "text",
         "status",
         "task_id",
+        "selected_worktree_path",
         "created_at",
         "updated_at",
     }.issubset(columns)
     assert "idx_plan_items_plan_status" in indexes
+
+
+def test_migrate_schema_upgrades_v5_store_with_plan_item_worktree_path(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 5")
+        connection.execute(
+            """
+            CREATE TABLE plan_items (
+                plan_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_path TEXT NOT NULL,
+                line_number INTEGER NOT NULL,
+                section TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                task_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        version = migrate_schema(connection)
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(plan_items)")
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "selected_worktree_path" in columns

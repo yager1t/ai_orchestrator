@@ -64,6 +64,28 @@ def test_render_task_report_returns_none_for_missing_task(tmp_path: Path) -> Non
     assert render_task_report(store, "missing-task") is None
 
 
+def test_render_task_report_includes_selected_queue_worktree_path(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo queue worktree", repo_path=tmp_path)
+    worktree = tmp_path / "worktrees" / "task-1"
+    store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Run queue item in a rotated worktree",
+        status="in_progress",
+        task_id=task.task_id,
+        selected_worktree_path=worktree,
+    )
+
+    report = render_task_report(store, task.task_id)
+
+    assert report is not None
+    assert f"- Queue worktree: `{worktree}`" in report
+
+
 def test_render_task_report_includes_failed_verification_excerpt(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo failure", repo_path=tmp_path)

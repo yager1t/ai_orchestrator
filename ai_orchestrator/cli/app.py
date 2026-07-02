@@ -25,7 +25,12 @@ from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.reporting.markdown import render_task_report
-from ai_orchestrator.storage.db import StateStore, StoredApprovalRequest, StoredMetricsSummary
+from ai_orchestrator.storage.db import (
+    StateStore,
+    StoredApprovalRequest,
+    StoredMetricsSummary,
+    StoredPlanItem,
+)
 from ai_orchestrator.tui.app import (
     render_approvals_view,
     render_current_view,
@@ -571,11 +576,14 @@ def _task_report_path(repo: Path, task_id: str | None) -> Path | None:
     return report_path if report_path.exists() else None
 
 
-def _queue_item_refs(repo: Path, task_id: str | None) -> str:
-    task_ref = f" task={task_id}" if task_id else ""
-    report_path = _task_report_path(repo, task_id)
+def _queue_item_refs(repo: Path, item: StoredPlanItem) -> str:
+    task_ref = f" task={item.task_id}" if item.task_id else ""
+    worktree_ref = (
+        f" worktree={item.selected_worktree_path}" if item.selected_worktree_path else ""
+    )
+    report_path = _task_report_path(repo, item.task_id)
     report_ref = f" report={report_path}" if report_path else ""
-    return f"{task_ref}{report_ref}"
+    return f"{task_ref}{worktree_ref}{report_ref}"
 
 
 def _format_metrics_summary(summary: StoredMetricsSummary) -> str:
@@ -1008,7 +1016,7 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             )
             print("  by status:", summary)
         for item in items:
-            refs = _queue_item_refs(repo, item.task_id)
+            refs = _queue_item_refs(repo, item)
             print(f"  [{item.status}] {item.line_number}: {item.text}{refs}")
         return 0
 
@@ -1043,7 +1051,7 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
                 continue
             print(f"  recent {label}:")
             for item in recent:
-                refs = _queue_item_refs(repo, item.task_id)
+                refs = _queue_item_refs(repo, item)
                 print(f"    {item.line_number}: {item.text}{refs}")
         return 0
 
