@@ -9,9 +9,6 @@ No open P0 items.
 
 ## P1
 
-- Add an opt-in batch or loop mode that selects the next queued item and stops
-  on `done`, `blocked`, approval requirements, verification failure, or dirty
-  execution state.
 - Add per-run report generation for autopilot queue items.
 
 ## P2

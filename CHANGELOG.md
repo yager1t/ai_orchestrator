@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot queue run-next` to select the next persisted plan
+  item, dry-run by default, execute at most one item, update the queue status,
+  and stop on the supervisor result.
 - Added `ai-orch autopilot queue sync/list` for loading Markdown plan items
   into the persisted queue without duplicates and displaying queue status.
 - Added a persisted autopilot plan-item queue with `StoredPlanItem`, SQLite

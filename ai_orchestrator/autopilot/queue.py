@@ -83,6 +83,40 @@ def next_task(tasks: list[AutopilotTask], store: StateStore) -> AutopilotTask | 
     return None
 
 
+def next_plan_item(
+    store: StateStore,
+    plan_path: Path,
+) -> StoredPlanItem | None:
+    """Return the next persisted plan item ready to run.
+
+    Selects the oldest queued item with status ``created`` for the given
+    *plan_path*, ordered by line number.
+    """
+    items = store.list_plan_items(plan_path=plan_path, status="created")
+    if not items:
+        return None
+    return items[0]
+
+
+def plan_item_to_task(item: StoredPlanItem) -> AutopilotTask:
+    """Convert a persisted plan item back into an executable task."""
+    return AutopilotTask(
+        source_path=Path(item.plan_path),
+        line_number=item.line_number,
+        text=item.text,
+        section=item.section,
+    )
+
+
+def plan_item_status_from_supervisor(supervisor_status: str) -> str:
+    """Map a supervisor result status to a persisted plan item status."""
+    if supervisor_status == "done":
+        return "done"
+    if supervisor_status in {"blocked", "cancelled"}:
+        return "blocked"
+    return "blocked"
+
+
 def sync_plan_items(
     plan_path: Path,
     store: StateStore,

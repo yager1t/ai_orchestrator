@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,11 +12,14 @@ from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
 from ai_orchestrator.autopilot import (
     AutopilotTask,
     load_plan_tasks,
+    next_plan_item,
     next_task,
+    plan_item_status_from_supervisor,
+    plan_item_to_task,
     sync_plan_items,
 )
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
-from ai_orchestrator.core.supervisor import Supervisor
+from ai_orchestrator.core.supervisor import Supervisor, SupervisorResult
 from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
@@ -182,6 +186,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     autopilot_queue_list.add_argument("--repo", default=".")
     autopilot_queue_list.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_run_next = autopilot_queue_sub.add_parser(
+        "run-next",
+        help="Select and execute the next persisted queue item",
+    )
+    autopilot_queue_run_next.add_argument("--repo", default=".")
+    autopilot_queue_run_next.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_run_next.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually run the next queued item; without this flag the command is a dry run",
+    )
+    autopilot_queue_run_next.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow execution when the repository has uncommitted changes",
+    )
+    autopilot_queue_run_next.add_argument(
+        "--allow-mock-agent",
+        action="store_true",
+        help="Allow execution with the mock agent for smoke tests",
+    )
+    autopilot_queue_run_next.add_argument(
+        "--worktree",
+        help=(
+            "Run the queued item in an existing separate git worktree. "
+            "Relative paths are resolved from --repo."
+        ),
+    )
 
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
     memory_sub = memory.add_subparsers(dest="memory_command")
@@ -724,10 +756,27 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
         _print_autopilot_task(selected)
         return 0
 
-    if args.autopilot_command != "run":
-        parser.print_help()
-        return 1
+    if args.autopilot_command == "run":
+        result = _run_autopilot_task(selected, repo, plan_path, args, store)
+        return 0 if result is None or result.status == "done" else 1
 
+    parser.print_help()
+    return 1
+
+
+def _run_autopilot_task(
+    task: AutopilotTask,
+    repo: Path,
+    plan_path: Path,
+    args: argparse.Namespace,
+    store: StateStore,
+    on_start: Callable[[], None] | None = None,
+) -> SupervisorResult | None:
+    """Run a single autopilot task through the supervisor.
+
+    Returns ``None`` for a dry run, or a :class:`SupervisorResult` after
+    execution. Guard failures are reported as a blocked result.
+    """
     config = load_project_config(repo)
     policy_engine = _policy_engine(config)
     agent = _select_agent(config, policy_engine)
@@ -735,31 +784,34 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
     agent_available = agent.check_available()
     execution_repo = _autopilot_execution_repo(repo, getattr(args, "worktree", None))
     print("Autopilot selected:")
-    _print_autopilot_task(selected)
+    _print_autopilot_task(task)
     _print_autopilot_agent_profile(agent, agent_config, agent_available)
     print(f"Execution repo: {execution_repo}")
 
     if not args.execute:
         print("Dry run: add --execute to start this plan item.")
-        return 0
+        return None
 
     if agent.name == "mock" and not args.allow_mock_agent:
         print("Execution blocked: mock agent selected. Enable a real agent or pass --allow-mock-agent.")
-        return 1
+        return SupervisorResult(status="blocked", summary="mock agent selected")
 
     if agent.name != "mock" and not agent_available:
         print(f"Execution blocked: selected agent is unavailable: {agent.name}")
-        return 1
+        return SupervisorResult(status="blocked", summary=f"agent unavailable: {agent.name}")
 
     if args.worktree:
         worktree_error = _validate_autopilot_worktree(repo, execution_repo)
         if worktree_error is not None:
             print(f"Execution blocked: {worktree_error}")
-            return 1
+            return SupervisorResult(status="blocked", summary=worktree_error)
 
     if _repo_has_uncommitted_changes(execution_repo) and not args.allow_dirty:
         print("Execution blocked: repository has uncommitted changes. Commit/stash them or pass --allow-dirty.")
-        return 1
+        return SupervisorResult(status="blocked", summary="repository has uncommitted changes")
+
+    if on_start is not None:
+        on_start()
 
     supervisor = Supervisor(
         agent=agent,
@@ -772,10 +824,10 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
         require_repo_change=True,
         progress_callback=_print_progress,
     )
-    result = supervisor.run_once(task=selected.to_prompt(), repo=execution_repo)
+    result = supervisor.run_once(task=task.to_prompt(), repo=execution_repo)
     task_prefix = f"{result.task_id}: " if result.task_id else ""
     print(f"{task_prefix}{result.summary}")
-    return 0 if result.status == "done" else 1
+    return result
 
 
 def _autopilot_execution_repo(repo: Path, worktree: str | None) -> Path:
@@ -871,6 +923,31 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             task_ref = f" task={item.task_id}" if item.task_id else ""
             print(f"  [{item.status}] {item.line_number}: {item.text}{task_ref}")
         return 0
+
+    if args.autopilot_queue_command == "run-next":
+        next_item = next_plan_item(store, plan_path)
+        if next_item is None:
+            print(f"No queued plan items ready in {plan_path}")
+            return 0
+        task = plan_item_to_task(next_item)
+
+        def _mark_in_progress() -> None:
+            store.update_plan_item_status(next_item.plan_item_id, "in_progress")
+
+        result = _run_autopilot_task(
+            task,
+            repo,
+            plan_path,
+            args,
+            store,
+            on_start=_mark_in_progress,
+        )
+        if result is None:
+            return 0
+        item_status = plan_item_status_from_supervisor(result.status)
+        store.update_plan_item_status(next_item.plan_item_id, item_status, task_id=result.task_id)
+        print(f"Queue item {next_item.plan_item_id}: status={item_status}")
+        return 0 if item_status == "done" else 1
 
     parser.print_help()
     return 1
