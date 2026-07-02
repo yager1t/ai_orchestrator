@@ -46,6 +46,12 @@ Inspect the persisted queue without starting work:
 python -m ai_orchestrator autopilot queue status --repo . --plan docs/POST_MVP_ROADMAP.md
 ```
 
+Preview the next queued batch without starting work:
+
+```bash
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --max-items 3
+```
+
 ## 2. Dry Run
 
 Run the selected item in dry-run mode first:
@@ -97,6 +103,17 @@ Use `--worktree` when executing in an isolated checkout:
 ```bash
 python -m ai_orchestrator autopilot run --repo . --plan docs/POST_MVP_ROADMAP.md --execute --worktree ../ai-orch-autopilot
 ```
+
+Run a guarded serial queue batch only after the dry run is correct:
+
+```bash
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --execute --max-items 3 --worktree ../ai-orch-autopilot
+```
+
+Batch execution is serial and stops on the first non-`done` result. Without an
+operator commit between items, repository changes from one item can make the
+next item hit the dirty-worktree guard; use `--allow-dirty` only after reviewing
+that state intentionally.
 
 Use `--allow-mock-agent` only for smoke tests. A mock-agent run is not evidence
 that real development was completed:

@@ -13,6 +13,7 @@ from ai_orchestrator.autopilot import (
     AutopilotTask,
     load_plan_tasks,
     next_plan_item,
+    next_plan_items,
     next_task,
     plan_item_status_from_supervisor,
     plan_item_to_task,
@@ -225,6 +226,42 @@ def build_parser() -> argparse.ArgumentParser:
             "Run the queued item in an existing separate git worktree. "
             "Relative paths are resolved from --repo."
         ),
+    )
+    autopilot_queue_run_batch = autopilot_queue_sub.add_parser(
+        "run-batch",
+        help="Run up to a configurable number of persisted queue items serially",
+    )
+    autopilot_queue_run_batch.add_argument("--repo", default=".")
+    autopilot_queue_run_batch.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_run_batch.add_argument(
+        "--execute",
+        action="store_true",
+        help=(
+            "Actually run queued items; without this flag the command is a dry run"
+        ),
+    )
+    autopilot_queue_run_batch.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow execution when the repository has uncommitted changes",
+    )
+    autopilot_queue_run_batch.add_argument(
+        "--allow-mock-agent",
+        action="store_true",
+        help="Allow execution with the mock agent for smoke tests",
+    )
+    autopilot_queue_run_batch.add_argument(
+        "--worktree",
+        help=(
+            "Run the queued items in an existing separate git worktree. "
+            "Relative paths are resolved from --repo."
+        ),
+    )
+    autopilot_queue_run_batch.add_argument(
+        "--max-items",
+        type=int,
+        default=1,
+        help="Maximum number of queue items to process (default: 1)",
     )
 
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
@@ -1010,8 +1047,77 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
                 print(f"Report: {report_path}")
         return 0 if item_status == "done" else 1
 
+    if args.autopilot_queue_command == "run-batch":
+        return _run_autopilot_queue_batch(args, repo, plan_path, store)
+
     parser.print_help()
     return 1
+
+
+def _run_autopilot_queue_batch(
+    args: argparse.Namespace,
+    repo: Path,
+    plan_path: Path,
+    store: StateStore,
+) -> int:
+    """Run up to *args.max_items* queued plan items serially.
+
+    Dry-runs by default.  When ``args.execute`` is set, each item is started,
+    its status is updated from the supervisor result, a Markdown report is
+    written, and the loop stops on the first non-done result.
+    """
+    max_items = max(0, args.max_items)
+    if max_items <= 0:
+        print("--max-items must be at least 1")
+        return 1
+
+    if not args.execute:
+        items = next_plan_items(store, plan_path, limit=max_items)
+        if not items:
+            print(f"No queued plan items ready in {plan_path}")
+            return 0
+        for item in items:
+            task = plan_item_to_task(item)
+            _run_autopilot_task(task, repo, plan_path, args, store)
+        print(f"Dry run: would process {len(items)} item(s). Add --execute to run.")
+        return 0
+
+    processed = 0
+    for _ in range(max_items):
+        next_item = next_plan_item(store, plan_path)
+        if next_item is None:
+            print(f"No more queued plan items ready in {plan_path}")
+            break
+        task = plan_item_to_task(next_item)
+
+        def _mark_in_progress() -> None:
+            store.update_plan_item_status(next_item.plan_item_id, "in_progress")
+
+        result = _run_autopilot_task(
+            task,
+            repo,
+            plan_path,
+            args,
+            store,
+            on_start=_mark_in_progress,
+        )
+        if result is None:
+            print("Batch stopped: unexpected dry run in execute mode")
+            return 1
+        item_status = plan_item_status_from_supervisor(result.status)
+        store.update_plan_item_status(next_item.plan_item_id, item_status, task_id=result.task_id)
+        print(f"Queue item {next_item.plan_item_id}: status={item_status}")
+        processed += 1
+        if result.task_id is not None:
+            report_path = _write_task_report(store, repo, result.task_id)
+            if report_path is not None:
+                print(f"Report: {report_path}")
+        if item_status != "done":
+            print(f"Batch stopped after {processed} item(s): status={item_status}")
+            return 1
+
+    print(f"Batch complete: processed {processed} item(s)")
+    return 0
 
 
 def _print_autopilot_task(task: AutopilotTask) -> None:

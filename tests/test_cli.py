@@ -2048,6 +2048,258 @@ def test_autopilot_queue_run_next_returns_zero_when_no_ready_items(
     assert "No queued plan items ready" in output
 
 
+def test_autopilot_queue_run_batch_defaults_to_dry_run(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-items",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Autopilot selected:" in output
+    assert "Task: First task" in output
+    assert "Task: Second task" in output
+    assert "Dry run: add --execute" in output
+    assert "Dry run: would process 2 item(s)" in output
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert items["First task"].status == "created"
+    assert items["Second task"].status == "created"
+
+
+def test_autopilot_queue_run_batch_executes_up_to_max_items(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+                "- [ ] Third task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    call_count = 0
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        nonlocal call_count
+        call_count += 1
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id=f"batch-task-{call_count}"
+        )
+        return SupervisorResult(
+            status="done",
+            summary=f"Verification passed: {call_count}",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Batch complete: processed 2 item(s)" in output
+    assert call_count == 2
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert items["First task"].status == "done"
+    assert items["First task"].task_id == "batch-task-1"
+    assert items["Second task"].status == "done"
+    assert items["Second task"].task_id == "batch-task-2"
+    assert items["Third task"].status == "created"
+    assert items["Third task"].task_id is None
+
+    report_dir = tmp_path / ".ai-orch" / "reports"
+    assert (report_dir / "batch-task-1.md").exists()
+    assert (report_dir / "batch-task-2.md").exists()
+
+
+def test_autopilot_queue_run_batch_stops_on_blocked_result(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+                "- [ ] Third task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    call_count = 0
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        nonlocal call_count
+        call_count += 1
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id=f"batch-task-{call_count}"
+        )
+        status = "done" if call_count == 1 else "blocked"
+        return SupervisorResult(
+            status=status,
+            summary=f"Result {call_count}",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "3",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Queue item" in output
+    assert "status=done" in output
+    assert "status=blocked" in output
+    assert "Batch stopped after 2 item(s): status=blocked" in output
+    assert call_count == 2
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert items["First task"].status == "done"
+    assert items["Second task"].status == "blocked"
+    assert items["Third task"].status == "created"
+
+    report_dir = tmp_path / ".ai-orch" / "reports"
+    assert (report_dir / "batch-task-1.md").exists()
+    assert (report_dir / "batch-task-2.md").exists()
+    assert not (report_dir / "batch-task-3.md").exists()
+
+
+def test_autopilot_queue_run_batch_returns_zero_when_no_ready_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [x] Completed task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-items",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "No queued plan items ready" in output
+
+
+def test_autopilot_queue_run_batch_rejects_non_positive_max_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-items",
+            "0",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "--max-items must be at least 1" in output
+
+
 def test_autopilot_queue_status_summarizes_counts_and_recent_items(
     capsys,
     tmp_path: Path,

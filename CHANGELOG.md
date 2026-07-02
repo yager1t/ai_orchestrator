@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot queue run-batch` as a guarded serial loop that
+  dry-runs by default, executes up to a configurable `--max-items` count, stops
+  on approvals/blockers/failures, and writes a Markdown report for each executed
+  queue item.
 - Added `ai-orch autopilot queue status` to summarize persisted queue counts and
   recent started/done/blocked/skipped items without starting batch execution.
 - Added per-run Markdown report generation for `ai-orch autopilot queue run-next --execute`.
