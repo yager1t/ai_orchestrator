@@ -9,19 +9,18 @@ No open P0 items.
 
 ## P1
 
-- Complete the remaining trusted approval inbox pieces described in ADR-0003:
-  stale approval handling and clearer retry result history.
-- Harden the guarded autopilot path so it can execute real configured agents
-  unattended after approval and dirty-worktree safeguards are satisfied.
-- Prepare the release and install path described in
-  `docs/POST_MVP_ROADMAP.md`.
+- Add a persisted autopilot queue model based on ADR-0004.
+- Add an opt-in batch or loop mode that selects the next queued item and stops
+  on `done`, `blocked`, approval requirements, verification failure, or dirty
+  execution state.
+- Add per-run report generation for autopilot queue items.
 
 ## P2
 
-- Add structured adapter output fields for reports and future agent fallback
-  scoring.
-- Add basic local metrics for iterations, verification pass rate, approvals,
-  and adapter failures.
+- Add per-task worktree orchestration or strict serialized execution for
+  multi-item autopilot batches.
+- Add queue status and history views for started, done, blocked, and skipped
+  autopilot items.
 
 ## P3 / Deferred
 
