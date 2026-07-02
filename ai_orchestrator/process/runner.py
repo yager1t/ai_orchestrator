@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -35,7 +36,7 @@ class RunOptions:
 
 class ProcessRunner:
     def check_available(self, command: str) -> bool:
-        return shutil.which(os.path.expandvars(command)) is not None
+        return shutil.which(_expand_env_vars(command)) is not None
 
     def run(
         self,
@@ -93,7 +94,7 @@ class ProcessRunner:
             if run_env is not None:
                 process_env = os.environ.copy()
                 process_env.update(
-                    {key: os.path.expandvars(value) for key, value in run_env.items()}
+                    {key: _expand_env_vars(value) for key, value in run_env.items()}
                 )
 
             process = subprocess.Popen(
@@ -239,8 +240,17 @@ class ProcessRunner:
 
 
 def _resolve_executable(argv: list[str]) -> list[str] | None:
-    executable = os.path.expandvars(argv[0])
+    executable = _expand_env_vars(argv[0])
     resolved = shutil.which(executable)
     if resolved is None:
         return None
     return [resolved, *argv[1:]]
+
+
+def _expand_env_vars(value: str) -> str:
+    expanded = os.path.expandvars(value)
+    return re.sub(
+        r"%([^%]+)%",
+        lambda match: os.environ.get(match.group(1), match.group(0)),
+        expanded,
+    )
