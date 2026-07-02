@@ -186,6 +186,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     autopilot_queue_list.add_argument("--repo", default=".")
     autopilot_queue_list.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_status = autopilot_queue_sub.add_parser(
+        "status",
+        help="Summarize persisted queue counts and recent items",
+    )
+    autopilot_queue_status.add_argument("--repo", default=".")
+    autopilot_queue_status.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_status.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Number of recent items to show per status (default: 5)",
+    )
     autopilot_queue_run_next = autopilot_queue_sub.add_parser(
         "run-next",
         help="Select and execute the next persisted queue item",
@@ -932,6 +944,41 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         for item in items:
             task_ref = f" task={item.task_id}" if item.task_id else ""
             print(f"  [{item.status}] {item.line_number}: {item.text}{task_ref}")
+        return 0
+
+    if args.autopilot_queue_command == "status":
+        items = store.list_plan_items(plan_path=plan_path)
+        print(f"Queue status for {plan_path}")
+        print(f"  total: {len(items)}")
+        status_counts = {}
+        for item in items:
+            status_counts[item.status] = status_counts.get(item.status, 0) + 1
+        if status_counts:
+            summary = ", ".join(
+                f"{status}={count}" for status, count in sorted(status_counts.items())
+            )
+            print("  by status:", summary)
+        else:
+            print("  No plan items found.")
+
+        limit = max(0, args.limit)
+        for status, label in (
+            ("in_progress", "started"),
+            ("done", "done"),
+            ("blocked", "blocked"),
+            ("skipped", "skipped"),
+        ):
+            recent = sorted(
+                [item for item in items if item.status == status],
+                key=lambda item: (item.updated_at, item.plan_item_id),
+                reverse=True,
+            )[:limit]
+            if not recent:
+                continue
+            print(f"  recent {label}:")
+            for item in recent:
+                task_ref = f" task={item.task_id}" if item.task_id else ""
+                print(f"    {item.line_number}: {item.text}{task_ref}")
         return 0
 
     if args.autopilot_queue_command == "run-next":

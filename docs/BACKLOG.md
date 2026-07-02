@@ -15,8 +15,10 @@ No open P1 items.
 
 - Add per-task worktree orchestration or strict serialized execution for
   multi-item autopilot batches.
-- Add queue status and history views for started, done, blocked, and skipped
-  autopilot items.
+- Add autopilot queue batch/loop execution that takes the next queued item,
+  stops on approvals/blockers, and writes a report for each completed run.
+- Add deeper queue history filters if recent status summaries are not enough
+  for daily operation.
 
 ## P3 / Deferred
 
