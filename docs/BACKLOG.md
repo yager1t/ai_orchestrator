@@ -18,7 +18,6 @@ No open P0 items.
 
 ## P2
 
-- Add quick-start examples for Python, Node, and docs-only repositories.
 - Add opt-in git worktree isolation for task runs.
 - Add structured adapter output fields for reports and future agent fallback
   scoring.
