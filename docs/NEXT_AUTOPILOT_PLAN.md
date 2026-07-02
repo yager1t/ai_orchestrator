@@ -12,3 +12,4 @@ Use this plan for the first post-v0.1.0 real-agent autopilot development run.
 - [x] Add the first persisted autopilot queue model slice: SQLite schema, StateStore helpers, and tests for recording and listing plan items without batch execution.
 - [x] Add `ai-orch autopilot queue sync/list` commands that load Markdown plan items into the persisted queue without duplicates and display queue status without running batch execution.
 - [x] Add `ai-orch autopilot queue run-next` as the first guarded loop slice: select the next persisted queue item, dry-run by default, execute at most one item, update queue status, and stop on the supervisor result.
+- [ ] Add per-run Markdown report generation for `ai-orch autopilot queue run-next --execute` using the existing task report renderer and print the report path.
