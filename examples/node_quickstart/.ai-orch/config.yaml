@@ -1,0 +1,17 @@
+orchestrator:
+  default_agent: "node-agent"
+  max_iterations: 3
+
+agents:
+  node-agent:
+    enabled: true
+    type: "mock"
+
+verification:
+  commands:
+    - name: "node-tests"
+      argv:
+        - "node"
+        - "--test"
+        - "test_hello.js"
+      timeout_sec: 30

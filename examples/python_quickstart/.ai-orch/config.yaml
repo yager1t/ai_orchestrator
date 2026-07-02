@@ -1,0 +1,22 @@
+orchestrator:
+  default_agent: "python-agent"
+  max_iterations: 3
+
+agents:
+  python-agent:
+    enabled: true
+    type: "mock"
+
+verification:
+  commands:
+    - name: "python-tests"
+      argv:
+        - "python"
+        - "-m"
+        - "unittest"
+        - "discover"
+        - "-s"
+        - "."
+        - "-p"
+        - "test_*.py"
+      timeout_sec: 30

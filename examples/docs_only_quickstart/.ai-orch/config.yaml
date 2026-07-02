@@ -1,0 +1,17 @@
+orchestrator:
+  default_agent: "docs-agent"
+  max_iterations: 3
+
+agents:
+  docs-agent:
+    enabled: true
+    type: "mock"
+
+verification:
+  commands:
+    - name: "readme-has-heading"
+      argv:
+        - "python"
+        - "-c"
+        - "import re, sys; txt = open('README.md', encoding='utf-8').read(); sys.exit(0 if re.search(r'^# ', txt, re.MULTILINE) else 1)"
+      timeout_sec: 30
