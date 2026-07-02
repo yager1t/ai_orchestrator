@@ -32,6 +32,8 @@
   subprocesses.
 - Added per-agent CLI environment overrides and switched the local autopilot
   default agent to the configured Kimi Code CLI with Claude and mock fallbacks.
+- Recorded a Kimi Code real-agent autopilot smoke run and read subprocess
+  output as UTF-8 with replacement to avoid Windows locale decode noise.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

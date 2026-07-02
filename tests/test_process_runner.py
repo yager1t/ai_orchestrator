@@ -111,6 +111,27 @@ def test_process_runner_passes_run_options_env(monkeypatch) -> None:
     assert captured_env["AI_ORCH_RUNNER_ENV"] == "configured"
 
 
+def test_process_runner_reads_subprocess_output_as_utf8(monkeypatch) -> None:
+    captured_kwargs = {}
+
+    class FakePopen:
+        def __init__(self, argv, *args, **kwargs) -> None:
+            captured_kwargs.update(kwargs)
+            self.returncode = 0
+
+        def communicate(self, timeout=None):
+            return "ok", ""
+
+    monkeypatch.setattr("ai_orchestrator.process.runner.shutil.which", lambda command: command)
+    monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
+
+    result = ProcessRunner().run(["demo"])
+
+    assert result.status == "success"
+    assert captured_kwargs["encoding"] == "utf-8"
+    assert captured_kwargs["errors"] == "replace"
+
+
 def test_process_runner_terminates_process_on_timeout(monkeypatch) -> None:
     processes = []
 

@@ -102,6 +102,8 @@ class ProcessRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=process_env,
             )
             if should_cancel is None and on_progress is None:
