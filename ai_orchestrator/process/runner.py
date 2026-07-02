@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 import shutil
 import subprocess
 import time
@@ -26,11 +28,15 @@ class RunOptions:
     timeout_sec: int = 300
     terminate_grace_sec: int = 5
     should_cancel: Callable[[], bool] | None = None
+    on_progress: Callable[[str], None] | None = None
+    progress_label: str = "process"
+    progress_interval_sec: float = 30.0
+    env: dict[str, str] | None = None
 
 
 class ProcessRunner:
     def check_available(self, command: str) -> bool:
-        return shutil.which(command) is not None
+        return shutil.which(_expand_env_vars(command)) is not None
 
     def run(
         self,
@@ -45,6 +51,15 @@ class ProcessRunner:
             timeout_sec = options.timeout_sec
             terminate_grace_sec = options.terminate_grace_sec
             should_cancel = options.should_cancel
+            on_progress = options.on_progress
+            progress_label = options.progress_label
+            progress_interval_sec = options.progress_interval_sec
+            run_env = options.env
+        else:
+            on_progress = None
+            progress_label = "process"
+            progress_interval_sec = 30.0
+            run_env = None
 
         if not argv:
             logger.warning("event=process.empty_argv")
@@ -56,6 +71,17 @@ class ProcessRunner:
                 error="No command provided",
             )
 
+        run_argv = _resolve_executable(argv)
+        if run_argv is None:
+            logger.warning("event=process.command_not_found executable=%s", argv[0])
+            return ProcessResult(
+                status="failed",
+                exit_code=None,
+                stdout="",
+                stderr="",
+                error=f"Command not found: {argv[0]}",
+            )
+
         try:
             logger.debug(
                 "event=process.started executable=%s argc=%s cwd=%s timeout_sec=%s",
@@ -64,22 +90,35 @@ class ProcessRunner:
                 str(cwd) if cwd else None,
                 timeout_sec,
             )
+            process_env = None
+            if run_env is not None:
+                process_env = os.environ.copy()
+                process_env.update(
+                    {key: _expand_env_vars(value) for key, value in run_env.items()}
+                )
+
             process = subprocess.Popen(
-                argv,
+                run_argv,
                 cwd=str(cwd) if cwd else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=process_env,
             )
-            if should_cancel is None:
+            if should_cancel is None and on_progress is None:
                 stdout, stderr = process.communicate(timeout=timeout_sec)
             else:
-                cancel_result = self._communicate_with_cancel(
+                cancel_result = self._communicate_with_progress(
                     process=process,
                     argv=argv,
                     timeout_sec=timeout_sec,
                     terminate_grace_sec=terminate_grace_sec,
                     should_cancel=should_cancel,
+                    on_progress=on_progress,
+                    progress_label=progress_label,
+                    progress_interval_sec=progress_interval_sec,
                 )
                 if isinstance(cancel_result, ProcessResult):
                     return cancel_result
@@ -145,18 +184,22 @@ class ProcessRunner:
             stdout=stdout,
             stderr=stderr,
         )
-
-    def _communicate_with_cancel(
+    def _communicate_with_progress(
         self,
         process: subprocess.Popen[str],
         argv: list[str],
         timeout_sec: int,
         terminate_grace_sec: int,
-        should_cancel: Callable[[], bool],
+        should_cancel: Callable[[], bool] | None,
+        on_progress: Callable[[str], None] | None,
+        progress_label: str,
+        progress_interval_sec: float,
     ) -> tuple[str, str] | ProcessResult:
+        started_at = time.monotonic()
         deadline = time.monotonic() + timeout_sec
+        next_progress_at = started_at + max(progress_interval_sec, 0.1)
         while True:
-            if should_cancel():
+            if should_cancel is not None and should_cancel():
                 logger.warning(
                     "event=process.cancel_requested executable=%s argc=%s",
                     argv[0],
@@ -181,6 +224,12 @@ class ProcessRunner:
                     error="Command cancelled",
                 )
 
+            now = time.monotonic()
+            if on_progress is not None and now >= next_progress_at:
+                elapsed_sec = int(now - started_at)
+                on_progress(f"{progress_label} running for {elapsed_sec}s")
+                next_progress_at = now + max(progress_interval_sec, 0.1)
+
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(cmd=argv, timeout=timeout_sec)
@@ -188,3 +237,20 @@ class ProcessRunner:
                 return process.communicate(timeout=min(0.2, remaining))
             except subprocess.TimeoutExpired:
                 continue
+
+
+def _resolve_executable(argv: list[str]) -> list[str] | None:
+    executable = _expand_env_vars(argv[0])
+    resolved = shutil.which(executable)
+    if resolved is None:
+        return None
+    return [resolved, *argv[1:]]
+
+
+def _expand_env_vars(value: str) -> str:
+    expanded = os.path.expandvars(value)
+    return re.sub(
+        r"%([^%]+)%",
+        lambda match: os.environ.get(match.group(1), match.group(0)),
+        expanded,
+    )

@@ -24,6 +24,7 @@ Repository state:
 | --- | --- | --- |
 | `README.md` | present / stale / missing / n/a | ... |
 | `CHANGELOG.md` | present / stale / missing / n/a | ... |
+| `docs/INSTALL.md` | present / stale / missing / n/a | ... |
 | `docs/ARCHITECTURE.md` | present / stale / missing / n/a | ... |
 | `docs/SECURITY.md` | present / stale / missing / n/a | ... |
 | `docs/BACKLOG.md` | present / stale / missing / n/a | ... |
@@ -59,6 +60,8 @@ Repository state:
 | `python -m pytest` | passed / failed / not run | ... |
 | `python -m compileall ai_orchestrator` | passed / failed / not run | ... |
 | `python -m ai_orchestrator verify --repo .` | passed / failed / not run | ... |
+| `ai-orch --version` | passed / failed / not run | ... |
+| `ai-orch release-check --repo .` | passed / failed / not run | ... |
 | `git diff --check` | passed / failed / not run | ... |
 
 ## Coverage Map

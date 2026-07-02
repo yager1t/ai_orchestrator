@@ -77,6 +77,7 @@ def _build_generic(
         args=config.args or [],
         timeout_sec=config.timeout_sec,
         policy_engine=policy_engine or PolicyEngine(),
+        env=dict(config.env),
     )
 
 
@@ -90,6 +91,7 @@ def _build_kimi(
         args=config.args if config.args is not None else ["{prompt}"],
         timeout_sec=config.timeout_sec,
         policy_engine=policy_engine or PolicyEngine(),
+        env=dict(config.env),
     )
 
 
@@ -103,6 +105,7 @@ def _build_gemini(
         args=config.args if config.args is not None else ["-p", "{prompt}"],
         timeout_sec=config.timeout_sec,
         policy_engine=policy_engine or PolicyEngine(),
+        env=dict(config.env),
     )
 
 

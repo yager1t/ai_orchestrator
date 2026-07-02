@@ -17,6 +17,11 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
         raw_output="done",
         decision_status="done",
         decision_reason="Verification passed: unit",
+        agent_summary="updated report fixture",
+        files_changed=["README.md"],
+        tool_actions=["write README.md"],
+        exit_reason="success",
+        uncertainty="low",
     )
     store.add_verification_run(
         task_id=task.task_id,
@@ -38,9 +43,18 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
     assert "- Status: `done`" in report
     assert "- Iterations: `1`" in report
     assert "- Verification runs: `1` (`passed`: 1)" in report
+    assert "- Verification verdict: `verified`" in report
+    assert "final supervisor decision is backed by passing checks: `unit`" in report
     assert "- Final decision: `done`" in report
     assert "- Final reason: Verification passed: unit" in report
     assert "### Iteration 1" in report
+    assert "- Agent summary: updated report fixture" in report
+    assert "- Files changed: `1`" in report
+    assert "- Tool actions: `1`" in report
+    assert "- Exit reason: success" in report
+    assert "- Uncertainty: low" in report
+    assert "- `README.md`" in report
+    assert "- write README.md" in report
     assert "- `unit`: `passed` exit=`0`" in report
 
 
@@ -79,8 +93,57 @@ def test_render_task_report_includes_failed_verification_excerpt(tmp_path: Path)
 
     assert report is not None
     assert "- `unit`: `failed` exit=`1`" in report
+    assert "- Verification verdict: `not_verified`" in report
+    assert "final verification is not fully passing (`unit`: `failed`)" in report
     assert "assertion failed on line 10" in report
     assert "```text" in report
+
+
+def test_render_task_report_includes_approval_history(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo approval report", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo approval report",
+        raw_output="done",
+        decision_status="blocked",
+        decision_reason="Approval required",
+    )
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        command_string="git push origin main",
+        reason="Policy requires approval",
+    )
+    store.resolve_approval_request(
+        approval.approval_id,
+        "approved",
+        resolution="Approved by operator",
+    )
+    store.record_approval_retry(
+        approval.approval_id,
+        status="failed",
+        exit_code=1,
+        error="retry failed",
+    )
+
+    report = render_task_report(store, task.task_id)
+
+    assert report is not None
+    assert "- Approval requests: `1` (`approved`: 1)" in report
+    assert "## Approvals" in report
+    assert f"- `{approval.approval_id}`: `approved`" in report
+    assert "source=`verification` iteration=`1`" in report
+    assert "- Command: `git push origin main`" in report
+    assert "- Reason: Policy requires approval" in report
+    assert "- Resolution: Approved by operator" in report
+    assert "- Retry count: `1`" in report
+    assert "- Last retry: `failed` exit=`1`" in report
+    assert "- Last retry error: retry failed" in report
 
 
 def test_render_task_report_redacts_secret_like_verification_output(tmp_path: Path) -> None:
@@ -137,6 +200,8 @@ def test_render_task_report_includes_unavailable_agent_blocker(tmp_path: Path) -
     assert "- Status: `blocked`" in report
     assert "- Iterations: `1`" in report
     assert "- Verification runs: `0`" in report
+    assert "- Verification verdict: `not_verified`" in report
+    assert "- Verification note: no final verification run was recorded" in report
     assert "- Final decision: `blocked`" in report
     assert "- Agent: `generic`" in report
     assert "- Agent status: `unavailable`" in report

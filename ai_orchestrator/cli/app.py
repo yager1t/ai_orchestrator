@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import argparse
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ai_orchestrator import __version__
 from ai_orchestrator.agents.base import AgentAdapter
 from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
-from ai_orchestrator.config.loader import ProjectConfig, load_project_config
+from ai_orchestrator.autopilot import AutopilotTask, load_plan_tasks, next_task
+from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
 from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
 from ai_orchestrator.policy.engine import PolicyEngine
+from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.reporting.markdown import render_task_report
-from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.storage.db import StateStore, StoredApprovalRequest, StoredMetricsSummary
 from ai_orchestrator.tui.app import (
     render_approvals_view,
     render_current_view,
@@ -21,7 +24,7 @@ from ai_orchestrator.tui.app import (
     render_tasks_view,
 )
 from ai_orchestrator.verification.release import run_release_checks
-from ai_orchestrator.verification.runner import VerificationRunner
+from ai_orchestrator.verification.runner import VerificationCommand, VerificationRunner
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,6 +85,73 @@ def build_parser() -> argparse.ArgumentParser:
     agents = sub.add_parser("agents", help="List configured starter agents")
     agents.add_argument("--repo", default=".")
     agents.add_argument("--check", action="store_true", help="Check enabled agent availability")
+
+    metrics = sub.add_parser("metrics", help="Show local execution metrics")
+    metrics.add_argument("--repo", default=".")
+
+    approvals = sub.add_parser("approvals", help="Manage persisted approval requests")
+    approvals_sub = approvals.add_subparsers(dest="approvals_command")
+    approvals_list = approvals_sub.add_parser("list", help="List approval requests")
+    approvals_list.add_argument("--repo", default=".")
+    approvals_list.add_argument("--task-id")
+    approvals_list.add_argument(
+        "--status",
+        choices=["pending", "approved", "rejected", "stale", "all"],
+        default="pending",
+    )
+    approvals_show = approvals_sub.add_parser("show", help="Show approval request details")
+    approvals_show.add_argument("approval_id", type=int)
+    approvals_show.add_argument("--repo", default=".")
+    approvals_approve = approvals_sub.add_parser("approve", help="Approve an approval request")
+    approvals_approve.add_argument("approval_id", type=int)
+    approvals_approve.add_argument("--repo", default=".")
+    approvals_approve.add_argument("--resolution", default="approved by operator")
+    approvals_reject = approvals_sub.add_parser("reject", help="Reject an approval request")
+    approvals_reject.add_argument("approval_id", type=int)
+    approvals_reject.add_argument("--repo", default=".")
+    approvals_reject.add_argument("--resolution", default="rejected by operator")
+    approvals_retry = approvals_sub.add_parser("retry", help="Retry an approved request")
+    approvals_retry.add_argument("approval_id", type=int)
+    approvals_retry.add_argument("--repo", default=".")
+    approvals_stale = approvals_sub.add_parser(
+        "stale",
+        help="Mark old pending approval requests as stale",
+    )
+    approvals_stale.add_argument("--repo", default=".")
+    approvals_stale.add_argument("--task-id")
+    approvals_stale.add_argument("--older-than-hours", type=int, default=24)
+    approvals_stale.add_argument("--resolution", default="marked stale by operator")
+
+    autopilot = sub.add_parser("autopilot", help="Run roadmap tasks through the supervisor")
+    autopilot_sub = autopilot.add_subparsers(dest="autopilot_command")
+    autopilot_next = autopilot_sub.add_parser("next", help="Show the next unstarted plan item")
+    autopilot_next.add_argument("--repo", default=".")
+    autopilot_next.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_run = autopilot_sub.add_parser("run", help="Run the next plan item")
+    autopilot_run.add_argument("--repo", default=".")
+    autopilot_run.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_run.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually start the next plan item; without this flag the command is a dry run",
+    )
+    autopilot_run.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow execution when the repository has uncommitted changes",
+    )
+    autopilot_run.add_argument(
+        "--allow-mock-agent",
+        action="store_true",
+        help="Allow execution with the mock agent for smoke tests",
+    )
+    autopilot_run.add_argument(
+        "--worktree",
+        help=(
+            "Run the supervisor in an existing separate git worktree. "
+            "Relative paths are resolved from --repo."
+        ),
+    )
 
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
     memory_sub = memory.add_subparsers(dest="memory_command")
@@ -158,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         for agent in config.agents.values():
             state = "enabled" if agent.enabled else "disabled"
             details = f"{agent.name}: {state} type={agent.type}"
+            if agent.profile:
+                details += f" profile={agent.profile}"
             if args.check:
                 details += f" available={_agent_availability(config, agent.name)}"
             print(details)
@@ -166,9 +238,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "memory":
         return _run_memory_command(args, parser)
 
+    if args.command == "approvals":
+        return _run_approvals_command(args, parser)
+
+    if args.command == "autopilot":
+        return _run_autopilot_command(args, parser)
+
+    if args.command == "metrics":
+        store = _state_store_for_repo(Path(args.repo))
+        print(_format_metrics_summary(store.metrics_summary()), end="")
+        return 0
+
     if args.command == "verify":
         repo = Path(args.repo)
         config = load_project_config(repo)
+        if not config.verification_commands:
+            print("No verification commands configured.")
+            return 1
         runner = _verification_runner(config, approved_commands=set(args.approve_command))
         verification_results = runner.run_many(config.verification_commands, cwd=repo)
         for item in verification_results:
@@ -203,6 +289,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"agent_status={iteration.agent_status} "
                 f"decision={iteration.decision_status}"
             )
+            print(f"     summary={iteration.agent_summary or 'none'}")
+            print(f"     files_changed={len(iteration.files_changed)}")
+            print(f"     tool_actions={len(iteration.tool_actions)}")
+            print(f"     exit_reason={iteration.exit_reason or 'none'}")
+            print(f"     uncertainty={iteration.uncertainty or 'none'}")
             print(f"     reason={iteration.decision_reason}")
             for check in checks:
                 print(f"     check={check.name} status={check.status} exit={check.exit_code}")
@@ -331,6 +422,33 @@ def _state_store_for_repo(repo: Path) -> StateStore:
     return StateStore(repo / ".ai-orch" / "state" / "ai-orch.db")
 
 
+def _format_metrics_summary(summary: StoredMetricsSummary) -> str:
+    verification_failed_count = summary.verification_count - summary.verification_passed_count
+    return "\n".join(
+        [
+            "Metrics",
+            f"  tasks: {summary.task_count}",
+            f"  iterations: {summary.iteration_count}",
+            (
+                "  verification: "
+                f"total={summary.verification_count} "
+                f"passed={summary.verification_passed_count} "
+                f"not_passed={verification_failed_count} "
+                f"pass_rate={summary.verification_pass_rate:.1%}"
+            ),
+            (
+                "  approvals: "
+                f"total={summary.approval_count} "
+                f"pending={summary.approval_pending_count} "
+                f"approved={summary.approval_approved_count} "
+                f"rejected={summary.approval_rejected_count} "
+                f"stale={summary.approval_stale_count}"
+            ),
+            f"  adapter_failures: {summary.adapter_failure_count}",
+        ]
+    ) + "\n"
+
+
 def _build_supervisor(state_store: StateStore, config: ProjectConfig) -> Supervisor:
     policy_engine = _policy_engine(config)
     return Supervisor(
@@ -389,6 +507,335 @@ def _verification_runner(
         policy_engine=_policy_engine(config),
         approved_commands=approved_commands,
     )
+
+
+def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.approvals_command is None:
+        parser.print_help()
+        return 1
+
+    store = _state_store_for_repo(Path(args.repo))
+    if args.approvals_command == "list":
+        status = None if args.status == "all" else args.status
+        approvals = store.list_approval_requests(task_id=args.task_id, status=status)
+        if not approvals:
+            print("No approval requests found.")
+            return 0
+        for approval in approvals:
+            print(_format_approval_summary(approval))
+        return 0
+
+    if args.approvals_command == "show":
+        shown_approval = store.get_approval_request(args.approval_id)
+        if shown_approval is None:
+            print(f"Approval request not found: {args.approval_id}")
+            return 1
+        print(_format_approval_detail(shown_approval), end="")
+        return 0
+
+    if args.approvals_command in {"approve", "reject"}:
+        status = "approved" if args.approvals_command == "approve" else "rejected"
+        resolved_approval = store.resolve_approval_request(
+            args.approval_id,
+            status=status,
+            resolution=args.resolution,
+        )
+        if resolved_approval is None:
+            print(f"Approval request not found: {args.approval_id}")
+            return 1
+        print(_format_approval_summary(resolved_approval))
+        return 0
+
+    if args.approvals_command == "retry":
+        retried_approval = store.get_approval_request(args.approval_id)
+        if retried_approval is None:
+            print(f"Approval request not found: {args.approval_id}")
+            return 1
+        return _retry_approval_request(store, retried_approval)
+
+    if args.approvals_command == "stale":
+        if args.older_than_hours < 1:
+            print("--older-than-hours must be at least 1")
+            return 1
+        cutoff = datetime.now(UTC) - timedelta(hours=args.older_than_hours)
+        stale_approvals = store.mark_stale_approval_requests(
+            cutoff_created_at=cutoff.isoformat(),
+            task_id=args.task_id,
+            resolution=args.resolution,
+        )
+        if not stale_approvals:
+            print("No stale approval requests found.")
+            return 0
+        for stale_approval in stale_approvals:
+            print(_format_approval_summary(stale_approval))
+        return 0
+
+    parser.print_help()
+    return 1
+
+
+def _format_approval_summary(approval: StoredApprovalRequest) -> str:
+    iteration = "none" if approval.iteration_id is None else str(approval.iteration_id)
+    return (
+        f"{approval.approval_id}: status={approval.status} "
+        f"source={approval.source} task={approval.task_id} "
+        f"iteration={iteration} retries={approval.retry_count} "
+        f"last_retry={approval.last_retry_status or 'none'} "
+        f"command={approval.command_string}"
+    )
+
+
+def _format_approval_detail(approval: StoredApprovalRequest) -> str:
+    iteration = "none" if approval.iteration_id is None else str(approval.iteration_id)
+    lines = [
+        f"Approval: {approval.approval_id}",
+        f"Status: {approval.status}",
+        f"Task: {approval.task_id}",
+        f"Iteration: {iteration}",
+        f"Source: {approval.source}",
+        f"Command: {approval.command_string}",
+        f"Reason: {approval.reason}",
+        f"Created: {approval.created_at}",
+        f"Retries: {approval.retry_count}",
+    ]
+    if approval.resolved_at is not None:
+        lines.append(f"Resolved: {approval.resolved_at}")
+    if approval.resolution is not None:
+        lines.append(f"Resolution: {approval.resolution}")
+    if approval.last_retry_at is not None:
+        lines.append(f"Last retry: {approval.last_retry_at}")
+        lines.append(f"Last retry status: {approval.last_retry_status}")
+        lines.append(f"Last retry exit: {approval.last_retry_exit_code}")
+    if approval.last_retry_error is not None:
+        lines.append(f"Last retry error: {approval.last_retry_error}")
+    return "\n".join(lines) + "\n"
+
+
+def _retry_approval_request(
+    store: StateStore,
+    approval: StoredApprovalRequest,
+) -> int:
+    if approval.status != "approved":
+        print(
+            "Approval request is not approved: "
+            f"{approval.approval_id} status={approval.status}"
+        )
+        return 1
+
+    task = store.get_task(approval.task_id)
+    if task is None:
+        print(f"Task not found for approval request: {approval.task_id}")
+        return 1
+
+    repo = Path(task.repo_path)
+    config = load_project_config(repo)
+    runner = _verification_runner(
+        config,
+        approved_commands={approval.command_string},
+    )
+    result = runner.run(
+        VerificationCommand(
+            name=f"approval-{approval.approval_id}",
+            run=approval.command_string,
+        ),
+        cwd=repo,
+    )
+    updated_approval = store.record_approval_retry(
+        approval_id=approval.approval_id,
+        status=result.status,
+        exit_code=result.exit_code,
+        error=result.error or result.stderr,
+    )
+    print(f"retry: {result.status} exit={result.exit_code}")
+    if updated_approval is not None:
+        print(
+            "retry history: "
+            f"count={updated_approval.retry_count} "
+            f"last_status={updated_approval.last_retry_status} "
+            f"last_exit={updated_approval.last_retry_exit_code}"
+        )
+    if result.error:
+        print(f"error: {result.error}")
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if result.stderr:
+        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
+    return 0 if result.status == "passed" else 1
+
+
+def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.autopilot_command is None:
+        parser.print_help()
+        return 1
+
+    repo = Path(args.repo)
+    plan_path = _resolve_plan_path(repo, Path(args.plan))
+    if not plan_path.exists():
+        print(f"Plan not found: {plan_path}")
+        return 1
+
+    store = _state_store_for_repo(repo)
+    tasks = load_plan_tasks(plan_path)
+    selected = next_task(tasks, store)
+    if selected is None:
+        print(f"No unstarted plan items found in {plan_path}")
+        return 0
+
+    if args.autopilot_command == "next":
+        _print_autopilot_task(selected)
+        return 0
+
+    if args.autopilot_command != "run":
+        parser.print_help()
+        return 1
+
+    config = load_project_config(repo)
+    policy_engine = _policy_engine(config)
+    agent = _select_agent(config, policy_engine)
+    agent_config = config.agents.get(agent.name)
+    agent_available = agent.check_available()
+    execution_repo = _autopilot_execution_repo(repo, getattr(args, "worktree", None))
+    print("Autopilot selected:")
+    _print_autopilot_task(selected)
+    _print_autopilot_agent_profile(agent, agent_config, agent_available)
+    print(f"Execution repo: {execution_repo}")
+
+    if not args.execute:
+        print("Dry run: add --execute to start this plan item.")
+        return 0
+
+    if agent.name == "mock" and not args.allow_mock_agent:
+        print("Execution blocked: mock agent selected. Enable a real agent or pass --allow-mock-agent.")
+        return 1
+
+    if agent.name != "mock" and not agent_available:
+        print(f"Execution blocked: selected agent is unavailable: {agent.name}")
+        return 1
+
+    if args.worktree:
+        worktree_error = _validate_autopilot_worktree(repo, execution_repo)
+        if worktree_error is not None:
+            print(f"Execution blocked: {worktree_error}")
+            return 1
+
+    if _repo_has_uncommitted_changes(execution_repo) and not args.allow_dirty:
+        print("Execution blocked: repository has uncommitted changes. Commit/stash them or pass --allow-dirty.")
+        return 1
+
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=VerificationRunner(policy_engine=policy_engine),
+        verification_commands=config.verification_commands,
+        state_store=store,
+        max_iterations=config.max_iterations,
+        max_no_change_iterations=config.max_no_change_iterations,
+        max_runtime_sec=config.max_runtime_sec,
+        require_repo_change=True,
+        progress_callback=_print_progress,
+    )
+    result = supervisor.run_once(task=selected.to_prompt(), repo=execution_repo)
+    task_prefix = f"{result.task_id}: " if result.task_id else ""
+    print(f"{task_prefix}{result.summary}")
+    return 0 if result.status == "done" else 1
+
+
+def _autopilot_execution_repo(repo: Path, worktree: str | None) -> Path:
+    if not worktree:
+        return repo
+    worktree_path = Path(worktree)
+    if not worktree_path.is_absolute():
+        worktree_path = repo / worktree_path
+    return worktree_path.resolve()
+
+
+def _validate_autopilot_worktree(repo: Path, worktree: Path) -> str | None:
+    if not worktree.exists():
+        return f"worktree path does not exist: {worktree}"
+    if not worktree.is_dir():
+        return f"worktree path is not a directory: {worktree}"
+
+    repo_root = _git_rev_parse_path(repo, "--show-toplevel")
+    if repo_root is None:
+        return f"repo is not a git repository: {repo}"
+    worktree_root = _git_rev_parse_path(worktree, "--show-toplevel")
+    if worktree_root is None:
+        return f"worktree path is not a git repository: {worktree}"
+    if worktree_root != worktree.resolve():
+        return f"worktree path must be the git worktree root: {worktree_root}"
+    if worktree_root == repo_root:
+        return "worktree path must be a separate git worktree, not the main repo"
+
+    repo_common = _git_rev_parse_path(repo, "--git-common-dir")
+    worktree_common = _git_rev_parse_path(worktree, "--git-common-dir")
+    if repo_common is None or worktree_common is None:
+        return "unable to inspect git worktree metadata"
+    if repo_common != worktree_common:
+        return f"worktree path is not linked to repo: {worktree}"
+    return None
+
+
+def _git_rev_parse_path(repo: Path, flag: str) -> Path | None:
+    result = ProcessRunner().run(
+        ["git", "rev-parse", "--path-format=absolute", flag],
+        cwd=repo,
+        options=RunOptions(timeout_sec=30),
+    )
+    if result.status != "success":
+        return None
+    value = result.stdout.strip().splitlines()
+    if not value:
+        return None
+    return Path(value[0]).resolve()
+
+
+def _resolve_plan_path(repo: Path, plan_path: Path) -> Path:
+    if plan_path.is_absolute():
+        return plan_path
+    return repo / plan_path
+
+
+def _print_autopilot_task(task: AutopilotTask) -> None:
+    print(f"Source: {task.source_label}")
+    print(f"Section: {task.section or 'Unsectioned'}")
+    print(f"Task: {task.text}")
+
+
+def _print_autopilot_agent_profile(
+    agent: AgentAdapter,
+    agent_config: AgentConfig | None,
+    available: bool,
+) -> None:
+    print("Agent profile:")
+    print(f"  name: {agent.name}")
+    print(f"  type: {_agent_config_value(agent_config, 'type')}")
+    print(f"  profile: {_agent_config_value(agent_config, 'profile')}")
+    print(f"  mode: {'mock' if agent.name == 'mock' else 'real'}")
+    print(f"  command: {_agent_config_value(agent_config, 'command')}")
+    print(f"  available: {'yes' if available else 'no'}")
+
+
+def _print_progress(message: str) -> None:
+    print(f"progress: {message}", flush=True)
+
+
+def _agent_config_value(agent_config: AgentConfig | None, field: str) -> str:
+    if agent_config is None:
+        return "(unknown)"
+    value = getattr(agent_config, field)
+    if value == "":
+        return "(default)"
+    return str(value)
+
+
+def _repo_has_uncommitted_changes(repo: Path) -> bool:
+    result = ProcessRunner().run(
+        ["git", "status", "--porcelain=v1"],
+        cwd=repo,
+        options=RunOptions(timeout_sec=30),
+    )
+    if result.status != "success":
+        return True
+    return bool(result.stdout.strip())
 
 
 def _memory_client(
@@ -454,8 +901,39 @@ def _run_memory_command(args: argparse.Namespace, parser: argparse.ArgumentParse
         return 1
 
     result = client.run_tool(tool, tool_args, cwd=repo)
+    if result.status == "needs_approval":
+        approval = _persist_memory_approval_request(
+            repo=repo,
+            tool=tool,
+            tool_args=tool_args,
+            client=client,
+            result=result,
+        )
+        print(f"approval_request: {approval.approval_id}")
     _print_memory_result(tool, result)
     return 0 if result.status == "passed" else 1
+
+
+def _persist_memory_approval_request(
+    repo: Path,
+    tool: str,
+    tool_args: dict[str, object],
+    client: CodebaseMemoryClient,
+    result: CodebaseMemoryResult,
+) -> StoredApprovalRequest:
+    store = _state_store_for_repo(repo)
+    task = store.create_task(
+        task=f"Memory approval request: {tool}",
+        repo_path=repo,
+    )
+    store.update_task_status(task.task_id, "blocked")
+    return store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="memory",
+        command_string=client.build_command_string(tool=tool, args=tool_args),
+        reason=result.error or f"Codebase Memory tool requires approval: {tool}",
+    )
 
 
 def _run_memory_preflight(

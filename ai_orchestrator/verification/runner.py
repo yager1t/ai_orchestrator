@@ -29,6 +29,7 @@ class VerificationResult:
     stdout: str
     stderr: str
     error: str | None = None
+    command_string: str | None = None
 
 
 class VerificationRunner:
@@ -84,6 +85,7 @@ class VerificationRunner:
                         stdout="",
                         stderr="",
                         error=decision.reason,
+                        command_string=policy_command,
                     )
 
         if argv is None:

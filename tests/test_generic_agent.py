@@ -46,6 +46,20 @@ def test_generic_cli_adapter_reports_failure(tmp_path: Path) -> None:
     assert "bad" in result.raw_output
 
 
+def test_generic_cli_adapter_passes_env(tmp_path: Path) -> None:
+    agent = GenericCLIAdapter(
+        command="python",
+        args=["-c", "import os; print(os.environ['AI_ORCH_GENERIC_ENV'])"],
+        env={"AI_ORCH_GENERIC_ENV": "configured"},
+    )
+    session = agent.start_session(TaskContext(task="demo", repo_path=tmp_path))
+
+    result = agent.run_step(session, "hello")
+
+    assert result.status == "success"
+    assert "configured" in result.raw_output
+
+
 def test_generic_cli_adapter_rejects_unknown_session(tmp_path: Path) -> None:
     agent = GenericCLIAdapter(command="python", args=["-c", "print('ok')"])
     session = SessionRef(session_id="missing", agent_name="generic")

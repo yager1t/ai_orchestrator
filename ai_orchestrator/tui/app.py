@@ -1,29 +1,17 @@
 from __future__ import annotations
 
-from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.storage.db import StateStore, StoredApprovalRequest
+from ai_orchestrator.storage.redaction import redact_secrets
 
 
 def render_approvals_view(store: StateStore) -> str:
     lines = ["Approvals"]
-    pending: list[str] = []
-    for task in store.list_tasks():
-        for iteration in store.list_iterations(task.task_id):
-            checks = store.list_verification_details(task.task_id, iteration.iteration_id)
-            for check in checks:
-                if check.status != "needs_approval":
-                    continue
-                pending.extend(
-                    [
-                        f"  {task.task_id} iteration={iteration.iteration_index} check={check.name}",
-                        f"     task: {task.task}",
-                        f"     reason: {check.error or 'approval required'}",
-                    ]
-                )
+    approvals = store.list_approval_requests()
 
-    if not pending:
-        lines.append("  No pending approvals.")
+    if not approvals:
+        lines.append("  No approval requests recorded.")
     else:
-        lines.extend(pending)
+        lines.extend(_format_approval_lines(approvals))
     return "\n".join(lines) + "\n"
 
 
@@ -48,6 +36,11 @@ def render_current_view(store: StateStore, task_id: str) -> str | None:
             f"Iteration: {iteration.iteration_index}",
             f"Agent: {iteration.agent_name}",
             f"Agent status: {iteration.agent_status}",
+            f"Agent summary: {iteration.agent_summary or 'none'}",
+            f"Files changed: {len(iteration.files_changed)}",
+            f"Tool actions: {len(iteration.tool_actions)}",
+            f"Exit reason: {iteration.exit_reason or 'none'}",
+            f"Uncertainty: {iteration.uncertainty or 'none'}",
             f"Decision: {iteration.decision_status}",
             f"Reason: {iteration.decision_reason}",
             "Verification",
@@ -79,6 +72,11 @@ def render_logs_view(store: StateStore, task_id: str) -> str | None:
                 f"  agent: {iteration.agent_name}",
                 f"  prompt: {_one_line(iteration.prompt)}",
                 f"  output: {_one_line(iteration.raw_output)}",
+                f"  summary: {_one_line(iteration.agent_summary or 'none')}",
+                f"  files_changed: {', '.join(iteration.files_changed) or 'none'}",
+                f"  tool_actions: {', '.join(iteration.tool_actions) or 'none'}",
+                f"  exit_reason: {iteration.exit_reason or 'none'}",
+                f"  uncertainty: {iteration.uncertainty or 'none'}",
                 f"  decision: {iteration.decision_status}",
                 f"  reason: {iteration.decision_reason}",
             ]
@@ -118,8 +116,15 @@ def render_status_view(store: StateStore, task_id: str) -> str | None:
         f"Repo: {task.repo_path}",
         f"Summary: {task.task}",
         "",
-        "Iterations",
+        "Approvals",
     ]
+    approvals = store.list_approval_requests(task.task_id)
+    if approvals:
+        lines.extend(_format_approval_lines(approvals))
+    else:
+        lines.append("  No approval requests recorded.")
+
+    lines.extend(["", "Iterations"])
     iterations = store.list_iterations(task.task_id)
     if not iterations:
         lines.append("  No iterations recorded.")
@@ -130,6 +135,11 @@ def render_status_view(store: StateStore, task_id: str) -> str | None:
             [
                 f"  {iteration.iteration_index}. {iteration.agent_name}",
                 f"     agent_status: {iteration.agent_status}",
+                f"     summary: {iteration.agent_summary or 'none'}",
+                f"     files_changed: {len(iteration.files_changed)}",
+                f"     tool_actions: {len(iteration.tool_actions)}",
+                f"     exit_reason: {iteration.exit_reason or 'none'}",
+                f"     uncertainty: {iteration.uncertainty or 'none'}",
                 f"     decision: {iteration.decision_status}",
                 f"     reason: {iteration.decision_reason}",
             ]
@@ -139,3 +149,33 @@ def render_status_view(store: StateStore, task_id: str) -> str | None:
             lines.append(f"     check: {check.name} {check.status} exit={check.exit_code}")
 
     return "\n".join(lines) + "\n"
+
+
+def _format_approval_lines(approvals: list[StoredApprovalRequest]) -> list[str]:
+    lines: list[str] = []
+    for approval in approvals:
+        iteration = "none" if approval.iteration_id is None else str(approval.iteration_id)
+        lines.extend(
+            [
+                (
+                    f"  approval={approval.approval_id} status={approval.status} "
+                    f"source={approval.source} task={approval.task_id} "
+                    f"iteration={iteration} retries={approval.retry_count}"
+                ),
+                f"     command: {redact_secrets(approval.command_string) or ''}",
+                f"     reason: {redact_secrets(approval.reason) or ''}",
+            ]
+        )
+        if approval.resolved_at is not None:
+            lines.append(f"     resolved_at: {approval.resolved_at}")
+        if approval.resolution:
+            lines.append(f"     resolution: {redact_secrets(approval.resolution) or ''}")
+        if approval.last_retry_at is not None:
+            lines.append(f"     last_retry_at: {approval.last_retry_at}")
+            lines.append(
+                "     last_retry: "
+                f"{approval.last_retry_status} exit={approval.last_retry_exit_code}"
+            )
+        if approval.last_retry_error:
+            lines.append(f"     last_retry_error: {redact_secrets(approval.last_retry_error) or ''}")
+    return lines

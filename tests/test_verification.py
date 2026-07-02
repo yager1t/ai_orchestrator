@@ -125,6 +125,9 @@ def test_verification_policy_requires_approval_without_running(tmp_path: Path) -
 
     assert result.status == "needs_approval"
     assert result.exit_code is None
+    assert result.command_string == (
+        f"git push origin main && python -c \"from pathlib import Path; Path(r'{marker}').write_text('ran')\""
+    )
     assert marker.exists() is False
 
 
@@ -158,6 +161,7 @@ def test_verification_approval_requires_exact_command_match(tmp_path: Path) -> N
 
     assert result.status == "needs_approval"
     assert result.exit_code is None
+    assert result.command_string == changed_command
     assert marker.exists() is False
 
 

@@ -16,6 +16,9 @@ dev = [
   "ruff>=0.8.0",
 ]
 
+[project.scripts]
+ai-orch = "ai_orchestrator.cli.app:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ai_orchestrator*"]

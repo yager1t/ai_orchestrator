@@ -175,6 +175,11 @@ def test_runner_backed_adapters_follow_session_contract(
     assert result.status == "success"
     assert result.raw_output == case.expected_output
     assert result.session_id == session.session_id
+    assert result.summary == case.expected_output
+    assert result.files_changed == []
+    assert result.tool_actions == []
+    assert result.exit_reason == "success"
+    assert result.uncertainty is None
     assert result.error is None
     assert runner.runs[0][1:] == (tmp_path, 17, should_cancel)
 
@@ -256,8 +261,12 @@ def test_runner_backed_adapters_enforce_policy_before_process(
 
     assert denied.status == "blocked"
     assert denied.error == "Denied by pattern: deny-token"
+    assert denied.summary == "Denied by pattern: deny-token"
+    assert denied.exit_reason == "policy_denied"
     assert needs_approval.status == "needs_approval"
     assert needs_approval.error == "Requires approval: ask-token"
+    assert needs_approval.summary == "Requires approval: ask-token"
+    assert needs_approval.exit_reason == "policy_needs_approval"
     assert runner.runs == []
 
 
@@ -266,6 +275,8 @@ def test_mock_adapter_follows_minimal_contract(tmp_path: Path) -> None:
         scripted_status="success",
         scripted_output="mock ok",
         scripted_files_changed=["changed.py"],
+        scripted_tool_actions=["write changed.py"],
+        scripted_uncertainty="low",
     )
     context = TaskContext(task="demo", repo_path=tmp_path)
 
@@ -281,4 +292,8 @@ def test_mock_adapter_follows_minimal_contract(tmp_path: Path) -> None:
     assert result.raw_output == "mock ok"
     assert result.session_id == session.session_id
     assert result.files_changed == ["changed.py"]
+    assert result.summary == "mock ok"
+    assert result.tool_actions == ["write changed.py"]
+    assert result.exit_reason == "success"
+    assert result.uncertainty == "low"
     assert continued.session_id == session.session_id

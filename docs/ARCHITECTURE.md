@@ -55,7 +55,13 @@ start_session(context) -> SessionRef
 run_step(session, prompt) -> AgentResult
 continue_session(session, prompt) -> AgentResult
 stop_session(session) -> None
-get_status(session) -> AgentStatus
+```
+
+`AgentResult` carries raw output plus structured fields for reports and future
+adapter scoring:
+
+```text
+summary | files_changed | tool_actions | exit_reason | uncertainty
 ```
 
 Current adapters:
@@ -67,11 +73,20 @@ Current adapters:
 - Kimi CLI alias
 - Gemini CLI alias
 
+Generic CLI adapters can also be configured through reusable
+`adapter_profiles` in `.ai-orch/config.yaml`. The config loader resolves profile
+defaults into concrete `AgentConfig` values before the agent factory builds an
+adapter. CLI adapters may define per-agent `env` values; these are merged with
+the inherited profile env and passed to `ProcessRunner` without using a shell.
+Environment references in command paths and env values are expanded inside the
+runner before executable resolution.
+
 ### ProcessRunner
 
 `ProcessRunner` is the only subprocess execution path for adapters and
 verification. Callers pass argv and `RunOptions`; commands are not executed
-through `shell=True`.
+through `shell=True`. `RunOptions.env` overlays the current process environment
+for a single subprocess invocation.
 
 ### VerificationRunner
 
@@ -95,12 +110,14 @@ Custom patterns remain backward compatible.
 ### StateStore
 
 The SQLite store persists tasks, iterations, verification runs, and schema
-version. Runtime pragmas enable WAL, busy timeout, and foreign keys.
+version. Iterations persist both raw agent output and structured adapter result
+fields. Runtime pragmas enable WAL, busy timeout, and foreign keys.
 
 ### Reporting And TUI
 
-Markdown reports summarize stored task history. The current TUI surface is
-read-only and mirrors stored state:
+Markdown reports summarize stored task history, including structured adapter
+signals when present. The current TUI surface is read-only and mirrors stored
+state:
 
 - task status
 - task list

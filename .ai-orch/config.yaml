@@ -3,13 +3,10 @@ project:
   repo: "."
 
 orchestrator:
-  default_agent: "mock"
+  default_agent: "kimi"
   fallback_agents:
-    - "generic"
-    - "codex"
     - "claude"
-    - "kimi"
-    - "gemini"
+    - "mock"
   max_iterations: 10
   max_no_change_iterations: 2
   max_runtime_sec: 7200
@@ -40,26 +37,37 @@ agents:
     timeout_sec: 1800
 
   claude:
-    enabled: false
+    enabled: true
     type: "claude_headless"
     command: "claude"
     args:
       - "-p"
-      - "{prompt}"
       - "--output-format"
       - "json"
+      - "--max-budget-usd"
+      - "2"
+      - "--permission-mode"
+      - "acceptEdits"
+      - "--append-system-prompt"
+      - "The user message contains a complete ai-orch autopilot plan item. Execute the Task bullet exactly. Do not ask the user to repeat the plan item."
+      - "{prompt}"
     timeout_sec: 1800
 
   # Kimi/Gemini are generic CLI aliases. If command/args are omitted,
   # defaults are: kimi -> kimi {prompt}; gemini -> gemini -p {prompt}.
   # Keep command/args explicit when local CLI flags differ.
   kimi:
-    enabled: false
+    enabled: true
     type: "kimi_cli"
-    command: "kimi"
+    command: "%LOCALAPPDATA%\\Programs\\kimi-code\\bin\\kimi.exe"
     args:
+      - "--output-format"
+      - "text"
+      - "-p"
       - "{prompt}"
     timeout_sec: 1800
+    env:
+      KIMI_SHELL_PATH: "%PROGRAMFILES%\\Git\\bin\\bash.exe"
 
   gemini:
     enabled: false
@@ -71,6 +79,7 @@ agents:
     timeout_sec: 1800
 
 verification:
+  strict: true
   commands:
     - name: "compile"
       run: "python -m compileall ai_orchestrator"

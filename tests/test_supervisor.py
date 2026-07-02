@@ -2,6 +2,7 @@ from pathlib import Path
 
 from ai_orchestrator.agents.base import AgentResult, SessionRef, TaskContext
 from ai_orchestrator.agents.mock import MockAgentAdapter
+from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessResult, RunOptions
 from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.storage.db import StateStore
@@ -376,15 +377,20 @@ def test_supervisor_continues_after_failed_verification() -> None:
 
 def test_supervisor_persists_iterations_and_verification_runs(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
-    verifier = SequencedVerifier(["failed", "passed"])
+    verifier = SequencedVerifier(["passed"])
     supervisor = Supervisor(
-        agent=RetryingAgent(),
+        agent=MockAgentAdapter(
+            scripted_output="structured output",
+            scripted_files_changed=["README.md"],
+            scripted_tool_actions=["write README.md"],
+            scripted_uncertainty="low",
+        ),
         verifier=verifier,
         verification_commands=[
             VerificationCommand("unit", "ignored"),
         ],
         state_store=store,
-        max_iterations=2,
+        max_iterations=1,
     )
     result = supervisor.run_once(task="demo", repo=tmp_path)
 
@@ -396,8 +402,41 @@ def test_supervisor_persists_iterations_and_verification_runs(tmp_path: Path) ->
 
     assert task is not None
     assert task.status == "done"
-    assert [item.decision_status for item in iterations] == ["continue", "done"]
-    assert [item.status for item in verification_runs] == ["failed", "passed"]
+    assert [item.decision_status for item in iterations] == ["done"]
+    assert iterations[0].agent_summary == "structured output"
+    assert iterations[0].files_changed == ["README.md"]
+    assert iterations[0].tool_actions == ["write README.md"]
+    assert iterations[0].exit_reason == "success"
+    assert iterations[0].uncertainty == "low"
+    assert [item.status for item in verification_runs] == ["passed"]
+
+
+def test_supervisor_persists_verification_approval_request(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    command = "git push origin main"
+    supervisor = Supervisor(
+        agent=MockAgentAdapter(),
+        verifier=VerificationRunner(policy_engine=PolicyEngine()),
+        verification_commands=[
+            VerificationCommand("deploy", command),
+        ],
+        state_store=store,
+        max_iterations=1,
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "blocked"
+    assert result.task_id is not None
+    approvals = store.list_approval_requests(task_id=result.task_id)
+    iterations = store.list_iterations(result.task_id)
+    assert len(approvals) == 1
+    assert len(iterations) == 1
+    assert approvals[0].status == "pending"
+    assert approvals[0].source == "verification"
+    assert approvals[0].command_string == command
+    assert approvals[0].iteration_id == iterations[0].iteration_id
+    assert "Requires approval" in approvals[0].reason
 
 
 def test_supervisor_resume_appends_next_iteration_index(tmp_path: Path) -> None:
@@ -605,3 +644,66 @@ def test_supervisor_ignores_failed_repo_snapshot_for_no_change(tmp_path: Path) -
 
     assert result.status == "done"
     assert verifier.calls == 3
+
+
+def test_supervisor_blocks_done_without_repo_change_when_required(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    verifier = SequencedVerifier(["passed"])
+    supervisor = Supervisor(
+        agent=NoChangeAgent(),
+        verifier=verifier,
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        state_store=store,
+        require_repo_change=True,
+        process_runner=SnapshotRunner(["", ""]),
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "blocked"
+    assert result.task_id is not None
+    assert result.summary == "No agent file or repository change detected"
+    assert verifier.calls == 1
+    iterations = store.list_iterations(result.task_id)
+    assert iterations[0].decision_status == "blocked"
+    assert iterations[0].decision_reason == "No agent file or repository change detected"
+
+
+def test_supervisor_allows_done_with_repo_change_when_required(tmp_path: Path) -> None:
+    verifier = SequencedVerifier(["passed"])
+    supervisor = Supervisor(
+        agent=NoChangeAgent(),
+        verifier=verifier,
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        require_repo_change=True,
+        process_runner=SnapshotRunner(["", "?? docs/log.md"]),
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "done"
+    assert verifier.calls == 1
+
+
+def test_supervisor_emits_progress_events(tmp_path: Path) -> None:
+    progress: list[str] = []
+    supervisor = Supervisor(
+        agent=NoChangeAgent(),
+        verifier=SequencedVerifier(["passed"]),
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        progress_callback=progress.append,
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "done"
+    assert "iteration 1: agent mock started" in progress
+    assert "iteration 1: verification started" in progress
+    assert "iteration 1: verification finished" in progress
+    assert "iteration 1: done" in progress

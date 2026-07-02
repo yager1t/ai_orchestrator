@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+- Added state-store persistence and migrations for approval requests.
+- Added a guarded `ai-orch autopilot` command for selecting and dry-running
+  roadmap items through the supervisor.
+- Added an autopilot agent execution profile and pre-execution availability
+  check for non-mock agents.
+- Added opt-in `--worktree` isolation for autopilot execution in an existing
+  linked git worktree.
+- Added an autopilot operator runbook covering dry-run, execute, approval,
+  retry, report, and stop-condition workflows.
+- Added `ai-orch approvals list/show/approve/reject` for persisted approval
+  requests.
+- Added `ai-orch approvals retry` for rerunning approved request commands while
+  preserving deny-rule precedence.
+- Added stale approval detection and persisted retry result history for
+  approval requests.
+- Added a real-agent smoke fixture and operator script for exercising the
+  `generic_cli` adapter without external AI credentials.
+- Added structured adapter output fields on `AgentResult` and persisted them in
+  iteration history, reports, status, and TUI views.
+- Added YAML-configured generic adapter profiles for reusable CLI defaults.
+- Added `ai-orch metrics` for local iteration, verification, approval, and
+  adapter failure summaries.
+- Added the `ai-orch` console script and install guide for local release smoke
+  testing.
+- Switched the project autopilot config to the available Claude real-agent path
+  with mock fallback, and resolved CLI shims before subprocess execution.
+- Added visible autopilot progress heartbeats for long-running real-agent
+  subprocesses.
+- Added per-agent CLI environment overrides and switched the local autopilot
+  default agent to the configured Kimi Code CLI with Claude and mock fallbacks.
+- Recorded a Kimi Code real-agent autopilot smoke run and read subprocess
+  output as UTF-8 with replacement to avoid Windows locale decode noise.
+- Persisted supervisor verification `needs_approval` results into the approval
+  inbox.
+- Persisted Codebase Memory `needs_approval` results into the shared approval
+  inbox.
+- Rendered approval request history in Markdown reports and read-only TUI
+  approval/status views.
+- Added `verification.strict` to disable default verification fallback and make
+  missing checks fail closed.
+- Added explicit verified/not-verified wording to Markdown task reports.
+- Added ADR-0003 for the trusted completion and approval model.
+- Added the post-MVP roadmap for approval UX, launch, isolation, ecosystem, and
+  multi-agent development phases.
+- Updated the backlog with the next approval inbox and trust-building work.
 - Marked selected PM workflow adaptations as implemented.
 - Normalized the legacy CLI-supervisor ADR text.
 - Added `ai-orch release-check` for release packaging readiness checks.

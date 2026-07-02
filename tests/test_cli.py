@@ -1,13 +1,15 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from ai_orchestrator import __version__
 from ai_orchestrator.cli.app import main
-from ai_orchestrator.verification.release import run_release_checks
+from ai_orchestrator.core.supervisor import SupervisorResult
 from ai_orchestrator.process.runner import ProcessResult, ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.verification.release import run_release_checks
 from ai_orchestrator.verification.runner import VerificationResult, VerificationRunner
 
 
@@ -33,6 +35,182 @@ def test_log_level_configures_logging(monkeypatch, tmp_path: Path) -> None:
     assert exit_code == 0
     assert calls
     assert calls[0]["level"] == 10
+
+
+def test_autopilot_next_prints_next_plan_item(capsys, tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    exit_code = main(["autopilot", "next", "--repo", str(tmp_path), "--plan", str(plan)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Task: Add approval CLI" in output
+    assert "Source:" in output
+
+
+def test_autopilot_run_defaults_to_dry_run(capsys, tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    exit_code = main(["autopilot", "run", "--repo", str(tmp_path), "--plan", str(plan)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Autopilot selected:" in output
+    assert "Agent profile:" in output
+    assert "name: mock" in output
+    assert "mode: mock" in output
+    assert "available: yes" in output
+    assert "Dry run: add --execute" in output
+
+
+def test_autopilot_run_blocks_unavailable_real_agent_before_execution(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+    write_config(
+        tmp_path,
+        default_agent="generic",
+        include_generic_agent=True,
+        generic_command="missing-ai-orch-agent-binary",
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Agent profile:" in output
+    assert "name: generic" in output
+    assert "type: generic_cli" in output
+    assert "mode: real" in output
+    assert "command: missing-ai-orch-agent-binary" in output
+    assert "available: no" in output
+    assert "Execution blocked: selected agent is unavailable: generic" in output
+
+
+def test_autopilot_run_blocks_mock_agent_without_explicit_allow(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "autopilot",
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Execution blocked: mock agent selected" in output
+
+
+def test_autopilot_run_uses_opt_in_worktree_for_execution(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    worktree = tmp_path / "autopilot-worktree"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+    worktree.mkdir()
+    captured_repos: list[Path] = []
+
+    def fake_validate(repo: Path, candidate: Path) -> str | None:
+        assert repo == tmp_path
+        assert candidate == worktree.resolve()
+        return None
+
+    def fake_dirty(repo: Path) -> bool:
+        assert repo == worktree.resolve()
+        return False
+
+    def fake_run_once(self, task: str, repo: Path, planning_context=None) -> SupervisorResult:
+        captured_repos.append(repo)
+        return SupervisorResult(status="done", summary="Verification passed: custom", task_id="task-1")
+
+    monkeypatch.setattr("ai_orchestrator.cli.app._validate_autopilot_worktree", fake_validate)
+    monkeypatch.setattr("ai_orchestrator.cli.app._repo_has_uncommitted_changes", fake_dirty)
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--worktree",
+            str(worktree),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Execution repo: {worktree.resolve()}" in output
+    assert "task-1: Verification passed: custom" in output
+    assert captured_repos == [worktree.resolve()]
+
+
+def test_autopilot_run_blocks_invalid_worktree_before_execution(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    worktree = tmp_path / "not-worktree"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    def fake_validate(repo: Path, candidate: Path) -> str | None:
+        return f"worktree path does not exist: {candidate}"
+
+    def fake_run_once(self, task: str, repo: Path, planning_context=None) -> SupervisorResult:
+        raise AssertionError("supervisor should not start with an invalid worktree")
+
+    monkeypatch.setattr("ai_orchestrator.cli.app._validate_autopilot_worktree", fake_validate)
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "run",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--worktree",
+            str(worktree),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Execution blocked: worktree path does not exist:" in output
 
 
 def test_status_prints_stored_task(capsys, tmp_path: Path) -> None:
@@ -79,6 +257,51 @@ def test_status_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
     assert "Task not found: missing-task" in output
 
 
+def test_metrics_prints_local_summary(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="generic",
+        agent_status="failed",
+        prompt="demo task",
+        raw_output="failed",
+        decision_status="blocked",
+        decision_reason="agent failed",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="failed",
+            exit_code=1,
+            stdout="",
+            stderr="failed",
+        ),
+    )
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        command_string="git push",
+        reason="approval required",
+    )
+    store.resolve_approval_request(approval.approval_id, status="approved")
+
+    exit_code = main(["metrics", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Metrics" in output
+    assert "tasks: 1" in output
+    assert "iterations: 1" in output
+    assert "verification: total=1 passed=0 not_passed=1 pass_rate=0.0%" in output
+    assert "approvals: total=1 pending=0 approved=1 rejected=0 stale=0" in output
+    assert "adapter_failures: 1" in output
+
+
 def test_cancel_marks_task_cancelled(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("cancel me", repo_path=tmp_path)
@@ -99,6 +322,310 @@ def test_cancel_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
 
     assert exit_code == 1
     assert "Task not found: missing-task" in output
+
+
+def test_approvals_list_prints_pending_requests(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="git push origin main",
+        reason="policy requires approval",
+    )
+
+    exit_code = main(["approvals", "list", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"{approval.approval_id}: status=pending" in output
+    assert "source=verification" in output
+    assert "command=git push origin main" in output
+
+
+def test_approvals_list_prints_empty_state(capsys, tmp_path: Path) -> None:
+    exit_code = main(["approvals", "list", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "No approval requests found." in output
+
+
+def test_approvals_show_prints_details(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="memory",
+        command_string="codebase-memory-mcp cli index_repository",
+        reason="memory indexing requires approval",
+    )
+
+    exit_code = main(
+        ["approvals", "show", str(approval.approval_id), "--repo", str(tmp_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Approval: {approval.approval_id}" in output
+    assert "Status: pending" in output
+    assert "Source: memory" in output
+    assert "Reason: memory indexing requires approval" in output
+
+
+def test_approvals_approve_resolves_request(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="git push origin main",
+        reason="policy requires approval",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "approve",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--resolution",
+            "looks safe",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_approval_request(approval.approval_id)
+
+    assert exit_code == 0
+    assert f"{approval.approval_id}: status=approved" in output
+    assert loaded is not None
+    assert loaded.status == "approved"
+    assert loaded.resolution == "looks safe"
+
+
+def test_approvals_reject_resolves_request(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="pip install demo",
+        reason="package install requires approval",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "reject",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--resolution",
+            "not needed",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_approval_request(approval.approval_id)
+
+    assert exit_code == 0
+    assert f"{approval.approval_id}: status=rejected" in output
+    assert loaded is not None
+    assert loaded.status == "rejected"
+    assert loaded.resolution == "not needed"
+
+
+def test_approvals_retry_runs_approved_request(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[tuple[list[str], Path | None]] = []
+
+    def fake_run(
+        self: ProcessRunner,
+        argv: list[str],
+        cwd: Path | None = None,
+        timeout_sec: int = 300,
+        should_cancel=None,
+        options: RunOptions | None = None,
+    ) -> ProcessResult:
+        captured.append((argv, cwd))
+        return ProcessResult(
+            status="success",
+            exit_code=0,
+            stdout="retry ok",
+            stderr="",
+        )
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(
+        tmp_path,
+        command_name="approval",
+        command_run="retry-token command",
+        require_approval_patterns=["retry-token"],
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="retry-token command",
+        reason="policy requires approval",
+    )
+    store.resolve_approval_request(
+        approval.approval_id,
+        "approved",
+        resolution="looks safe",
+    )
+
+    exit_code = main(
+        ["approvals", "retry", str(approval.approval_id), "--repo", str(tmp_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "retry: passed exit=0" in output
+    assert "retry history: count=1 last_status=passed last_exit=0" in output
+    assert "retry ok" in output
+    assert captured == [(["retry-token", "command"], tmp_path)]
+    loaded = store.get_approval_request(approval.approval_id)
+    assert loaded is not None
+    assert loaded.retry_count == 1
+    assert loaded.last_retry_status == "passed"
+    assert loaded.last_retry_exit_code == 0
+
+
+def test_approvals_retry_requires_approved_request(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="retry-token command",
+        reason="policy requires approval",
+    )
+
+    exit_code = main(
+        ["approvals", "retry", str(approval.approval_id), "--repo", str(tmp_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert f"Approval request is not approved: {approval.approval_id} status=pending" in output
+
+
+def test_approvals_stale_marks_old_pending_requests(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    old_approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="old command",
+        reason="old approval",
+    )
+    fresh_approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="fresh command",
+        reason="fresh approval",
+    )
+    old_created_at = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE approval_requests SET created_at = ? WHERE approval_id = ?",
+            (old_created_at, old_approval.approval_id),
+        )
+
+    exit_code = main(
+        [
+            "approvals",
+            "stale",
+            "--repo",
+            str(tmp_path),
+            "--older-than-hours",
+            "24",
+            "--resolution",
+            "too old",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"{old_approval.approval_id}: status=stale" in output
+    assert "old command" in output
+    assert "fresh command" not in output
+    assert store.list_approval_requests(status="pending") == [fresh_approval]
+    stale = store.list_approval_requests(status="stale")
+    assert len(stale) == 1
+    assert stale[0].resolution == "too old"
+
+
+def test_approvals_retry_does_not_override_deny_rules(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(self: ProcessRunner, argv: list[str], **kwargs) -> ProcessResult:
+        calls.append(argv)
+        return ProcessResult(status="success", exit_code=0, stdout="ran", stderr="")
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(
+        tmp_path,
+        command_name="danger",
+        command_run="dangerous command",
+        deny_patterns=["dangerous"],
+        require_approval_patterns=["dangerous"],
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="dangerous command",
+        reason="policy requires approval",
+    )
+    store.resolve_approval_request(
+        approval.approval_id,
+        "approved",
+        resolution="operator approved",
+    )
+
+    exit_code = main(
+        ["approvals", "retry", str(approval.approval_id), "--repo", str(tmp_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "retry: policy_denied exit=None" in output
+    assert "Denied by pattern: dangerous" in output
+    assert calls == []
+
+
+def test_approvals_returns_error_for_missing_request(capsys, tmp_path: Path) -> None:
+    exit_code = main(["approvals", "show", "404", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Approval request not found: 404" in output
 
 
 def test_tui_status_prints_read_only_task_view(capsys, tmp_path: Path) -> None:
@@ -134,6 +661,44 @@ def test_tui_status_prints_read_only_task_view(capsys, tmp_path: Path) -> None:
     assert "Status: created" in output
     assert "Iterations" in output
     assert "check: unit passed exit=0" in output
+
+
+def test_tui_status_prints_task_approval_history(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo approval task", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo approval task",
+        raw_output="done",
+        decision_status="blocked",
+        decision_reason="Approval required",
+    )
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        command_string="deploy production",
+        reason="Policy requires approval",
+    )
+    store.resolve_approval_request(
+        approval.approval_id,
+        "rejected",
+        resolution="Not safe enough",
+    )
+
+    exit_code = main(["tui", "status", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Approvals" in output
+    assert f"approval={approval.approval_id} status=rejected" in output
+    assert f"task={task.task_id} iteration={iteration.iteration_id}" in output
+    assert "command: deploy production" in output
+    assert "reason: Policy requires approval" in output
+    assert "resolution: Not safe enough" in output
 
 
 def test_tui_status_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
@@ -185,17 +750,12 @@ def test_tui_approvals_prints_pending_verification_approvals(
         decision_status="blocked",
         decision_reason="Approval required",
     )
-    store.add_verification_run(
+    approval = store.add_approval_request(
         task_id=task.task_id,
         iteration_id=iteration.iteration_id,
-        result=VerificationResult(
-            name="deploy",
-            status="needs_approval",
-            exit_code=None,
-            stdout="",
-            stderr="",
-            error="Requires approval: deploy",
-        ),
+        source="verification",
+        command_string="deploy production",
+        reason="Requires approval: deploy",
     )
 
     exit_code = main(["tui", "approvals", "--repo", str(tmp_path)])
@@ -203,7 +763,9 @@ def test_tui_approvals_prints_pending_verification_approvals(
 
     assert exit_code == 0
     assert "Approvals" in output
-    assert "task-approval iteration=1 check=deploy" in output
+    assert f"approval={approval.approval_id} status=pending" in output
+    assert f"task=task-approval iteration={iteration.iteration_id}" in output
+    assert "command: deploy production" in output
     assert "reason: Requires approval: deploy" in output
 
 
@@ -212,7 +774,7 @@ def test_tui_approvals_prints_empty_state(capsys, tmp_path: Path) -> None:
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "No pending approvals." in output
+    assert "No approval requests recorded." in output
 
 
 def test_tui_current_prints_latest_iteration(capsys, tmp_path: Path) -> None:
@@ -385,6 +947,34 @@ def test_agents_lists_project_config(capsys, tmp_path: Path) -> None:
     assert "generic: enabled type=generic_cli" in output
 
 
+def test_agents_lists_adapter_profile(capsys, tmp_path: Path) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+orchestrator:
+  default_agent: "generic"
+
+adapter_profiles:
+  python-profile:
+    type: "generic_cli"
+    command: "python"
+
+agents:
+  generic:
+    enabled: true
+    profile: "python-profile"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["agents", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "generic: enabled type=generic_cli profile=python-profile" in output
+
+
 def test_agents_check_reports_availability(capsys, tmp_path: Path) -> None:
     write_config(
         tmp_path,
@@ -491,6 +1081,24 @@ def test_verify_uses_project_config(capsys, tmp_path: Path) -> None:
     assert "custom: passed exit=0" in output
 
 
+def test_verify_strict_mode_fails_without_commands(capsys, tmp_path: Path) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+verification:
+  strict: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["verify", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "No verification commands configured." in output
+
+
 def test_release_check_reports_packaging_status(capsys) -> None:
     exit_code = main(["release-check", "--repo", "."])
     output = capsys.readouterr().out
@@ -511,6 +1119,32 @@ def test_start_uses_project_config(capsys, tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "Verification passed: custom" in output
+
+
+def test_start_strict_mode_blocks_without_verification_commands(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+verification:
+  strict: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["start", "--task", "demo", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+    task_id = output.split(":", 1)[0]
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.get_task(task_id)
+
+    assert exit_code == 1
+    assert "No verification commands configured" in output
+    assert task is not None
+    assert task.status == "blocked"
 
 
 def test_start_with_use_memory_enriches_initial_prompt(
@@ -885,11 +1519,20 @@ def test_memory_index_requires_explicit_approval(capsys, monkeypatch, tmp_path: 
 
     exit_code = main(["memory", "index", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
+    approvals = StateStore(
+        tmp_path / ".ai-orch" / "state" / "ai-orch.db"
+    ).list_approval_requests(status="pending")
 
     assert exit_code == 1
+    assert "approval_request:" in output
     assert "index_repository: needs_approval exit=None" in output
     assert "Codebase Memory tool requires approval: index_repository" in output
     assert calls == []
+    assert len(approvals) == 1
+    assert approvals[0].source == "memory"
+    assert approvals[0].command_string.startswith("codebase-memory-mcp cli index_repository")
+    assert "repo_path" in approvals[0].command_string
+    assert approvals[0].reason == "Codebase Memory tool requires approval: index_repository"
 
 
 def test_memory_index_runs_with_approve_flag(capsys, monkeypatch, tmp_path: Path) -> None:
@@ -904,9 +1547,13 @@ def test_memory_index_runs_with_approve_flag(capsys, monkeypatch, tmp_path: Path
 
     exit_code = main(["memory", "index", "--repo", str(tmp_path), "--approve"])
     output = capsys.readouterr().out
+    approvals = StateStore(
+        tmp_path / ".ai-orch" / "state" / "ai-orch.db"
+    ).list_approval_requests()
 
     assert exit_code == 0
     assert "index_repository: passed exit=0" in output
+    assert approvals == []
     assert captured_argv == [
         [
             "codebase-memory-mcp",

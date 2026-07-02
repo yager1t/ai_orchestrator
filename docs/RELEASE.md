@@ -9,6 +9,15 @@ Use this checklist before tagging or publishing an `ai-orch` release.
 - Keep release notes in `CHANGELOG.md`.
 - Run `python -m ai_orchestrator release-check --repo .` before tagging.
 
+## Install
+
+- Confirm `pyproject.toml` exposes `ai-orch` in `[project.scripts]`.
+- Run `python -m pip install -e ".[dev]"` during development and confirm
+  `ai-orch --version`.
+- For a packaged local smoke test, create a clean virtual environment and run
+  `python -m pip install .`, then `ai-orch --help`.
+- Follow `docs/INSTALL.md` for the install smoke path.
+
 ## Verification
 
 Run the project checks from the repository root:

@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ai_orchestrator.agents.base import AgentResult, SessionRef, TaskContext
+from ai_orchestrator.agents.base import (
+    AgentResult,
+    SessionRef,
+    TaskContext,
+    summarize_agent_output,
+)
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 
@@ -57,6 +62,7 @@ class CodexExecAdapter:
                 status="failed",
                 raw_output="",
                 session_id=session.session_id,
+                exit_reason="unknown_session",
                 error="Unknown Codex exec session",
             )
 
@@ -75,6 +81,7 @@ class CodexExecAdapter:
                 status="failed",
                 raw_output="",
                 session_id=session.session_id,
+                exit_reason="unknown_session",
                 error="Unknown Codex exec session",
             )
 
@@ -103,6 +110,8 @@ class CodexExecAdapter:
                 status="blocked",
                 raw_output="",
                 session_id=session.session_id,
+                summary=policy_decision.reason,
+                exit_reason="policy_denied",
                 error=policy_decision.reason,
             )
         if policy_decision.action == "ask":
@@ -115,6 +124,8 @@ class CodexExecAdapter:
                 status="needs_approval",
                 raw_output="",
                 session_id=session.session_id,
+                summary=policy_decision.reason,
+                exit_reason="policy_needs_approval",
                 error=policy_decision.reason,
             )
 
@@ -124,6 +135,8 @@ class CodexExecAdapter:
             options=RunOptions(
                 timeout_sec=self.timeout_sec,
                 should_cancel=context.cancellation_requested,
+                on_progress=context.progress_callback,
+                progress_label=f"agent {self.name}",
             ),
         )
         logger.debug(
@@ -141,6 +154,8 @@ class CodexExecAdapter:
             status=result.status,
             raw_output=raw_output,
             session_id=session.session_id,
+            summary=summarize_agent_output(raw_output),
+            exit_reason=result.error or result.status,
             error=result.error,
         )
 

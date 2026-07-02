@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -34,6 +35,11 @@ class StoredIteration:
     agent_status: str
     decision_status: str
     decision_reason: str
+    agent_summary: str | None = None
+    files_changed: list[str] = field(default_factory=list)
+    tool_actions: list[str] = field(default_factory=list)
+    exit_reason: str | None = None
+    uncertainty: str | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +53,11 @@ class StoredIterationDetail:
     raw_output: str
     decision_status: str
     decision_reason: str
+    agent_summary: str | None = None
+    files_changed: list[str] = field(default_factory=list)
+    tool_actions: list[str] = field(default_factory=list)
+    exit_reason: str | None = None
+    uncertainty: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +81,45 @@ class StoredVerificationDetail:
     stdout: str
     stderr: str
     error: str | None
+
+
+@dataclass(frozen=True)
+class StoredApprovalRequest:
+    approval_id: int
+    task_id: str
+    iteration_id: int | None
+    source: str
+    command_string: str
+    reason: str
+    status: str
+    created_at: str
+    resolved_at: str | None
+    resolution: str | None
+    retry_count: int = 0
+    last_retry_at: str | None = None
+    last_retry_status: str | None = None
+    last_retry_exit_code: int | None = None
+    last_retry_error: str | None = None
+
+
+@dataclass(frozen=True)
+class StoredMetricsSummary:
+    task_count: int
+    iteration_count: int
+    verification_count: int
+    verification_passed_count: int
+    approval_count: int
+    approval_pending_count: int
+    approval_approved_count: int
+    approval_rejected_count: int
+    approval_stale_count: int
+    adapter_failure_count: int
+
+    @property
+    def verification_pass_rate(self) -> float:
+        if self.verification_count == 0:
+            return 0.0
+        return self.verification_passed_count / self.verification_count
 
 
 class StateStore:
@@ -100,6 +150,11 @@ class StateStore:
                     raw_output TEXT NOT NULL,
                     decision_status TEXT NOT NULL,
                     decision_reason TEXT NOT NULL,
+                    agent_summary TEXT,
+                    files_changed TEXT NOT NULL DEFAULT '[]',
+                    tool_actions TEXT NOT NULL DEFAULT '[]',
+                    exit_reason TEXT,
+                    uncertainty TEXT,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (task_id) REFERENCES tasks(task_id)
                 );
@@ -118,6 +173,29 @@ class StateStore:
                     FOREIGN KEY (task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS approval_requests (
+                    approval_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    iteration_id INTEGER,
+                    source TEXT NOT NULL,
+                    command_string TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'stale')),
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    resolution TEXT,
+                    retry_count INTEGER NOT NULL DEFAULT 0,
+                    last_retry_at TEXT,
+                    last_retry_status TEXT,
+                    last_retry_exit_code INTEGER,
+                    last_retry_error TEXT,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_approval_requests_task_status
+                ON approval_requests (task_id, status, approval_id);
                 """
             )
             migrate_schema(connection)
@@ -208,6 +286,11 @@ class StateStore:
         raw_output: str,
         decision_status: str,
         decision_reason: str,
+        agent_summary: str | None = None,
+        files_changed: list[str] | None = None,
+        tool_actions: list[str] | None = None,
+        exit_reason: str | None = None,
+        uncertainty: str | None = None,
     ) -> StoredIteration:
         with self._connect() as connection:
             cursor = connection.execute(
@@ -221,9 +304,14 @@ class StateStore:
                     raw_output,
                     decision_status,
                     decision_reason,
+                    agent_summary,
+                    files_changed,
+                    tool_actions,
+                    exit_reason,
+                    uncertainty,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
@@ -234,6 +322,11 @@ class StateStore:
                     redact_secrets(raw_output) or "",
                     decision_status,
                     decision_reason,
+                    redact_secrets(agent_summary),
+                    _encode_json_list(files_changed),
+                    _encode_json_list(tool_actions),
+                    redact_secrets(exit_reason),
+                    redact_secrets(uncertainty),
                     _now(),
                 ),
             )
@@ -256,6 +349,11 @@ class StateStore:
             agent_status=agent_status,
             decision_status=decision_status,
             decision_reason=decision_reason,
+            agent_summary=redact_secrets(agent_summary),
+            files_changed=_decode_json_list(_encode_json_list(files_changed)),
+            tool_actions=_decode_json_list(_encode_json_list(tool_actions)),
+            exit_reason=redact_secrets(exit_reason),
+            uncertainty=redact_secrets(uncertainty),
         )
 
     def add_verification_run(
@@ -312,6 +410,284 @@ class StateStore:
             exit_code=result.exit_code,
         )
 
+    def add_approval_request(
+        self,
+        task_id: str,
+        iteration_id: int | None,
+        source: str,
+        command_string: str,
+        reason: str,
+    ) -> StoredApprovalRequest:
+        self.initialize()
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO approval_requests (
+                    task_id,
+                    iteration_id,
+                    source,
+                    command_string,
+                    reason,
+                    status,
+                    created_at,
+                    resolved_at,
+                    resolution,
+                    retry_count,
+                    last_retry_at,
+                    last_retry_status,
+                    last_retry_exit_code,
+                    last_retry_error
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    iteration_id,
+                    source,
+                    command_string,
+                    redact_secrets(reason) or "",
+                    "pending",
+                    now,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create approval request")
+            approval_id = cursor.lastrowid
+        logger.debug(
+            "state approval added task_id=%s approval_id=%s source=%s status=pending",
+            task_id,
+            approval_id,
+            source,
+        )
+        return StoredApprovalRequest(
+            approval_id=approval_id,
+            task_id=task_id,
+            iteration_id=iteration_id,
+            source=source,
+            command_string=command_string,
+            reason=redact_secrets(reason) or "",
+            status="pending",
+            created_at=now,
+            resolved_at=None,
+            resolution=None,
+            retry_count=0,
+            last_retry_at=None,
+            last_retry_status=None,
+            last_retry_exit_code=None,
+            last_retry_error=None,
+        )
+
+    def get_approval_request(self, approval_id: int) -> StoredApprovalRequest | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    approval_id,
+                    task_id,
+                    iteration_id,
+                    source,
+                    command_string,
+                    reason,
+                    status,
+                    created_at,
+                    resolved_at,
+                    resolution,
+                    retry_count,
+                    last_retry_at,
+                    last_retry_status,
+                    last_retry_exit_code,
+                    last_retry_error
+                FROM approval_requests
+                WHERE approval_id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredApprovalRequest(**dict(row))
+
+    def list_approval_requests(
+        self,
+        task_id: str | None = None,
+        status: str | None = None,
+    ) -> list[StoredApprovalRequest]:
+        self.initialize()
+        if status is not None and status not in {"pending", "approved", "rejected", "stale"}:
+            raise ValueError(f"Unsupported approval status: {status}")
+
+        query = """
+            SELECT
+                approval_id,
+                task_id,
+                iteration_id,
+                source,
+                command_string,
+                reason,
+                status,
+                created_at,
+                resolved_at,
+                resolution,
+                retry_count,
+                last_retry_at,
+                last_retry_status,
+                last_retry_exit_code,
+                last_retry_error
+            FROM approval_requests
+            WHERE 1 = 1
+        """
+        params: list[str] = []
+        if task_id is not None:
+            query += " AND task_id = ?"
+            params.append(task_id)
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_at ASC, approval_id ASC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [StoredApprovalRequest(**dict(row)) for row in rows]
+
+    def resolve_approval_request(
+        self,
+        approval_id: int,
+        status: str,
+        resolution: str | None = None,
+    ) -> StoredApprovalRequest | None:
+        self.initialize()
+        if status not in {"approved", "rejected", "stale"}:
+            raise ValueError(f"Unsupported approval resolution status: {status}")
+
+        resolved_at = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approval_requests
+                SET status = ?, resolved_at = ?, resolution = ?
+                WHERE approval_id = ?
+                """,
+                (
+                    status,
+                    resolved_at,
+                    redact_secrets(resolution),
+                    approval_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+
+        logger.debug(
+            "state approval resolved approval_id=%s status=%s",
+            approval_id,
+            status,
+        )
+        return self.get_approval_request(approval_id)
+
+    def mark_stale_approval_requests(
+        self,
+        cutoff_created_at: str,
+        task_id: str | None = None,
+        resolution: str | None = None,
+    ) -> list[StoredApprovalRequest]:
+        self.initialize()
+        resolved_at = _now()
+        resolved_message = resolution or f"stale approval older than {cutoff_created_at}"
+        query = """
+            SELECT approval_id
+            FROM approval_requests
+            WHERE status = 'pending'
+              AND created_at < ?
+        """
+        params: list[str] = [cutoff_created_at]
+        if task_id is not None:
+            query += " AND task_id = ?"
+            params.append(task_id)
+        query += " ORDER BY created_at ASC, approval_id ASC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+            approval_ids = [int(row["approval_id"]) for row in rows]
+            if approval_ids:
+                placeholders = ", ".join("?" for _ in approval_ids)
+                connection.execute(
+                    f"""
+                    UPDATE approval_requests
+                    SET status = 'stale', resolved_at = ?, resolution = ?
+                    WHERE approval_id IN ({placeholders})
+                    """,
+                    (
+                        resolved_at,
+                        redact_secrets(resolved_message),
+                        *approval_ids,
+                    ),
+                )
+
+        return [
+            approval
+            for approval_id in approval_ids
+            if (approval := self.get_approval_request(approval_id)) is not None
+        ]
+
+    def record_approval_retry(
+        self,
+        approval_id: int,
+        status: str,
+        exit_code: int | None,
+        error: str | None = None,
+    ) -> StoredApprovalRequest | None:
+        self.initialize()
+        retry_at = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approval_requests
+                SET
+                    retry_count = retry_count + 1,
+                    last_retry_at = ?,
+                    last_retry_status = ?,
+                    last_retry_exit_code = ?,
+                    last_retry_error = ?
+                WHERE approval_id = ?
+                """,
+                (
+                    retry_at,
+                    status,
+                    exit_code,
+                    redact_secrets(error),
+                    approval_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_approval_request(approval_id)
+
+    def metrics_summary(self) -> StoredMetricsSummary:
+        self.initialize()
+        with self._connect() as connection:
+            approval_counts = _approval_status_counts(connection)
+            verification_counts = _verification_status_counts(connection)
+            return StoredMetricsSummary(
+                task_count=_task_count(connection),
+                iteration_count=_iteration_count(connection),
+                verification_count=sum(verification_counts.values()),
+                verification_passed_count=verification_counts.get("passed", 0),
+                approval_count=sum(approval_counts.values()),
+                approval_pending_count=approval_counts.get("pending", 0),
+                approval_approved_count=approval_counts.get("approved", 0),
+                approval_rejected_count=approval_counts.get("rejected", 0),
+                approval_stale_count=approval_counts.get("stale", 0),
+                adapter_failure_count=_adapter_failure_count(connection),
+            )
+
     def list_iterations(self, task_id: str) -> list[StoredIteration]:
         self.initialize()
         with self._connect() as connection:
@@ -324,14 +700,19 @@ class StateStore:
                     agent_name,
                     agent_status,
                     decision_status,
-                    decision_reason
+                    decision_reason,
+                    agent_summary,
+                    files_changed,
+                    tool_actions,
+                    exit_reason,
+                    uncertainty
                 FROM iterations
                 WHERE task_id = ?
                 ORDER BY iteration_index ASC, iteration_id ASC
                 """,
                 (task_id,),
             ).fetchall()
-        return [StoredIteration(**dict(row)) for row in rows]
+        return [_stored_iteration_from_row(row) for row in rows]
 
     def list_iteration_details(self, task_id: str) -> list[StoredIterationDetail]:
         self.initialize()
@@ -347,14 +728,19 @@ class StateStore:
                     prompt,
                     raw_output,
                     decision_status,
-                    decision_reason
+                    decision_reason,
+                    agent_summary,
+                    files_changed,
+                    tool_actions,
+                    exit_reason,
+                    uncertainty
                 FROM iterations
                 WHERE task_id = ?
                 ORDER BY iteration_index ASC, iteration_id ASC
                 """,
                 (task_id,),
             ).fetchall()
-        return [StoredIterationDetail(**dict(row)) for row in rows]
+        return [_stored_iteration_detail_from_row(row) for row in rows]
 
     def list_verification_runs(
         self,
@@ -418,3 +804,69 @@ class StateStore:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _encode_json_list(values: list[str] | None) -> str:
+    redacted = [redact_secrets(value) or "" for value in values or []]
+    return json.dumps(redacted)
+
+
+def _decode_json_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(decoded, list):
+        return []
+    return [str(item) for item in decoded if isinstance(item, str)]
+
+
+def _task_count(connection: sqlite3.Connection) -> int:
+    row = connection.execute("SELECT COUNT(*) AS count FROM tasks").fetchone()
+    return int(row["count"])
+
+
+def _iteration_count(connection: sqlite3.Connection) -> int:
+    row = connection.execute("SELECT COUNT(*) AS count FROM iterations").fetchone()
+    return int(row["count"])
+
+
+def _verification_status_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    rows = connection.execute(
+        "SELECT status, COUNT(*) AS count FROM verification_runs GROUP BY status"
+    ).fetchall()
+    return {str(row["status"]): int(row["count"]) for row in rows}
+
+
+def _approval_status_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    rows = connection.execute(
+        "SELECT status, COUNT(*) AS count FROM approval_requests GROUP BY status"
+    ).fetchall()
+    return {str(row["status"]): int(row["count"]) for row in rows}
+
+
+def _adapter_failure_count(connection: sqlite3.Connection) -> int:
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM iterations
+        WHERE agent_status IN ('failed', 'timeout', 'unavailable')
+        """
+    ).fetchone()
+    return int(row["count"])
+
+
+def _stored_iteration_from_row(row: sqlite3.Row) -> StoredIteration:
+    values = dict(row)
+    values["files_changed"] = _decode_json_list(values.get("files_changed"))
+    values["tool_actions"] = _decode_json_list(values.get("tool_actions"))
+    return StoredIteration(**values)
+
+
+def _stored_iteration_detail_from_row(row: sqlite3.Row) -> StoredIterationDetail:
+    values = dict(row)
+    values["files_changed"] = _decode_json_list(values.get("files_changed"))
+    values["tool_actions"] = _decode_json_list(values.get("tool_actions"))
+    return StoredIterationDetail(**values)
