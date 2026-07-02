@@ -42,7 +42,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 258 passed
+- `python -m pytest`: 262 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -76,8 +76,10 @@ Verification commands can use structured `argv` config or legacy `run` strings.
 Structured `argv` is preferred for new configs.
 
 Reusable generic adapter profiles can be defined once and referenced by one or
-more agents. Agent-level `command`, `args`, and `timeout_sec` values override
-the profile defaults.
+more agents. Agent-level `command`, `args`, `timeout_sec`, and `env` values
+override the profile defaults. `env` is merged with the inherited profile env,
+with agent values taking precedence. Windows-style environment references such
+as `%LOCALAPPDATA%` are expanded before subprocess execution.
 
 ```yaml
 orchestrator:
@@ -92,6 +94,8 @@ adapter_profiles:
       - "import sys; print(sys.argv[1])"
       - "{prompt}"
     timeout_sec: 30
+    env:
+      PYTHONUNBUFFERED: "1"
 
 agents:
   docs-agent:

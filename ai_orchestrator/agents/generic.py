@@ -26,6 +26,7 @@ class GenericCLIAdapter:
     name: str = "generic"
     runner: ProcessRunner = field(default_factory=ProcessRunner)
     policy_engine: PolicyEngine = field(default_factory=PolicyEngine)
+    env: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._sessions: dict[str, TaskContext] = {}
@@ -98,6 +99,7 @@ class GenericCLIAdapter:
                 should_cancel=context.cancellation_requested,
                 on_progress=context.progress_callback,
                 progress_label=f"agent {self.name}",
+                env=self.env,
             ),
         )
         logger.debug(

@@ -3,8 +3,9 @@ project:
   repo: "."
 
 orchestrator:
-  default_agent: "claude"
+  default_agent: "kimi"
   fallback_agents:
+    - "claude"
     - "mock"
   max_iterations: 10
   max_no_change_iterations: 2
@@ -56,12 +57,17 @@ agents:
   # defaults are: kimi -> kimi {prompt}; gemini -> gemini -p {prompt}.
   # Keep command/args explicit when local CLI flags differ.
   kimi:
-    enabled: false
+    enabled: true
     type: "kimi_cli"
-    command: "kimi"
+    command: "%LOCALAPPDATA%\\Programs\\kimi-code\\bin\\kimi.exe"
     args:
+      - "--output-format"
+      - "text"
+      - "-p"
       - "{prompt}"
     timeout_sec: 1800
+    env:
+      KIMI_SHELL_PATH: "%PROGRAMFILES%\\Git\\bin\\bash.exe"
 
   gemini:
     enabled: false

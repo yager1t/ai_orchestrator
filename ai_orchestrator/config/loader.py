@@ -15,6 +15,7 @@ class AgentConfig:
     command: str = ""
     args: list[str] | None = None
     timeout_sec: int = 300
+    env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -104,10 +105,12 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
     current_profile_name: str | None = None
     current_profile: dict[str, object] | None = None
     in_profile_args = False
+    in_profile_env = False
     agents: dict[str, AgentConfig] = {}
     current_agent_name: str | None = None
     current_agent: dict[str, object] | None = None
     in_agent_args = False
+    in_agent_env = False
     verification_commands: list[VerificationCommand] = []
     verification_strict = False
     policy_deny_patterns: list[str] = []
@@ -151,6 +154,8 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
             policy_list = None
             in_agent_args = False
             in_profile_args = False
+            in_agent_env = False
+            in_profile_env = False
             in_memory_command = False
             _finish_command(current_command, verification_commands)
             current_command = None
@@ -166,10 +171,26 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
                 current_profile_name = stripped[:-1]
                 current_profile = {}
                 in_profile_args = False
+                in_profile_env = False
                 continue
 
             if current_profile is not None and stripped == "args:":
                 in_profile_args = True
+                in_profile_env = False
+                continue
+
+            if current_profile is not None and stripped == "env:":
+                current_profile["env"] = {}
+                in_profile_args = False
+                in_profile_env = True
+                continue
+
+            if current_profile is not None and in_profile_env and indent >= 6 and ":" in stripped:
+                env = current_profile.get("env")
+                if isinstance(env, dict):
+                    key, value = _split_key_value(stripped)
+                    if key:
+                        env[key] = value
                 continue
 
             if current_profile is not None and in_profile_args and stripped.startswith("- "):
@@ -182,6 +203,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
 
             if current_profile is not None and ":" in stripped:
                 in_profile_args = False
+                in_profile_env = False
                 key, value = _split_key_value(stripped)
                 if key:
                     current_profile[key] = value
@@ -197,10 +219,26 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
                 current_agent_name = stripped[:-1]
                 current_agent = {}
                 in_agent_args = False
+                in_agent_env = False
                 continue
 
             if current_agent is not None and stripped == "args:":
                 in_agent_args = True
+                in_agent_env = False
+                continue
+
+            if current_agent is not None and stripped == "env:":
+                current_agent["env"] = {}
+                in_agent_args = False
+                in_agent_env = True
+                continue
+
+            if current_agent is not None and in_agent_env and indent >= 6 and ":" in stripped:
+                env = current_agent.get("env")
+                if isinstance(env, dict):
+                    key, value = _split_key_value(stripped)
+                    if key:
+                        env[key] = value
                 continue
 
             if current_agent is not None and in_agent_args and stripped.startswith("- "):
@@ -213,6 +251,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
 
             if current_agent is not None and ":" in stripped:
                 in_agent_args = False
+                in_agent_env = False
                 key, value = _split_key_value(stripped)
                 if key:
                     current_agent[key] = value
@@ -419,6 +458,8 @@ def _finish_agent(
         args = [str(item) for item in raw_args] if isinstance(raw_args, list) else []
     else:
         args = None
+    raw_env = current_agent.get("env", {})
+    env = {str(key): str(value) for key, value in raw_env.items()} if isinstance(raw_env, dict) else {}
     agents[name] = AgentConfig(
         name=name,
         type=agent_type,
@@ -427,6 +468,7 @@ def _finish_agent(
         command=command,
         args=args,
         timeout_sec=timeout_sec,
+        env=env,
     )
     return None, None
 
@@ -452,6 +494,7 @@ def _resolve_agent_profiles(
             timeout_sec=agent.timeout_sec
             if agent.timeout_sec != 300
             else profile.timeout_sec,
+            env=_resolve_env(agent.env, profile.env),
         )
     return resolved
 
@@ -467,6 +510,7 @@ def _agent_with_default_type(name: str, agent: AgentConfig) -> AgentConfig:
         command=agent.command,
         args=_resolve_args(agent.args, None),
         timeout_sec=agent.timeout_sec,
+        env=dict(agent.env),
     )
 
 
@@ -479,6 +523,15 @@ def _resolve_args(
     if profile_args is not None:
         return list(profile_args)
     return None
+
+
+def _resolve_env(
+    agent_env: dict[str, str],
+    profile_env: dict[str, str],
+) -> dict[str, str]:
+    resolved = dict(profile_env)
+    resolved.update(agent_env)
+    return resolved
 
 
 def _split_key_value(line: str) -> tuple[str, str]:

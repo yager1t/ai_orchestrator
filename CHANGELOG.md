@@ -30,6 +30,8 @@
   with mock fallback, and resolved CLI shims before subprocess execution.
 - Added visible autopilot progress heartbeats for long-running real-agent
   subprocesses.
+- Added per-agent CLI environment overrides and switched the local autopilot
+  default agent to the configured Kimi Code CLI with Claude and mock fallbacks.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

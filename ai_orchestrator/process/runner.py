@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import time
@@ -29,11 +30,12 @@ class RunOptions:
     on_progress: Callable[[str], None] | None = None
     progress_label: str = "process"
     progress_interval_sec: float = 30.0
+    env: dict[str, str] | None = None
 
 
 class ProcessRunner:
     def check_available(self, command: str) -> bool:
-        return shutil.which(command) is not None
+        return shutil.which(os.path.expandvars(command)) is not None
 
     def run(
         self,
@@ -51,10 +53,12 @@ class ProcessRunner:
             on_progress = options.on_progress
             progress_label = options.progress_label
             progress_interval_sec = options.progress_interval_sec
+            run_env = options.env
         else:
             on_progress = None
             progress_label = "process"
             progress_interval_sec = 30.0
+            run_env = None
 
         if not argv:
             logger.warning("event=process.empty_argv")
@@ -85,12 +89,20 @@ class ProcessRunner:
                 str(cwd) if cwd else None,
                 timeout_sec,
             )
+            process_env = None
+            if run_env is not None:
+                process_env = os.environ.copy()
+                process_env.update(
+                    {key: os.path.expandvars(value) for key, value in run_env.items()}
+                )
+
             process = subprocess.Popen(
                 run_argv,
                 cwd=str(cwd) if cwd else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                env=process_env,
             )
             if should_cancel is None and on_progress is None:
                 stdout, stderr = process.communicate(timeout=timeout_sec)
@@ -225,7 +237,7 @@ class ProcessRunner:
 
 
 def _resolve_executable(argv: list[str]) -> list[str] | None:
-    executable = argv[0]
+    executable = os.path.expandvars(argv[0])
     resolved = shutil.which(executable)
     if resolved is None:
         return None

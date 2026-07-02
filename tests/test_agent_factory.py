@@ -33,6 +33,7 @@ def test_build_agent_creates_generic_adapter() -> None:
                 command="python",
                 args=["-c", "print('ok')"],
                 timeout_sec=12,
+                env={"AI_ORCH_ENV": "ok"},
             )
         },
     )
@@ -42,6 +43,7 @@ def test_build_agent_creates_generic_adapter() -> None:
     assert isinstance(agent, GenericCLIAdapter)
     assert agent.command == "python"
     assert agent.timeout_sec == 12
+    assert agent.env == {"AI_ORCH_ENV": "ok"}
 
 
 def test_build_agent_creates_generic_adapter_from_profile(tmp_path: Path) -> None:
@@ -134,6 +136,7 @@ def test_build_agent_creates_kimi_cli_alias() -> None:
                 command="kimi",
                 args=["--prompt", "{prompt}"],
                 timeout_sec=55,
+                env={"KIMI_SHELL_PATH": "C:\\Program Files\\Git\\bin\\bash.exe"},
             )
         },
     )
@@ -145,6 +148,7 @@ def test_build_agent_creates_kimi_cli_alias() -> None:
     assert agent.command == "kimi"
     assert agent.args == ["--prompt", "{prompt}"]
     assert agent.timeout_sec == 55
+    assert agent.env == {"KIMI_SHELL_PATH": "C:\\Program Files\\Git\\bin\\bash.exe"}
 
 
 def test_build_agent_creates_kimi_cli_alias_with_defaults() -> None:

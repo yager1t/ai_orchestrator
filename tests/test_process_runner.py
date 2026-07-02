@@ -29,6 +29,16 @@ def test_process_runner_missing_command() -> None:
     assert result.error == "Command not found: definitely-missing-ai-orch-command"
 
 
+def test_process_runner_check_available_expands_env_vars(monkeypatch) -> None:
+    monkeypatch.setenv("AI_ORCH_TOOL_DIR", "C:\\Tools")
+    monkeypatch.setattr(
+        "ai_orchestrator.process.runner.shutil.which",
+        lambda command: command if command == "C:\\Tools\\demo.exe" else None,
+    )
+
+    assert ProcessRunner().check_available("%AI_ORCH_TOOL_DIR%\\demo.exe") is True
+
+
 def test_process_runner_uses_resolved_executable(monkeypatch) -> None:
     captured_argv = []
 
@@ -50,6 +60,55 @@ def test_process_runner_uses_resolved_executable(monkeypatch) -> None:
 
     assert result.status == "success"
     assert captured_argv == [["C:\\Tools\\demo.cmd", "--version"]]
+
+
+def test_process_runner_expands_executable_env_vars(monkeypatch) -> None:
+    captured_argv = []
+
+    class FakePopen:
+        def __init__(self, argv, *args, **kwargs) -> None:
+            captured_argv.append(argv)
+            self.returncode = 0
+
+        def communicate(self, timeout=None):
+            return "ok", ""
+
+    monkeypatch.setenv("AI_ORCH_TOOL_DIR", "C:\\Tools")
+    monkeypatch.setattr(
+        "ai_orchestrator.process.runner.shutil.which",
+        lambda command: command if command == "C:\\Tools\\demo.exe" else None,
+    )
+    monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
+
+    result = ProcessRunner().run(["%AI_ORCH_TOOL_DIR%\\demo.exe", "--version"])
+
+    assert result.status == "success"
+    assert captured_argv == [["C:\\Tools\\demo.exe", "--version"]]
+
+
+def test_process_runner_passes_run_options_env(monkeypatch) -> None:
+    captured_env = {}
+
+    class FakePopen:
+        def __init__(self, argv, *args, **kwargs) -> None:
+            captured_env.update(kwargs.get("env") or {})
+            self.returncode = 0
+
+        def communicate(self, timeout=None):
+            return "ok", ""
+
+    monkeypatch.setattr("ai_orchestrator.process.runner.shutil.which", lambda command: command)
+    monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
+
+    monkeypatch.setenv("AI_ORCH_RUNNER_BASE", "configured")
+
+    result = ProcessRunner().run(
+        ["demo"],
+        options=RunOptions(env={"AI_ORCH_RUNNER_ENV": "%AI_ORCH_RUNNER_BASE%"}),
+    )
+
+    assert result.status == "success"
+    assert captured_env["AI_ORCH_RUNNER_ENV"] == "configured"
 
 
 def test_process_runner_terminates_process_on_timeout(monkeypatch) -> None:

@@ -60,6 +60,7 @@ policy:
     assert config.agents["generic"].command == "python"
     assert config.agents["generic"].args == ["-c", "print('generic')"]
     assert config.agents["generic"].timeout_sec == 12
+    assert config.agents["generic"].env == {}
     assert config.verification_strict is True
     assert [item.name for item in config.verification_commands] == ["unit", "compile"]
     assert config.verification_commands[0].run == "python -m pytest"
@@ -87,6 +88,9 @@ adapter_profiles:
       - "import sys; print(sys.argv[1])"
       - "{prompt}"
     timeout_sec: 30
+    env:
+      PROFILE_ENV: "profile"
+      OVERRIDDEN_ENV: "profile"
 
 agents:
   docs-agent:
@@ -100,6 +104,9 @@ agents:
       - "-c"
       - "print('override')"
     timeout_sec: 12
+    env:
+      OVERRIDDEN_ENV: "agent"
+      AGENT_ENV: "agent"
 """.lstrip(),
         encoding="utf-8",
     )
@@ -116,9 +123,18 @@ agents:
         "{prompt}",
     ]
     assert config.agents["docs-agent"].timeout_sec == 30
+    assert config.agents["docs-agent"].env == {
+        "PROFILE_ENV": "profile",
+        "OVERRIDDEN_ENV": "profile",
+    }
     assert config.agents["review-agent"].command == "python3"
     assert config.agents["review-agent"].args == ["-c", "print('override')"]
     assert config.agents["review-agent"].timeout_sec == 12
+    assert config.agents["review-agent"].env == {
+        "PROFILE_ENV": "profile",
+        "OVERRIDDEN_ENV": "agent",
+        "AGENT_ENV": "agent",
+    }
 
 
 def test_load_project_config_uses_compile_fallback_without_config(tmp_path: Path) -> None:
