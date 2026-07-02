@@ -13,8 +13,9 @@ No open P1 items.
 
 ## P2
 
-- Implement the first ADR-0005 slice for optional per-task worktree rotation in
-  batch runs: CLI contract, validation, and state/report plumbing.
+- Implement the next ADR-0005 slice for optional per-task worktree rotation in
+  batch runs: persist the selected worktree path and include it in reports
+  before enabling execution in rotated worktrees.
 - Add deeper queue history filters if recent status summaries are not enough
   for daily operation.
 

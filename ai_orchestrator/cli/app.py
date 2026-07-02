@@ -250,11 +250,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow execution with the mock agent for smoke tests",
     )
-    autopilot_queue_run_batch.add_argument(
+    worktree_group = autopilot_queue_run_batch.add_mutually_exclusive_group()
+    worktree_group.add_argument(
         "--worktree",
         help=(
             "Run the queued items in an existing separate git worktree. "
             "Relative paths are resolved from --repo."
+        ),
+    )
+    worktree_group.add_argument(
+        "--rotate-worktrees",
+        dest="rotate_worktrees",
+        metavar="BASE_DIR",
+        help=(
+            "Run each queued item in a separate pre-created git worktree under "
+            "BASE_DIR. Mutually exclusive with --worktree. Dry-run by default."
         ),
     )
     autopilot_queue_run_batch.add_argument(
@@ -1090,6 +1100,15 @@ def _run_autopilot_queue_batch(
         print("--max-items must be at least 1")
         return 1
 
+    if getattr(args, "rotate_worktrees", None):
+        if args.execute:
+            print(
+                "Execution blocked: --execute with --rotate-worktrees is not "
+                "implemented yet"
+            )
+            return 1
+        return _dry_run_rotated_batch(args, repo, plan_path, store)
+
     if not args.execute:
         items = next_plan_items(store, plan_path, limit=max_items)
         if not items:
@@ -1137,6 +1156,103 @@ def _run_autopilot_queue_batch(
 
     print(f"Batch complete: processed {processed} item(s)")
     return 0
+
+
+def _dry_run_rotated_batch(
+    args: argparse.Namespace,
+    repo: Path,
+    plan_path: Path,
+    store: StateStore,
+) -> int:
+    """Dry-run a batch with per-task worktree rotation."""
+    base_dir = _resolve_rotated_worktree_base(repo, args.rotate_worktrees)
+    if not base_dir.exists():
+        print(f"Rotation base directory does not exist: {base_dir}")
+        return 1
+    if not base_dir.is_dir():
+        print(f"Rotation base path is not a directory: {base_dir}")
+        return 1
+
+    max_items = max(0, args.max_items)
+    items = next_plan_items(store, plan_path, limit=max_items)
+    if not items:
+        print(f"No queued plan items ready in {plan_path}")
+        return 0
+
+    selected = _select_rotated_worktrees(
+        repo, base_dir, store, allow_dirty=args.allow_dirty, count=len(items)
+    )
+    if len(selected) < len(items):
+        print(
+            "Execution blocked: not enough clean, available worktrees under "
+            f"{base_dir} for {len(items)} queued item(s)"
+        )
+        return 1
+
+    for item, worktree in zip(items, selected):
+        task = plan_item_to_task(item)
+        print("Autopilot selected:")
+        _print_autopilot_task(task)
+        print(f"Worktree: {worktree}")
+
+    print(
+        f"Dry run: would process {len(items)} item(s) using rotated worktrees. "
+        "Add --execute to start."
+    )
+    return 0
+
+
+def _resolve_rotated_worktree_base(repo: Path, base_dir: str) -> Path:
+    base_path = Path(base_dir)
+    if not base_path.is_absolute():
+        base_path = repo / base_path
+    return base_path.resolve()
+
+
+def _select_rotated_worktrees(
+    repo: Path,
+    base_dir: Path,
+    store: StateStore,
+    allow_dirty: bool,
+    count: int,
+) -> list[Path]:
+    """Select up to *count* clean, available git worktrees from *base_dir*.
+
+    Worktrees are inspected in sorted path order. A worktree is skipped when it
+    fails validation, has uncommitted changes (unless *allow_dirty*), or is
+    already associated with an ``in_progress`` queue item.
+    """
+    busy = _busy_rotated_worktrees(store)
+    candidates = sorted(
+        [path for path in base_dir.iterdir() if path.is_dir()],
+        key=lambda p: str(p),
+    )
+    selected: list[Path] = []
+    for candidate in candidates:
+        if candidate.resolve() in busy:
+            continue
+        error = _validate_autopilot_worktree(repo, candidate)
+        if error is not None:
+            continue
+        if not allow_dirty and _repo_has_uncommitted_changes(candidate):
+            continue
+        selected.append(candidate.resolve())
+        if len(selected) >= count:
+            break
+    return selected
+
+
+def _busy_rotated_worktrees(store: StateStore) -> set[Path]:
+    """Return worktree paths currently associated with in-progress plan items."""
+    busy: set[Path] = set()
+    for item in store.list_plan_items(status="in_progress"):
+        if item.task_id is None:
+            continue
+        task = store.get_task(item.task_id)
+        if task is None:
+            continue
+        busy.add(Path(task.repo_path).resolve())
+    return busy
 
 
 def _print_autopilot_task(task: AutopilotTask) -> None:

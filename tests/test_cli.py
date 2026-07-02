@@ -2350,6 +2350,279 @@ def test_autopilot_queue_run_batch_rejects_non_positive_max_items(
     assert "--max-items must be at least 1" in output
 
 
+def test_autopilot_queue_run_batch_rotate_worktrees_rejects_worktree(
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "autopilot",
+                "queue",
+                "run-batch",
+                "--repo",
+                str(tmp_path),
+                "--plan",
+                str(plan),
+                "--worktree",
+                "../wt",
+                "--rotate-worktrees",
+                "../pool",
+            ]
+        )
+
+    assert exc.value.code == 2
+
+
+def test_autopilot_queue_run_batch_rotate_worktrees_blocks_missing_base_dir(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    missing = tmp_path / "pool"
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--rotate-worktrees",
+            str(missing),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Rotation base directory does not exist" in output
+    assert str(missing) in output
+
+
+def test_autopilot_queue_run_batch_rotate_worktrees_dry_run_selects_worktrees(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    wt1 = pool / "wt1"
+    wt1.mkdir()
+    wt2 = pool / "wt2"
+    wt2.mkdir()
+
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._validate_autopilot_worktree",
+        lambda _repo, _wt: None,
+    )
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._repo_has_uncommitted_changes",
+        lambda _repo: False,
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--rotate-worktrees",
+            str(pool),
+            "--max-items",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Autopilot selected:" in output
+    assert "Task: First task" in output
+    assert "Task: Second task" in output
+    assert f"Worktree: {wt1.resolve()}" in output
+    assert f"Worktree: {wt2.resolve()}" in output
+    assert "Dry run: would process 2 item(s) using rotated worktrees" in output
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert items["First task"].status == "created"
+    assert items["Second task"].status == "created"
+
+
+def test_autopilot_queue_run_batch_rotate_worktrees_blocks_when_too_few_worktrees(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    wt1 = pool / "wt1"
+    wt1.mkdir()
+
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._validate_autopilot_worktree",
+        lambda _repo, _wt: None,
+    )
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._repo_has_uncommitted_changes",
+        lambda _repo: False,
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--rotate-worktrees",
+            str(pool),
+            "--max-items",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Execution blocked: not enough clean, available worktrees" in output
+
+
+def test_autopilot_queue_run_batch_rotate_worktrees_skips_busy_worktree(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    busy_wt = pool / "busy"
+    busy_wt.mkdir()
+    free_wt = pool / "free"
+    free_wt.mkdir()
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    first_item = store.list_plan_items(plan_path=plan)[0]
+    busy_task = store.create_task(
+        "busy task",
+        repo_path=busy_wt.resolve(),
+        task_id="busy-task",
+    )
+    store.update_plan_item_status(
+        first_item.plan_item_id,
+        "in_progress",
+        task_id=busy_task.task_id,
+    )
+
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._validate_autopilot_worktree",
+        lambda _repo, _wt: None,
+    )
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._repo_has_uncommitted_changes",
+        lambda _repo: False,
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--rotate-worktrees",
+            str(pool),
+            "--max-items",
+            "1",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Worktree: {free_wt.resolve()}" in output
+    assert f"Worktree: {busy_wt.resolve()}" not in output
+
+
+def test_autopilot_queue_run_batch_rotate_worktrees_blocks_execute(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    pool = tmp_path / "pool"
+    pool.mkdir()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--rotate-worktrees",
+            str(pool),
+            "--execute",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "not implemented yet" in output
+
+
 def test_autopilot_queue_status_summarizes_counts_and_recent_items(
     capsys,
     tmp_path: Path,

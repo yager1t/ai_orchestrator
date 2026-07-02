@@ -54,6 +54,16 @@ Preview the next queued batch without starting work:
 python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --max-items 3
 ```
 
+Preview per-task worktree rotation from a pre-created worktree pool:
+
+```bash
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --max-items 3 --rotate-worktrees ../ai-orch-worktrees
+```
+
+`--rotate-worktrees` is currently a dry-run selection and validation preview;
+execution in rotated worktrees is intentionally blocked until the next
+implementation slice adds state and report plumbing.
+
 ## 2. Dry Run
 
 Run the selected item in dry-run mode first:
