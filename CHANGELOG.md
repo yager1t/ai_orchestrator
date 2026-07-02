@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a docs-only quick-start example for verification-gated documentation repositories.
 - Added state-store persistence and migrations for approval requests.
 - Added a guarded `ai-orch autopilot` command for selecting and dry-running
   roadmap items through the supervisor.
