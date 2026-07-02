@@ -122,6 +122,19 @@ class StoredMetricsSummary:
         return self.verification_passed_count / self.verification_count
 
 
+@dataclass(frozen=True)
+class StoredPlanItem:
+    plan_item_id: int
+    plan_path: str
+    line_number: int
+    section: str
+    text: str
+    status: str
+    task_id: str | None
+    created_at: str
+    updated_at: str
+
+
 class StateStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -196,6 +209,22 @@ class StateStore:
 
                 CREATE INDEX IF NOT EXISTS idx_approval_requests_task_status
                 ON approval_requests (task_id, status, approval_id);
+
+                CREATE TABLE IF NOT EXISTS plan_items (
+                    plan_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plan_path TEXT NOT NULL,
+                    line_number INTEGER NOT NULL,
+                    section TEXT NOT NULL DEFAULT '',
+                    text TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('created', 'in_progress', 'done', 'blocked', 'skipped')),
+                    task_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_plan_items_plan_status
+                ON plan_items (plan_path, status, line_number);
                 """
             )
             migrate_schema(connection)
@@ -793,6 +822,154 @@ class StateStore:
             rows = connection.execute(query, params).fetchall()
         return [StoredVerificationDetail(**dict(row)) for row in rows]
 
+    def record_plan_item(
+        self,
+        plan_path: Path,
+        line_number: int,
+        section: str,
+        text: str,
+        status: str = "created",
+        task_id: str | None = None,
+    ) -> StoredPlanItem:
+        self.initialize()
+        _validate_plan_item_status(status)
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO plan_items (
+                    plan_path,
+                    line_number,
+                    section,
+                    text,
+                    status,
+                    task_id,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(plan_path),
+                    line_number,
+                    section,
+                    text,
+                    status,
+                    task_id,
+                    now,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create plan item")
+            plan_item_id = cursor.lastrowid
+        logger.debug(
+            "state plan item recorded plan_item_id=%s plan_path=%s line=%s status=%s",
+            plan_item_id,
+            plan_path,
+            line_number,
+            status,
+        )
+        plan_item = self.get_plan_item(plan_item_id)
+        if plan_item is None:
+            raise RuntimeError("Failed to load recorded plan item")
+        return plan_item
+
+    def get_plan_item(self, plan_item_id: int) -> StoredPlanItem | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    plan_item_id,
+                    plan_path,
+                    line_number,
+                    section,
+                    text,
+                    status,
+                    task_id,
+                    created_at,
+                    updated_at
+                FROM plan_items
+                WHERE plan_item_id = ?
+                """,
+                (plan_item_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredPlanItem(**dict(row))
+
+    def list_plan_items(
+        self,
+        plan_path: Path | None = None,
+        status: str | None = None,
+    ) -> list[StoredPlanItem]:
+        self.initialize()
+        if status is not None:
+            _validate_plan_item_status(status)
+
+        query = """
+            SELECT
+                plan_item_id,
+                plan_path,
+                line_number,
+                section,
+                text,
+                status,
+                task_id,
+                created_at,
+                updated_at
+            FROM plan_items
+            WHERE 1 = 1
+        """
+        params: list[str] = []
+        if plan_path is not None:
+            query += " AND plan_path = ?"
+            params.append(str(plan_path))
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY plan_path ASC, line_number ASC, plan_item_id ASC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [StoredPlanItem(**dict(row)) for row in rows]
+
+    def update_plan_item_status(
+        self,
+        plan_item_id: int,
+        status: str,
+        task_id: str | None = None,
+    ) -> StoredPlanItem | None:
+        self.initialize()
+        _validate_plan_item_status(status)
+
+        set_clause = "status = ?, updated_at = ?"
+        params: list[object] = [status, _now()]
+        if task_id is not None:
+            set_clause += ", task_id = ?"
+            params.append(task_id)
+        params.append(plan_item_id)
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE plan_items
+                SET {set_clause}
+                WHERE plan_item_id = ?
+                """,
+                tuple(params),
+            )
+            if cursor.rowcount == 0:
+                return None
+
+        logger.debug(
+            "state plan item status updated plan_item_id=%s status=%s",
+            plan_item_id,
+            status,
+        )
+        return self.get_plan_item(plan_item_id)
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
@@ -800,6 +977,11 @@ class StateStore:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA busy_timeout = 5000")
         return connection
+
+
+def _validate_plan_item_status(status: str) -> None:
+    if status not in {"created", "in_progress", "done", "blocked", "skipped"}:
+        raise ValueError(f"Unsupported plan item status: {status}")
 
 
 def _now() -> str:
