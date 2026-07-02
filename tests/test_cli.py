@@ -7,7 +7,7 @@ import pytest
 from ai_orchestrator import __version__
 from ai_orchestrator.autopilot import load_plan_tasks
 from ai_orchestrator.cli.app import main
-from ai_orchestrator.core.supervisor import SupervisorResult
+from ai_orchestrator.core.supervisor import Supervisor, SupervisorResult
 from ai_orchestrator.process.runner import ProcessResult, ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
 from ai_orchestrator.verification.release import run_release_checks
@@ -1821,6 +1821,159 @@ def test_autopilot_queue_list_handles_missing_plan(capsys, tmp_path: Path) -> No
 
     assert exit_code == 1
     assert "Plan not found:" in output
+
+
+def test_autopilot_queue_run_next_defaults_to_dry_run(capsys, tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    exit_code = main(
+        ["autopilot", "queue", "run-next", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Autopilot selected:" in output
+    assert "Task: Add approval CLI" in output
+    assert "Dry run: add --execute" in output
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    assert item.status == "created"
+    assert item.task_id is None
+
+
+def test_autopilot_queue_run_next_executes_one_item_and_updates_status(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(task, repo_path=repo, task_id="task-1")
+        return SupervisorResult(
+            status="done",
+            summary="Verification passed: custom",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-next",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Queue item" in output
+    assert "status=done" in output
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert items["First task"].status == "done"
+    assert items["First task"].task_id == "task-1"
+    assert items["Second task"].status == "created"
+
+
+def test_autopilot_queue_run_next_stops_on_blocked_result(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(task, repo_path=repo, task_id="task-2")
+        return SupervisorResult(
+            status="blocked",
+            summary="Agent failed",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-next",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Queue item" in output
+    assert "status=blocked" in output
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    assert item.status == "blocked"
+    assert item.task_id == "task-2"
+
+
+def test_autopilot_queue_run_next_returns_zero_when_no_ready_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Only task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(item.plan_item_id, "done")
+
+    exit_code = main(
+        ["autopilot", "queue", "run-next", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "No queued plan items ready" in output
 
 
 def test_memory_preflight_returns_failure_when_any_step_fails(

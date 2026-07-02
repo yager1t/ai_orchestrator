@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from ai_orchestrator.autopilot import load_plan_tasks, next_task, sync_plan_items
+from ai_orchestrator.autopilot import (
+    load_plan_tasks,
+    next_plan_item,
+    next_task,
+    plan_item_status_from_supervisor,
+    sync_plan_items,
+)
 from ai_orchestrator.storage.db import StateStore
 
 
@@ -125,3 +131,35 @@ def test_sync_plan_items_persists_without_duplicates(tmp_path: Path) -> None:
     assert len(new_items) == 0
     assert len(existing_items) == 2
     assert len(store.list_plan_items(plan_path=plan)) == 2
+
+
+def test_next_plan_item_selects_first_created_item(tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / "state.db")
+    sync_plan_items(plan, store)
+    first, second = store.list_plan_items(plan_path=plan)
+    store.update_plan_item_status(first.plan_item_id, "done")
+
+    selected = next_plan_item(store, plan)
+
+    assert selected is not None
+    assert selected.plan_item_id == second.plan_item_id
+    assert selected.text == "Second task"
+
+
+def test_plan_item_status_from_supervisor_maps_result_statuses() -> None:
+    assert plan_item_status_from_supervisor("done") == "done"
+    assert plan_item_status_from_supervisor("blocked") == "blocked"
+    assert plan_item_status_from_supervisor("cancelled") == "blocked"
+    assert plan_item_status_from_supervisor("unknown") == "blocked"
