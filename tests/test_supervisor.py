@@ -644,3 +644,66 @@ def test_supervisor_ignores_failed_repo_snapshot_for_no_change(tmp_path: Path) -
 
     assert result.status == "done"
     assert verifier.calls == 3
+
+
+def test_supervisor_blocks_done_without_repo_change_when_required(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    verifier = SequencedVerifier(["passed"])
+    supervisor = Supervisor(
+        agent=NoChangeAgent(),
+        verifier=verifier,
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        state_store=store,
+        require_repo_change=True,
+        process_runner=SnapshotRunner(["", ""]),
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "blocked"
+    assert result.task_id is not None
+    assert result.summary == "No agent file or repository change detected"
+    assert verifier.calls == 1
+    iterations = store.list_iterations(result.task_id)
+    assert iterations[0].decision_status == "blocked"
+    assert iterations[0].decision_reason == "No agent file or repository change detected"
+
+
+def test_supervisor_allows_done_with_repo_change_when_required(tmp_path: Path) -> None:
+    verifier = SequencedVerifier(["passed"])
+    supervisor = Supervisor(
+        agent=NoChangeAgent(),
+        verifier=verifier,
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        require_repo_change=True,
+        process_runner=SnapshotRunner(["", "?? docs/log.md"]),
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "done"
+    assert verifier.calls == 1
+
+
+def test_supervisor_emits_progress_events(tmp_path: Path) -> None:
+    progress: list[str] = []
+    supervisor = Supervisor(
+        agent=NoChangeAgent(),
+        verifier=SequencedVerifier(["passed"]),
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        progress_callback=progress.append,
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "done"
+    assert "iteration 1: agent mock started" in progress
+    assert "iteration 1: verification started" in progress
+    assert "iteration 1: verification finished" in progress
+    assert "iteration 1: done" in progress

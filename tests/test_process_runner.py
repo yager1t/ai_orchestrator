@@ -1,4 +1,5 @@
 import subprocess
+import time
 
 import pytest
 
@@ -170,6 +171,38 @@ def test_process_runner_accepts_run_options(monkeypatch) -> None:
     assert result.stderr == "cancel stderr"
     assert processes[0].terminated is True
     assert processes[0].killed is False
+
+
+def test_process_runner_emits_progress_while_waiting(monkeypatch) -> None:
+    progress: list[str] = []
+
+    class FakePopen:
+        def __init__(self, *args, **kwargs) -> None:
+            self.returncode = 0
+            self.calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls < 3:
+                time.sleep(0.11)
+                raise subprocess.TimeoutExpired(cmd=["slow"], timeout=timeout)
+            return "done", ""
+
+    monkeypatch.setattr("ai_orchestrator.process.runner.shutil.which", lambda command: command)
+    monkeypatch.setattr("ai_orchestrator.process.runner.subprocess.Popen", FakePopen)
+
+    result = ProcessRunner().run(
+        ["slow"],
+        options=RunOptions(
+            timeout_sec=30,
+            on_progress=progress.append,
+            progress_label="agent demo",
+            progress_interval_sec=0.1,
+        ),
+    )
+
+    assert result.status == "success"
+    assert any(message.startswith("agent demo running for ") for message in progress)
 
 
 def test_process_runner_terminates_process_on_keyboard_interrupt(monkeypatch) -> None:

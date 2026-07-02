@@ -41,9 +41,15 @@ agents:
     command: "claude"
     args:
       - "-p"
-      - "{prompt}"
       - "--output-format"
       - "json"
+      - "--max-budget-usd"
+      - "2"
+      - "--permission-mode"
+      - "acceptEdits"
+      - "--append-system-prompt"
+      - "The user message contains a complete ai-orch autopilot plan item. Execute the Task bullet exactly. Do not ask the user to repeat the plan item."
+      - "{prompt}"
     timeout_sec: 1800
 
   # Kimi/Gemini are generic CLI aliases. If command/args are omitted,

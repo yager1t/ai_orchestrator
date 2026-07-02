@@ -28,6 +28,8 @@
   testing.
 - Switched the project autopilot config to the available Claude real-agent path
   with mock fallback, and resolved CLI shims before subprocess execution.
+- Added visible autopilot progress heartbeats for long-running real-agent
+  subprocesses.
 - Persisted supervisor verification `needs_approval` results into the approval
   inbox.
 - Persisted Codebase Memory `needs_approval` results into the shared approval

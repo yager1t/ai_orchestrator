@@ -135,6 +135,8 @@ class CodexExecAdapter:
             options=RunOptions(
                 timeout_sec=self.timeout_sec,
                 should_cancel=context.cancellation_requested,
+                on_progress=context.progress_callback,
+                progress_label=f"agent {self.name}",
             ),
         )
         logger.debug(

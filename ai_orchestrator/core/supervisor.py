@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from ai_orchestrator.agents.base import AgentAdapter, SessionRef, TaskContext
+from ai_orchestrator.agents.base import AgentAdapter, ProgressCallback, SessionRef, TaskContext
 from ai_orchestrator.core.decision import Decision, DecisionEngine
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
@@ -40,6 +40,8 @@ class Supervisor:
         max_iterations: int = 2,
         max_no_change_iterations: int = 2,
         max_runtime_sec: int | None = None,
+        require_repo_change: bool = False,
+        progress_callback: ProgressCallback | None = None,
         process_runner: ProcessRunner | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
@@ -51,6 +53,8 @@ class Supervisor:
         self.max_iterations = max_iterations
         self.max_no_change_iterations = max_no_change_iterations
         self.max_runtime_sec = max_runtime_sec
+        self.require_repo_change = require_repo_change
+        self.progress_callback = progress_callback
         self.process_runner = process_runner or ProcessRunner()
         self.clock = clock or time.monotonic
 
@@ -145,9 +149,11 @@ class Supervisor:
             repo_path=repo,
             metadata={"task_id": stored_task_id} if stored_task_id is not None else {},
             cancellation_requested=lambda: self._is_task_cancelled(stored_task_id),
+            progress_callback=self.progress_callback,
         )
         session = self.agent.start_session(context)
         prompt = self._build_initial_prompt(task=task, planning_context=planning_context)
+        initial_repo_snapshot = self._repo_snapshot(repo) if self.require_repo_change else None
         previous_signature: tuple[str, tuple[str, ...], str] | None = None
         no_change_count = 0
 
@@ -186,6 +192,7 @@ class Supervisor:
                 iteration_index,
                 attempt,
             )
+            self._progress(f"iteration {iteration_index}: agent {session.agent_name} started")
             try:
                 if attempt == 1:
                     result = self.agent.run_step(session, prompt=prompt)
@@ -244,10 +251,12 @@ class Supervisor:
                         task_id=stored_task_id,
                     )
                 try:
+                    self._progress(f"iteration {iteration_index}: verification started")
                     verification_results = self.verifier.run_many(
                         self.verification_commands,
                         cwd=repo,
                     )
+                    self._progress(f"iteration {iteration_index}: verification finished")
                 except KeyboardInterrupt:
                     self._stop_session(session)
                     raise
@@ -264,6 +273,20 @@ class Supervisor:
                 iteration_index,
                 decision.status,
             )
+            if (
+                decision.status == "done"
+                and self.require_repo_change
+                and not self._has_repo_change(repo, initial_repo_snapshot, result.files_changed)
+            ):
+                decision = Decision(
+                    status="blocked",
+                    reason="No agent file or repository change detected",
+                )
+                logger.warning(
+                    "event=supervisor.no_change_blocked task_id=%s iteration=%s count=1",
+                    stored_task_id,
+                    iteration_index,
+                )
             if decision.status == "continue":
                 repo_snapshot = self._repo_snapshot(repo)
                 if repo_snapshot is not None:
@@ -333,6 +356,7 @@ class Supervisor:
                 if stored_task_id is not None and self.state_store is not None:
                     self.state_store.update_task_status(stored_task_id, "done")
                 self._stop_session(session)
+                self._progress(f"iteration {iteration_index}: done")
                 return SupervisorResult(
                     status="done",
                     summary=f"Iteration {iteration_index}: {decision.reason}",
@@ -348,6 +372,7 @@ class Supervisor:
                 if stored_task_id is not None and self.state_store is not None:
                     self.state_store.update_task_status(stored_task_id, "blocked")
                 self._stop_session(session)
+                self._progress(f"iteration {iteration_index}: blocked")
                 return SupervisorResult(
                     status="blocked",
                     summary=decision.reason,
@@ -360,6 +385,7 @@ class Supervisor:
             self.state_store.update_task_status(stored_task_id, "blocked")
         logger.warning("event=supervisor.max_iterations_exhausted task_id=%s", stored_task_id)
         self._stop_session(session)
+        self._progress("max iterations exhausted")
         return SupervisorResult(
             status="blocked",
             summary="Max iterations exhausted",
@@ -414,6 +440,19 @@ class Supervisor:
         ]
         return "\n".join(kept)
 
+    def _has_repo_change(
+        self,
+        repo: Path,
+        initial_snapshot: str | None,
+        files_changed: list[str],
+    ) -> bool:
+        if files_changed:
+            return True
+        current_snapshot = self._repo_snapshot(repo)
+        if initial_snapshot is None or current_snapshot is None:
+            return False
+        return current_snapshot != initial_snapshot
+
     def _is_ignored_snapshot_path(self, path: str) -> bool:
         normalized = path.replace("\\", "/")
         return (
@@ -460,3 +499,7 @@ class Supervisor:
                 session.agent_name,
                 session.session_id,
             )
+
+    def _progress(self, message: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(message)

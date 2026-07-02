@@ -9,12 +9,16 @@ def _never_cancel() -> bool:
     return False
 
 
+ProgressCallback = Callable[[str], None]
+
+
 @dataclass(frozen=True)
 class TaskContext:
     task: str
     repo_path: Path
     metadata: dict[str, str] = field(default_factory=dict)
     cancellation_requested: Callable[[], bool] = _never_cancel
+    progress_callback: ProgressCallback | None = None
 
 
 @dataclass(frozen=True)

@@ -730,6 +730,8 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
         max_iterations=config.max_iterations,
         max_no_change_iterations=config.max_no_change_iterations,
         max_runtime_sec=config.max_runtime_sec,
+        require_repo_change=True,
+        progress_callback=_print_progress,
     )
     result = supervisor.run_once(task=selected.to_prompt(), repo=execution_repo)
     task_prefix = f"{result.task_id}: " if result.task_id else ""
@@ -810,6 +812,10 @@ def _print_autopilot_agent_profile(
     print(f"  mode: {'mock' if agent.name == 'mock' else 'real'}")
     print(f"  command: {_agent_config_value(agent_config, 'command')}")
     print(f"  available: {'yes' if available else 'no'}")
+
+
+def _print_progress(message: str) -> None:
+    print(f"progress: {message}", flush=True)
 
 
 def _agent_config_value(agent_config: AgentConfig | None, field: str) -> str:
