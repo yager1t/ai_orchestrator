@@ -2048,6 +2048,135 @@ def test_autopilot_queue_run_next_returns_zero_when_no_ready_items(
     assert "No queued plan items ready" in output
 
 
+def test_autopilot_queue_status_summarizes_counts_and_recent_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] Done task",
+                "- [ ] Blocked task",
+                "- [ ] Skipped task",
+                "- [ ] Started task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(items["Done task"].plan_item_id, "done")
+    store.update_plan_item_status(items["Blocked task"].plan_item_id, "blocked")
+    store.update_plan_item_status(items["Skipped task"].plan_item_id, "skipped")
+    store.update_plan_item_status(items["Started task"].plan_item_id, "in_progress")
+
+    exit_code = main(
+        ["autopilot", "queue", "status", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Queue status" in output
+    assert "total: 4" in output
+    assert "by status:" in output
+    assert "done=1" in output
+    assert "blocked=1" in output
+    assert "skipped=1" in output
+    assert "in_progress=1" in output
+    assert "recent started:" in output
+    assert "recent done:" in output
+    assert "recent blocked:" in output
+    assert "recent skipped:" in output
+    assert "Started task" in output
+    assert "Done task" in output
+    assert "Blocked task" in output
+    assert "Skipped task" in output
+    assert "Autopilot selected:" not in output
+    assert "Dry run" not in output
+
+
+def test_autopilot_queue_status_limits_recent_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    tasks = [f"- [ ] Task {i}" for i in range(6)]
+    plan.write_text("\n".join(["# Roadmap", ""] + tasks), encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    for item in store.list_plan_items(plan_path=plan):
+        store.update_plan_item_status(item.plan_item_id, "done")
+
+    capsys.readouterr()
+    exit_code = main(
+        ["autopilot", "queue", "status", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "total: 6" in output
+    assert "recent done:" in output
+    assert "Task 5" in output
+    assert "Task 4" in output
+    assert "Task 3" in output
+    assert "Task 2" in output
+    assert "Task 1" in output
+    assert "Task 0" not in output
+
+    capsys.readouterr()
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "status",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--limit",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Task 5" in output
+    assert "Task 4" in output
+    assert "Task 3" not in output
+    assert "Task 2" not in output
+    assert "Task 1" not in output
+    assert "Task 0" not in output
+
+
+def test_autopilot_queue_status_handles_missing_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    missing_plan = tmp_path / "MISSING.md"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "status",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(missing_plan),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Plan not found:" in output
+
+
 def test_memory_preflight_returns_failure_when_any_step_fails(
     capsys,
     monkeypatch,

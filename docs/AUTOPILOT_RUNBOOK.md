@@ -40,6 +40,12 @@ Show the next roadmap item without starting work:
 python -m ai_orchestrator autopilot next --repo . --plan docs/POST_MVP_ROADMAP.md
 ```
 
+Inspect the persisted queue without starting work:
+
+```bash
+python -m ai_orchestrator autopilot queue status --repo . --plan docs/POST_MVP_ROADMAP.md
+```
+
 ## 2. Dry Run
 
 Run the selected item in dry-run mode first:
@@ -199,6 +205,7 @@ Commands:
 ```bash
 git diff --stat
 git diff --check
+python -m ai_orchestrator autopilot queue status --repo . --plan docs/POST_MVP_ROADMAP.md
 python -m ai_orchestrator autopilot next --repo . --plan docs/POST_MVP_ROADMAP.md
 ```
 
