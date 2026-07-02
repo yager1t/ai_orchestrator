@@ -7,6 +7,7 @@ from ai_orchestrator.storage.db import (
     StateStore,
     StoredApprovalRequest,
     StoredIteration,
+    StoredPlanItem,
     StoredVerificationRun,
 )
 from ai_orchestrator.storage.redaction import redact_secrets
@@ -20,6 +21,7 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
     iterations = store.list_iterations(task.task_id)
     verification_runs = store.list_verification_runs(task.task_id)
     approvals = store.list_approval_requests(task.task_id)
+    plan_item = _plan_item_for_task(store, task.task_id)
     final_iteration = iterations[-1] if iterations else None
     final_verification_runs = (
         store.list_verification_runs(task.task_id, final_iteration.iteration_id)
@@ -34,6 +36,7 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
         "",
         f"- Status: `{task.status}`",
         f"- Repository: `{task.repo_path}`",
+        *_queue_worktree_lines(plan_item),
         f"- Task: {task.task}",
         f"- Iterations: `{len(iterations)}`",
         f"- Verification runs: `{len(verification_runs)}`{_status_summary(verification_runs)}",
@@ -107,6 +110,19 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
         lines.append("")
 
     return "\n".join(lines) + "\n"
+
+
+def _plan_item_for_task(store: StateStore, task_id: str) -> StoredPlanItem | None:
+    task_items = [item for item in store.list_plan_items() if item.task_id == task_id]
+    if not task_items:
+        return None
+    return next((item for item in task_items if item.selected_worktree_path), task_items[0])
+
+
+def _queue_worktree_lines(plan_item: StoredPlanItem | None) -> list[str]:
+    if plan_item is None or not plan_item.selected_worktree_path:
+        return []
+    return [f"- Queue worktree: `{plan_item.selected_worktree_path}`"]
 
 
 def _verification_excerpt(stderr: str, stdout: str, error: str | None, limit: int = 1200) -> str:

@@ -14,8 +14,9 @@ No open P1 items.
 ## P2
 
 - Implement the next ADR-0005 slice for optional per-task worktree rotation in
-  batch runs: persist the selected worktree path and include it in reports
-  before enabling execution in rotated worktrees.
+  batch runs: enable guarded `--execute --rotate-worktrees` by persisting the
+  selected path before each item starts, running the item in that worktree, and
+  stopping on approvals/blockers/failures.
 - Add deeper queue history filters if recent status summaries are not enough
   for daily operation.
 

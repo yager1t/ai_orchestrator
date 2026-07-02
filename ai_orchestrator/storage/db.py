@@ -131,6 +131,7 @@ class StoredPlanItem:
     text: str
     status: str
     task_id: str | None
+    selected_worktree_path: str | None
     created_at: str
     updated_at: str
 
@@ -218,6 +219,7 @@ class StateStore:
                     text TEXT NOT NULL,
                     status TEXT NOT NULL CHECK (status IN ('created', 'in_progress', 'done', 'blocked', 'skipped')),
                     task_id TEXT,
+                    selected_worktree_path TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY (task_id) REFERENCES tasks(task_id)
@@ -830,10 +832,14 @@ class StateStore:
         text: str,
         status: str = "created",
         task_id: str | None = None,
+        selected_worktree_path: Path | str | None = None,
     ) -> StoredPlanItem:
         self.initialize()
         _validate_plan_item_status(status)
         now = _now()
+        selected_worktree = (
+            str(selected_worktree_path) if selected_worktree_path is not None else None
+        )
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -844,10 +850,11 @@ class StateStore:
                     text,
                     status,
                     task_id,
+                    selected_worktree_path,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(plan_path),
@@ -856,6 +863,7 @@ class StateStore:
                     text,
                     status,
                     task_id,
+                    selected_worktree,
                     now,
                     now,
                 ),
@@ -888,6 +896,7 @@ class StateStore:
                     text,
                     status,
                     task_id,
+                    selected_worktree_path,
                     created_at,
                     updated_at
                 FROM plan_items
@@ -917,6 +926,7 @@ class StateStore:
                 text,
                 status,
                 task_id,
+                selected_worktree_path,
                 created_at,
                 updated_at
             FROM plan_items
@@ -940,6 +950,7 @@ class StateStore:
         plan_item_id: int,
         status: str,
         task_id: str | None = None,
+        selected_worktree_path: Path | str | None = None,
     ) -> StoredPlanItem | None:
         self.initialize()
         _validate_plan_item_status(status)
@@ -949,6 +960,9 @@ class StateStore:
         if task_id is not None:
             set_clause += ", task_id = ?"
             params.append(task_id)
+        if selected_worktree_path is not None:
+            set_clause += ", selected_worktree_path = ?"
+            params.append(str(selected_worktree_path))
         params.append(plan_item_id)
 
         with self._connect() as connection:

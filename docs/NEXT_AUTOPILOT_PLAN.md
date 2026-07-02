@@ -19,3 +19,4 @@ Use this plan for the first post-v0.1.0 real-agent autopilot development run.
 - [x] Show generated task report paths in `ai-orch autopilot queue list/status` for queue items with completed reports.
 - [x] Record ADR-0005 for optional per-task worktree rotation in autopilot batch runs, covering the CLI contract, safety guardrails, stop conditions, and deferred automation.
 - [x] Add the first ADR-0005 implementation slice: `ai-orch autopilot queue run-batch --rotate-worktrees BASE_DIR` dry-run selection and validation, mutually exclusive with `--worktree`, without executing tasks in rotated worktrees yet.
+- [x] Add ADR-0005 state/report plumbing for selected rotated worktree paths without enabling `--execute --rotate-worktrees` yet.

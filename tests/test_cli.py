@@ -1858,7 +1858,13 @@ def test_autopilot_queue_list_shows_report_path_for_completed_item(
         ),
     )
     store.update_task_status(task.task_id, "done")
-    store.update_plan_item_status(item.plan_item_id, "done", task_id=task.task_id)
+    worktree = tmp_path / "worktrees" / "task-1"
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "done",
+        task_id=task.task_id,
+        selected_worktree_path=worktree,
+    )
     report_path = tmp_path / ".ai-orch" / "reports" / f"{task.task_id}.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("# report", encoding="utf-8")
@@ -1870,6 +1876,7 @@ def test_autopilot_queue_list_shows_report_path_for_completed_item(
 
     assert exit_code == 0
     assert "[done]" in output
+    assert f"worktree={worktree}" in output
     assert f"report={report_path}" in output
 
 
@@ -2648,7 +2655,12 @@ def test_autopilot_queue_status_summarizes_counts_and_recent_items(
     store.update_plan_item_status(items["Done task"].plan_item_id, "done")
     store.update_plan_item_status(items["Blocked task"].plan_item_id, "blocked")
     store.update_plan_item_status(items["Skipped task"].plan_item_id, "skipped")
-    store.update_plan_item_status(items["Started task"].plan_item_id, "in_progress")
+    worktree = tmp_path / "worktrees" / "started"
+    store.update_plan_item_status(
+        items["Started task"].plan_item_id,
+        "in_progress",
+        selected_worktree_path=worktree,
+    )
 
     exit_code = main(
         ["autopilot", "queue", "status", "--repo", str(tmp_path), "--plan", str(plan)]
@@ -2668,6 +2680,7 @@ def test_autopilot_queue_status_summarizes_counts_and_recent_items(
     assert "recent blocked:" in output
     assert "recent skipped:" in output
     assert "Started task" in output
+    assert f"worktree={worktree}" in output
     assert "Done task" in output
     assert "Blocked task" in output
     assert "Skipped task" in output
