@@ -1823,6 +1823,56 @@ def test_autopilot_queue_list_handles_missing_plan(capsys, tmp_path: Path) -> No
     assert "Plan not found:" in output
 
 
+def test_autopilot_queue_list_shows_report_path_for_completed_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Completed task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    task = store.create_task(
+        "Completed task", repo_path=tmp_path, task_id="task-report-list"
+    )
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="Completed task",
+        raw_output="done",
+        decision_status="done",
+        decision_reason="Verification passed: unit",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="ok",
+            stderr="",
+        ),
+    )
+    store.update_task_status(task.task_id, "done")
+    store.update_plan_item_status(item.plan_item_id, "done", task_id=task.task_id)
+    report_path = tmp_path / ".ai-orch" / "reports" / f"{task.task_id}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("# report", encoding="utf-8")
+
+    exit_code = main(
+        ["autopilot", "queue", "list", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[done]" in output
+    assert f"report={report_path}" in output
+
+
 def test_autopilot_queue_run_next_defaults_to_dry_run(capsys, tmp_path: Path) -> None:
     plan = tmp_path / "ROADMAP.md"
     plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
@@ -2427,6 +2477,56 @@ def test_autopilot_queue_status_handles_missing_plan(
 
     assert exit_code == 1
     assert "Plan not found:" in output
+
+
+def test_autopilot_queue_status_shows_report_path_for_completed_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Completed task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    task = store.create_task(
+        "Completed task", repo_path=tmp_path, task_id="task-report-status"
+    )
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="Completed task",
+        raw_output="done",
+        decision_status="done",
+        decision_reason="Verification passed: unit",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="ok",
+            stderr="",
+        ),
+    )
+    store.update_task_status(task.task_id, "done")
+    store.update_plan_item_status(item.plan_item_id, "done", task_id=task.task_id)
+    report_path = tmp_path / ".ai-orch" / "reports" / f"{task.task_id}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("# report", encoding="utf-8")
+
+    exit_code = main(
+        ["autopilot", "queue", "status", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "recent done:" in output
+    assert f"report={report_path}" in output
 
 
 def test_memory_preflight_returns_failure_when_any_step_fails(

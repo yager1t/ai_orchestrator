@@ -549,6 +549,25 @@ def _write_task_report(store: StateStore, repo: Path, task_id: str) -> Path | No
     return report_path
 
 
+def _task_report_path(repo: Path, task_id: str | None) -> Path | None:
+    """Return the expected Markdown report path if it exists.
+
+    Returns ``None`` when *task_id* is missing or the report file has not
+    been generated yet.
+    """
+    if task_id is None:
+        return None
+    report_path = repo / ".ai-orch" / "reports" / f"{task_id}.md"
+    return report_path if report_path.exists() else None
+
+
+def _queue_item_refs(repo: Path, task_id: str | None) -> str:
+    task_ref = f" task={task_id}" if task_id else ""
+    report_path = _task_report_path(repo, task_id)
+    report_ref = f" report={report_path}" if report_path else ""
+    return f"{task_ref}{report_ref}"
+
+
 def _format_metrics_summary(summary: StoredMetricsSummary) -> str:
     verification_failed_count = summary.verification_count - summary.verification_passed_count
     return "\n".join(
@@ -979,8 +998,8 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             )
             print("  by status:", summary)
         for item in items:
-            task_ref = f" task={item.task_id}" if item.task_id else ""
-            print(f"  [{item.status}] {item.line_number}: {item.text}{task_ref}")
+            refs = _queue_item_refs(repo, item.task_id)
+            print(f"  [{item.status}] {item.line_number}: {item.text}{refs}")
         return 0
 
     if args.autopilot_queue_command == "status":
@@ -1014,8 +1033,8 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
                 continue
             print(f"  recent {label}:")
             for item in recent:
-                task_ref = f" task={item.task_id}" if item.task_id else ""
-                print(f"    {item.line_number}: {item.text}{task_ref}")
+                refs = _queue_item_refs(repo, item.task_id)
+                print(f"    {item.line_number}: {item.text}{refs}")
         return 0
 
     if args.autopilot_queue_command == "run-next":

@@ -46,6 +46,8 @@ Inspect the persisted queue without starting work:
 python -m ai_orchestrator autopilot queue status --repo . --plan docs/POST_MVP_ROADMAP.md
 ```
 
+Completed queue items show `report=...` when their Markdown task report exists.
+
 Preview the next queued batch without starting work:
 
 ```bash
