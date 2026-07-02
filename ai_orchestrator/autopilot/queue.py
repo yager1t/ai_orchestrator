@@ -92,10 +92,25 @@ def next_plan_item(
     Selects the oldest queued item with status ``created`` for the given
     *plan_path*, ordered by line number.
     """
+    items = next_plan_items(store, plan_path, limit=1)
+    return items[0] if items else None
+
+
+def next_plan_items(
+    store: StateStore,
+    plan_path: Path,
+    limit: int | None = None,
+) -> list[StoredPlanItem]:
+    """Return the next persisted plan items ready to run.
+
+    Selects queued items with status ``created`` for the given *plan_path*,
+    ordered by line number.  When *limit* is provided, returns at most that
+    many items.
+    """
     items = store.list_plan_items(plan_path=plan_path, status="created")
-    if not items:
-        return None
-    return items[0]
+    if limit is None:
+        return items
+    return items[:max(0, limit)]
 
 
 def plan_item_to_task(item: StoredPlanItem) -> AutopilotTask:

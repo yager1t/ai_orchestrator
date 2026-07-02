@@ -14,4 +14,4 @@ Use this plan for the first post-v0.1.0 real-agent autopilot development run.
 - [x] Add `ai-orch autopilot queue run-next` as the first guarded loop slice: select the next persisted queue item, dry-run by default, execute at most one item, update queue status, and stop on the supervisor result.
 - [x] Add per-run Markdown report generation for `ai-orch autopilot queue run-next --execute` using the existing task report renderer and print the report path.
 - [x] Add `ai-orch autopilot queue status` to summarize persisted queue counts and recent started/done/blocked/skipped items without starting batch execution.
-- [ ] Add `ai-orch autopilot queue run-batch` as a guarded serial loop that dry-runs by default, executes up to a configurable max item count, stops on approvals/blockers/failures, and writes a report for each executed queue item.
+- [x] Add `ai-orch autopilot queue run-batch` as a guarded serial loop that dry-runs by default, executes up to a configurable max item count, stops on approvals/blockers/failures, and writes a report for each executed queue item.

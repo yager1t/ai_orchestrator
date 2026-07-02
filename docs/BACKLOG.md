@@ -13,10 +13,8 @@ No open P1 items.
 
 ## P2
 
-- Add per-task worktree orchestration or strict serialized execution for
-  multi-item autopilot batches.
-- Add autopilot queue batch/loop execution that takes the next queued item,
-  stops on approvals/blockers, and writes a report for each completed run.
+- Add optional per-task worktree rotation for batch runs if strict serialized
+  execution proves too limiting for daily operation.
 - Add deeper queue history filters if recent status summaries are not enough
   for daily operation.
 
