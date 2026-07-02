@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show generated task report paths in `ai-orch autopilot queue list/status` for
+  queue items with completed reports.
 - Recorded the first guarded real-agent `ai-orch autopilot queue run-batch --execute --max-items 1` smoke result in `docs/AUTOPILOT_BATCH_RUN_LOG.md`.
 - Added `ai-orch autopilot queue run-batch` as a guarded serial loop that
   dry-runs by default, executes up to a configurable `--max-items` count, stops
