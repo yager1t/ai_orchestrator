@@ -9,7 +9,7 @@ No open P0 items.
 
 ## P1
 
-- Add per-run report generation for autopilot queue items.
+No open P1 items.
 
 ## P2
 

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added per-run Markdown report generation for `ai-orch autopilot queue run-next --execute`.
 - Added `ai-orch autopilot queue run-next` to select the next persisted plan
   item, dry-run by default, execute at most one item, update the queue status,
   and stop on the supervisor result.

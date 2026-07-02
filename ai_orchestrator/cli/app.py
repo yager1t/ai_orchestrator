@@ -432,14 +432,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "report":
         repo = Path(args.repo)
         store = _state_store_for_repo(repo)
-        report = render_task_report(store, args.task_id)
-        if report is None:
+        report_path = _write_task_report(store, repo, args.task_id)
+        if report_path is None:
             print(f"Task not found: {args.task_id}")
             return 1
-
-        report_path = repo / ".ai-orch" / "reports" / f"{args.task_id}.md"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(report, encoding="utf-8")
         print(f"Report: {report_path}")
         return 0
 
@@ -488,6 +484,20 @@ def main(argv: list[str] | None = None) -> int:
 
 def _state_store_for_repo(repo: Path) -> StateStore:
     return StateStore(repo / ".ai-orch" / "state" / "ai-orch.db")
+
+
+def _write_task_report(store: StateStore, repo: Path, task_id: str) -> Path | None:
+    """Render and persist a Markdown report for *task_id*.
+
+    Returns the report path on success, or ``None`` if the task is not found.
+    """
+    report = render_task_report(store, task_id)
+    if report is None:
+        return None
+    report_path = repo / ".ai-orch" / "reports" / f"{task_id}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report, encoding="utf-8")
+    return report_path
 
 
 def _format_metrics_summary(summary: StoredMetricsSummary) -> str:
@@ -947,6 +957,10 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         item_status = plan_item_status_from_supervisor(result.status)
         store.update_plan_item_status(next_item.plan_item_id, item_status, task_id=result.task_id)
         print(f"Queue item {next_item.plan_item_id}: status={item_status}")
+        if result.task_id is not None:
+            report_path = _write_task_report(store, repo, result.task_id)
+            if report_path is not None:
+                print(f"Report: {report_path}")
         return 0 if item_status == "done" else 1
 
     parser.print_help()
