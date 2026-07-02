@@ -57,3 +57,43 @@ def test_next_task_skips_existing_stored_tasks(tmp_path: Path) -> None:
 
     assert selected is not None
     assert selected.text == "Second task"
+
+
+def test_recording_plan_items_does_not_execute_or_reorder_them(
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] First task",
+                "- [ ] Second task",
+                "- [ ] Third task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / "state.db")
+    tasks = load_plan_tasks(plan)
+
+    for task in tasks:
+        store.record_plan_item(
+            plan_path=task.source_path,
+            line_number=task.line_number,
+            section=task.section,
+            text=task.text,
+        )
+
+    recorded = store.list_plan_items()
+    assert len(recorded) == 3
+    assert [item.text for item in recorded] == [
+        "First task",
+        "Second task",
+        "Third task",
+    ]
+
+    selected = next_task(tasks, store)
+    assert selected is not None
+    assert selected.text == "First task"

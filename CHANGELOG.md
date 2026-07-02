@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a persisted autopilot plan-item queue with `StoredPlanItem`, SQLite
+  schema, `StateStore` helpers, and tests for recording and listing plan items
+  without batch execution.
 - Added a Python quick-start example for verification-gated Python repositories.
 - Added a docs-only quick-start example for verification-gated documentation repositories.
 - Added a Node quick-start example for verification-gated Node repositories.

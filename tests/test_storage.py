@@ -609,3 +609,153 @@ def test_state_store_redacts_secret_like_outputs(tmp_path: Path) -> None:
     assert secret not in (checks[0].error or "")
     assert "***REDACTED***" in details[0].raw_output
     assert "***REDACTED***" in checks[0].stderr
+
+
+def test_state_store_records_and_lists_plan_items(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    plan_a = tmp_path / "roadmap.md"
+    plan_b = tmp_path / "z_backlog.md"
+    task = store.create_task("demo", repo_path=tmp_path)
+
+    first = store.record_plan_item(
+        plan_path=plan_a,
+        line_number=12,
+        section="Post-v0.1.0 Development",
+        text="Add the first persisted autopilot queue model slice",
+        status="created",
+    )
+    second = store.record_plan_item(
+        plan_path=plan_a,
+        line_number=13,
+        section="Post-v0.1.0 Development",
+        text="Integrate queue selection with plan items",
+        status="in_progress",
+        task_id=task.task_id,
+    )
+    third = store.record_plan_item(
+        plan_path=plan_b,
+        line_number=5,
+        section="Deferred",
+        text="Document advanced autopilot workflows",
+        status="skipped",
+    )
+
+    all_items = store.list_plan_items()
+    assert all_items == [first, second, third]
+
+    plan_a_items = store.list_plan_items(plan_path=plan_a)
+    assert plan_a_items == [first, second]
+
+    in_progress_items = store.list_plan_items(status="in_progress")
+    assert in_progress_items == [second]
+    assert in_progress_items[0].task_id == task.task_id
+
+    assert store.get_plan_item(first.plan_item_id) == first
+
+
+def test_state_store_updates_plan_item_status(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Demo item",
+    )
+
+    updated = store.update_plan_item_status(
+        item.plan_item_id,
+        status="done",
+        task_id=task.task_id,
+    )
+
+    assert updated is not None
+    assert updated.status == "done"
+    assert updated.task_id == task.task_id
+    assert updated.updated_at >= item.updated_at
+    assert store.list_plan_items(status="done") == [updated]
+
+
+def test_state_store_rejects_invalid_plan_item_status(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Demo item",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported plan item status"):
+        store.record_plan_item(
+            plan_path=tmp_path / "ROADMAP.md",
+            line_number=2,
+            section="",
+            text="Bad status",
+            status="unknown",
+        )
+
+    with pytest.raises(ValueError, match="Unsupported plan item status"):
+        store.update_plan_item_status(item.plan_item_id, status="unknown")
+
+    with pytest.raises(ValueError, match="Unsupported plan item status"):
+        store.list_plan_items(status="unknown")
+
+
+def test_state_store_plan_items_are_ordered_by_path_and_line(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    plan = tmp_path / "ROADMAP.md"
+
+    third = store.record_plan_item(plan, line_number=30, section="", text="Third")
+    first = store.record_plan_item(plan, line_number=10, section="", text="First")
+    second = store.record_plan_item(plan, line_number=20, section="", text="Second")
+
+    assert store.list_plan_items() == [first, second, third]
+
+
+def test_migrate_schema_upgrades_v4_store_with_plan_items(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 4")
+        connection.execute(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                task TEXT NOT NULL,
+                repo_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        version = migrate_schema(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(plan_items)")
+        }
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            ).fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "plan_items" in tables
+    assert {
+        "plan_item_id",
+        "plan_path",
+        "line_number",
+        "section",
+        "text",
+        "status",
+        "task_id",
+        "created_at",
+        "updated_at",
+    }.issubset(columns)
+    assert "idx_plan_items_plan_status" in indexes

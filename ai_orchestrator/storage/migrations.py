@@ -4,8 +4,11 @@ import sqlite3
 from collections.abc import Callable
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 Migration = Callable[[sqlite3.Connection], None]
+
+
+_PLAN_ITEM_STATUS_CHECK = "CHECK (status IN ('created', 'in_progress', 'done', 'blocked', 'skipped'))"
 
 
 def _migrate_1_to_2(connection: sqlite3.Connection) -> None:
@@ -117,6 +120,31 @@ def _migrate_3_to_4(connection: sqlite3.Connection) -> None:
     _add_column_if_missing(connection, "iterations", "uncertainty", "TEXT")
 
 
+def _migrate_4_to_5(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS plan_items (
+            plan_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_path TEXT NOT NULL,
+            line_number INTEGER NOT NULL,
+            section TEXT NOT NULL DEFAULT '',
+            text TEXT NOT NULL,
+            status TEXT NOT NULL {_PLAN_ITEM_STATUS_CHECK},
+            task_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_plan_items_plan_status
+        ON plan_items (plan_path, status, line_number)
+        """
+    )
+
+
 def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     row = connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -140,6 +168,7 @@ MIGRATIONS: dict[int, Migration] = {
     1: _migrate_1_to_2,
     2: _migrate_2_to_3,
     3: _migrate_3_to_4,
+    4: _migrate_4_to_5,
 }
 
 
