@@ -1363,6 +1363,90 @@ def test_start_uses_fallback_agent_when_default_unavailable(
     assert iterations[0].agent_name == "mock"
 
 
+def test_start_uses_opt_in_worktree_isolation(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    write_config(tmp_path)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    captured_repos: list[Path] = []
+
+    def fake_validate(repo: Path, candidate: Path) -> str | None:
+        assert repo == tmp_path
+        assert candidate == worktree.resolve()
+        return None
+
+    def fake_run_once(
+        self, task: str, repo: Path, planning_context=None
+    ) -> SupervisorResult:
+        captured_repos.append(repo)
+        return SupervisorResult(
+            status="done", summary="Verification passed: custom", task_id="task-1"
+        )
+
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._validate_autopilot_worktree", fake_validate
+    )
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "start",
+            "--task",
+            "demo",
+            "--repo",
+            str(tmp_path),
+            "--worktree",
+            str(worktree),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "task-1: Verification passed: custom" in output
+    assert captured_repos == [worktree.resolve()]
+
+
+def test_start_blocks_invalid_worktree_before_execution(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    write_config(tmp_path)
+    worktree = tmp_path / "not-worktree"
+
+    def fake_validate(repo: Path, candidate: Path) -> str | None:
+        return f"worktree path does not exist: {candidate}"
+
+    def fake_run_once(
+        self, task: str, repo: Path, planning_context=None
+    ) -> SupervisorResult:
+        raise AssertionError("supervisor should not start with an invalid worktree")
+
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._validate_autopilot_worktree", fake_validate
+    )
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "start",
+            "--task",
+            "demo",
+            "--repo",
+            str(tmp_path),
+            "--worktree",
+            str(worktree),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Execution blocked: worktree path does not exist:" in output
+
+
 def test_start_blocks_generic_agent_command_from_project_policy(
     capsys,
     tmp_path: Path,

@@ -18,7 +18,6 @@ No open P0 items.
 
 ## P2
 
-- Add opt-in git worktree isolation for task runs.
 - Add structured adapter output fields for reports and future agent fallback
   scoring.
 - Add basic local metrics for iterations, verification pass rate, approvals,
