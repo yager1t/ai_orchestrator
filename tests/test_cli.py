@@ -1904,6 +1904,78 @@ def test_autopilot_queue_run_next_executes_one_item_and_updates_status(
     assert items["Second task"].status == "created"
 
 
+def test_autopilot_queue_run_next_writes_report_and_prints_path(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(task, repo_path=repo, task_id="task-report-1")
+        iteration = self.state_store.add_iteration(
+            task_id=stored.task_id,
+            iteration_index=1,
+            agent_name="mock",
+            agent_status="success",
+            prompt=task,
+            raw_output="done",
+            decision_status="done",
+            decision_reason="Verification passed: unit",
+        )
+        self.state_store.add_verification_run(
+            task_id=stored.task_id,
+            iteration_id=iteration.iteration_id,
+            result=VerificationResult(
+                name="unit",
+                status="passed",
+                exit_code=0,
+                stdout="ok",
+                stderr="",
+            ),
+        )
+        self.state_store.update_task_status(stored.task_id, "done")
+        return SupervisorResult(
+            status="done",
+            summary="Verification passed: custom",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-next",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    report_path = tmp_path / ".ai-orch" / "reports" / "task-report-1.md"
+    assert report_path.exists()
+    assert f"Report: {report_path}" in output
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "# ai-orch report: task-report-1" in report_text
+    assert "- Status: `done`" in report_text
+
+
 def test_autopilot_queue_run_next_stops_on_blocked_result(
     capsys,
     monkeypatch,
