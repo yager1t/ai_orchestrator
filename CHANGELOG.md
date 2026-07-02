@@ -2,11 +2,13 @@
 
 ## Unreleased
 
+- Enabled guarded `ai-orch autopilot queue run-batch --execute
+  --rotate-worktrees BASE_DIR` execution, selecting one clean pre-created
+  worktree per queue item and stopping on approvals/blockers/failures.
 - Persist selected rotated worktree paths on autopilot queue items and display
   them in queue status/list output and task reports when present.
 - Added `ai-orch autopilot queue run-batch --rotate-worktrees BASE_DIR` dry-run
-  selection and validation, mutually exclusive with `--worktree`. Actual task
-  execution in rotated worktrees is not implemented yet.
+  selection and validation, mutually exclusive with `--worktree`.
 - Recorded ADR-0005 for optional per-task worktree rotation in autopilot batch
   runs.
 - Show generated task report paths in `ai-orch autopilot queue list/status` for
