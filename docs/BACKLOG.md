@@ -9,7 +9,6 @@ No open P0 items.
 
 ## P1
 
-- Add a persisted autopilot queue model based on ADR-0004.
 - Add an opt-in batch or loop mode that selects the next queued item and stops
   on `done`, `blocked`, approval requirements, verification failure, or dirty
   execution state.

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ai_orchestrator import __version__
+from ai_orchestrator.autopilot import load_plan_tasks
 from ai_orchestrator.cli.app import main
 from ai_orchestrator.core.supervisor import SupervisorResult
 from ai_orchestrator.process.runner import ProcessResult, ProcessRunner, RunOptions
@@ -1718,6 +1719,108 @@ def test_memory_preflight_adapter_runs_read_only_steps(
             '{"project": "demo"}',
         ],
     ]
+
+
+def test_autopilot_queue_sync_loads_plan_items_without_duplicates(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        ["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Synced" in output
+    assert "new: 2" in output
+    assert "existing: 0" in output
+    assert "+ " in output
+
+    exit_code = main(
+        ["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "new: 0" in output
+    assert "existing: 2" in output
+
+
+def test_autopilot_queue_list_shows_status_without_running_execution(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    exit_code = main(
+        ["autopilot", "queue", "list", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Queue status" in output
+    assert "total: 1" in output
+    assert "[created]" in output
+    assert "Add approval CLI" in output
+    assert "Autopilot selected:" not in output
+    assert "Dry run" not in output
+
+
+def test_autopilot_queue_sync_works_when_no_unstarted_task_exists(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Already started task\n", encoding="utf-8")
+    tasks = load_plan_tasks(plan)
+    store = StateStore(tmp_path / "state.db")
+    store.create_task(tasks[0].to_prompt(), repo_path=tmp_path)
+
+    exit_code = main(
+        ["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Synced" in output
+    assert "new: 1" in output
+    assert "No unstarted plan items found" not in output
+
+
+def test_autopilot_queue_list_handles_missing_plan(capsys, tmp_path: Path) -> None:
+    missing_plan = tmp_path / "MISSING.md"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "list",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(missing_plan),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Plan not found:" in output
 
 
 def test_memory_preflight_returns_failure_when_any_step_fails(

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ai_orchestrator.autopilot import load_plan_tasks, next_task
+from ai_orchestrator.autopilot import load_plan_tasks, next_task, sync_plan_items
 from ai_orchestrator.storage.db import StateStore
 
 
@@ -97,3 +97,31 @@ def test_recording_plan_items_does_not_execute_or_reorder_them(
     selected = next_task(tasks, store)
     assert selected is not None
     assert selected.text == "First task"
+
+
+def test_sync_plan_items_persists_without_duplicates(tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / "state.db")
+
+    new_items, existing_items = sync_plan_items(plan, store)
+
+    assert len(new_items) == 2
+    assert len(existing_items) == 0
+    assert store.list_plan_items(plan_path=plan)[0].text == "First task"
+
+    new_items, existing_items = sync_plan_items(plan, store)
+
+    assert len(new_items) == 0
+    assert len(existing_items) == 2
+    assert len(store.list_plan_items(plan_path=plan)) == 2

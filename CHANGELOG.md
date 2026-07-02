@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot queue sync/list` for loading Markdown plan items
+  into the persisted queue without duplicates and displaying queue status.
 - Added a persisted autopilot plan-item queue with `StoredPlanItem`, SQLite
   schema, `StateStore` helpers, and tests for recording and listing plan items
   without batch execution.

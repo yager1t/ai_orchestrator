@@ -8,7 +8,12 @@ from pathlib import Path
 from ai_orchestrator import __version__
 from ai_orchestrator.agents.base import AgentAdapter
 from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
-from ai_orchestrator.autopilot import AutopilotTask, load_plan_tasks, next_task
+from ai_orchestrator.autopilot import (
+    AutopilotTask,
+    load_plan_tasks,
+    next_task,
+    sync_plan_items,
+)
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
 from ai_orchestrator.core.supervisor import Supervisor
 from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
@@ -159,6 +164,24 @@ def build_parser() -> argparse.ArgumentParser:
             "Relative paths are resolved from --repo."
         ),
     )
+
+    autopilot_queue = autopilot_sub.add_parser(
+        "queue",
+        help="Manage the persisted autopilot queue",
+    )
+    autopilot_queue_sub = autopilot_queue.add_subparsers(dest="autopilot_queue_command")
+    autopilot_queue_sync = autopilot_queue_sub.add_parser(
+        "sync",
+        help="Load Markdown plan items into the persisted queue without duplicates",
+    )
+    autopilot_queue_sync.add_argument("--repo", default=".")
+    autopilot_queue_sync.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_list = autopilot_queue_sub.add_parser(
+        "list",
+        help="Display persisted queue status without running batch execution",
+    )
+    autopilot_queue_list.add_argument("--repo", default=".")
+    autopilot_queue_list.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
 
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
     memory_sub = memory.add_subparsers(dest="memory_command")
@@ -688,6 +711,9 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
         return 1
 
     store = _state_store_for_repo(repo)
+    if args.autopilot_command == "queue":
+        return _run_autopilot_queue_command(args, parser)
+
     tasks = load_plan_tasks(plan_path)
     selected = next_task(tasks, store)
     if selected is None:
@@ -805,6 +831,49 @@ def _resolve_plan_path(repo: Path, plan_path: Path) -> Path:
     if plan_path.is_absolute():
         return plan_path
     return repo / plan_path
+
+
+def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.autopilot_queue_command is None:
+        parser.print_help()
+        return 1
+
+    repo = Path(args.repo)
+    plan_path = _resolve_plan_path(repo, Path(args.plan))
+    if not plan_path.exists():
+        print(f"Plan not found: {plan_path}")
+        return 1
+
+    store = _state_store_for_repo(repo)
+
+    if args.autopilot_queue_command == "sync":
+        new_items, existing_items = sync_plan_items(plan_path, store)
+        print(f"Synced {plan_path}")
+        print(f"  new: {len(new_items)}")
+        print(f"  existing: {len(existing_items)}")
+        for item in new_items:
+            print(f"  + {item.line_number}: {item.text}")
+        return 0
+
+    if args.autopilot_queue_command == "list":
+        items = store.list_plan_items(plan_path=plan_path)
+        print(f"Queue status for {plan_path}")
+        print(f"  total: {len(items)}")
+        status_counts: dict[str, int] = {}
+        for item in items:
+            status_counts[item.status] = status_counts.get(item.status, 0) + 1
+        if status_counts:
+            summary = ", ".join(
+                f"{status}={count}" for status, count in sorted(status_counts.items())
+            )
+            print("  by status:", summary)
+        for item in items:
+            task_ref = f" task={item.task_id}" if item.task_id else ""
+            print(f"  [{item.status}] {item.line_number}: {item.text}{task_ref}")
+        return 0
+
+    parser.print_help()
+    return 1
 
 
 def _print_autopilot_task(task: AutopilotTask) -> None:

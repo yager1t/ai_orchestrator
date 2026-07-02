@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_orchestrator.storage.db import StateStore, StoredTask
+from ai_orchestrator.storage.db import StateStore, StoredPlanItem, StoredTask
 
 
 _CHECKBOX_RE = re.compile(r"^(?P<indent>\s*)-\s+\[\s\]\s+(?P<text>.+)$")
@@ -81,6 +81,31 @@ def next_task(tasks: list[AutopilotTask], store: StateStore) -> AutopilotTask | 
         if not _already_started(task, existing):
             return task
     return None
+
+
+def sync_plan_items(
+    plan_path: Path,
+    store: StateStore,
+) -> tuple[list[StoredPlanItem], list[StoredPlanItem]]:
+    """Load tasks from *plan_path* and persist them without duplicates.
+
+    Returns a tuple of (new_items, existing_items) for the plan.
+    """
+    tasks = load_plan_tasks(plan_path)
+    existing = {item.line_number: item for item in store.list_plan_items(plan_path=plan_path)}
+    new_items: list[StoredPlanItem] = []
+    for task in tasks:
+        if task.line_number in existing:
+            continue
+        new_items.append(
+            store.record_plan_item(
+                plan_path=plan_path,
+                line_number=task.line_number,
+                section=task.section,
+                text=task.text,
+            )
+        )
+    return new_items, list(existing.values())
 
 
 def _already_started(task: AutopilotTask, existing: list[StoredTask]) -> bool:
