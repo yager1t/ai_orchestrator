@@ -1,5 +1,116 @@
 # Architectural Decisions
 
+## ADR-0005: Optional Per-Task Worktree Rotation In Autopilot Batch Runs
+
+Date: 2026-07-03
+
+### Context
+
+ADR-0004 defines the autopilot queue and batch execution model: a persisted
+plan queue, one-item-at-a-time default progression, optional fixed worktree
+isolation via `--worktree`, and per-run Markdown reports. The fixed worktree
+option reuses a single existing git worktree for the whole run. That is enough
+for isolated experiments, but it does not give every queued task its own clean
+execution context. When operators want to run several small roadmap items back
+to back, reusing one worktree risks carry-over state, conflicting dirty checks,
+and mixed diffs that make review harder.
+
+The missing piece is an explicit contract for rotating through a pool of
+pre-created git worktrees so that each task starts from a clean, isolated
+context while the main repo and the state store stay untouched.
+
+### Decision
+
+Record optional per-task worktree rotation as an extension of the autopilot
+batch execution model:
+
+1. **CLI contract.**
+   - `ai-orch autopilot queue run-batch --rotate-worktrees BASE_DIR` enables
+     per-task rotation.
+   - `--rotate-worktrees` and `--worktree` are mutually exclusive.
+   - `BASE_DIR` is an existing directory that contains one or more git worktree
+     roots, each already linked to the main repo.
+   - Without `--execute`, the command dry-runs and prints the worktree that
+     would be selected for each queued item.
+   - `--max-items` continues to cap the batch; the default remains `1` so
+     rotation preserves the one-item-then-review default.
+
+2. **Worktree selection.**
+   - Worktrees under `BASE_DIR` are inspected in sorted path order.
+   - The first worktree that passes the same validation as a fixed `--worktree`
+     and has no uncommitted changes is selected.
+   - A worktree that is already associated with an `in_progress` queue item is
+     skipped, preventing two tasks from racing inside the same directory.
+   - The selected worktree path is recorded in the queue item and reported in
+     the per-run Markdown report so the operator can trace execution context.
+
+3. **Safety guardrails.**
+   - Rotation is opt-in and explicit; existing runs without rotation keep their
+     current behavior.
+   - Each selected worktree is validated against the main repo using the same
+     checks as `--worktree`: it must exist, be a directory, be a git worktree
+     root, be a separate worktree from the main repo, and share the same git
+     common dir.
+   - Dirty-repo checks apply to the selected worktree unless `--allow-dirty` is
+     passed.
+   - If no clean, available worktree can be selected, the current item is
+     marked `blocked` and the batch stops.
+   - Policy-gated commands, verification commands, and memory indexing still
+     route approval requests through the main repo state store and approval
+     inbox; isolation does not bypass policy.
+
+4. **Stop conditions.**
+   - The batch stops when `--max-items` is reached.
+   - The batch stops when no more queued plan items are ready.
+   - The batch stops on the first item whose supervisor result is not `done`,
+     exactly like the non-rotating `run-batch`.
+   - The batch stops when no clean worktree is available for the next item.
+
+5. **State and report contract.**
+   - The SQLite state store and approval inbox stay on the main repo path.
+   - Each rotated item updates its queue row with the supervisor result, the
+     generated task id, and the selected worktree path.
+   - A Markdown report is written per executed item and references the
+     worktree path.
+
+### Consequences
+
+Pros:
+
+- Each executed queue item can start from a clean, isolated git worktree.
+- Main repo remains clean and reviewable even when running multiple items.
+- Per-item report references the exact execution context for auditability.
+- Reuses the existing worktree validation, dirty check, and approval plumbing.
+- Opt-in default avoids surprising operators with automatic context switching.
+
+Cons:
+
+- Operators must prepare and maintain a pool of linked worktrees outside
+  `ai-orch`.
+- Worktree selection is local-path based and can be brittle if worktree names
+  or states change between runs.
+- No automatic cleanup means done items may leave committed or uncommitted
+  state scattered across worktrees.
+- `in_progress` tracking adds a small queue-item-to-worktree coupling that the
+  schema must represent.
+
+### Deferred
+
+- Automatic creation, pruning, and merge-back of worktrees.
+- Per-task branch creation and branch naming conventions.
+- Automatic commit or reset of worktrees after an item finishes.
+- Unattended loop mode that continues past `--max-items` without operator
+  review.
+- Health checks that repair or recreate missing worktrees automatically.
+- Web dashboard or CI-driven rotation pools.
+
+### Revisit When
+
+- operators want `ai-orch` to manage the worktree pool lifecycle;
+- roadmap items become large enough that one worktree per item is the default;
+- merge-back or cherry-pick automation is needed to land completed work;
+- external systems need to enqueue runs and allocate worktrees dynamically.
+
 ## ADR-0004: Autopilot Queue And Batch Execution Model
 
 Date: 2026-07-02

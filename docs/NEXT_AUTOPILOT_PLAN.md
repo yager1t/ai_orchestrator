@@ -17,3 +17,4 @@ Use this plan for the first post-v0.1.0 real-agent autopilot development run.
 - [x] Add `ai-orch autopilot queue run-batch` as a guarded serial loop that dry-runs by default, executes up to a configurable max item count, stops on approvals/blockers/failures, and writes a report for each executed queue item.
 - [x] Record the first guarded `ai-orch autopilot queue run-batch --execute --max-items 1` real-agent smoke result in `docs/AUTOPILOT_BATCH_RUN_LOG.md`.
 - [x] Show generated task report paths in `ai-orch autopilot queue list/status` for queue items with completed reports.
+- [x] Record ADR-0005 for optional per-task worktree rotation in autopilot batch runs, covering the CLI contract, safety guardrails, stop conditions, and deferred automation.

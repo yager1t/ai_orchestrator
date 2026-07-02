@@ -13,8 +13,8 @@ No open P1 items.
 
 ## P2
 
-- Add optional per-task worktree rotation for batch runs if strict serialized
-  execution proves too limiting for daily operation.
+- Implement the first ADR-0005 slice for optional per-task worktree rotation in
+  batch runs: CLI contract, validation, and state/report plumbing.
 - Add deeper queue history filters if recent status summaries are not enough
   for daily operation.
 
