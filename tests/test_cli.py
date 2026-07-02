@@ -2599,16 +2599,59 @@ def test_autopilot_queue_run_batch_rotate_worktrees_skips_busy_worktree(
     assert f"Worktree: {busy_wt.resolve()}" not in output
 
 
-def test_autopilot_queue_run_batch_rotate_worktrees_blocks_execute(
+def test_autopilot_queue_run_batch_rotate_worktrees_executes_in_selected_worktrees(
     capsys,
+    monkeypatch,
     tmp_path: Path,
 ) -> None:
     plan = tmp_path / "ROADMAP.md"
-    plan.write_text("- [ ] First task\n", encoding="utf-8")
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
     pool = tmp_path / "pool"
     pool.mkdir()
+    wt1 = pool / "wt1"
+    wt1.mkdir()
+    wt2 = pool / "wt2"
+    wt2.mkdir()
+
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._validate_autopilot_worktree",
+        lambda _repo, _wt: None,
+    )
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._repo_has_uncommitted_changes",
+        lambda _repo: False,
+    )
+    captured_repos: list[Path] = []
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        captured_repos.append(repo.resolve())
+        stored = self.state_store.create_task(
+            task,
+            repo_path=repo,
+            task_id=f"rotated-task-{len(captured_repos)}",
+        )
+        return SupervisorResult(
+            status="done",
+            summary=f"Verification passed: {stored.task_id}",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
 
     exit_code = main(
         [
@@ -2622,12 +2665,38 @@ def test_autopilot_queue_run_batch_rotate_worktrees_blocks_execute(
             "--rotate-worktrees",
             str(pool),
             "--execute",
+            "--allow-mock-agent",
+            "--max-items",
+            "2",
         ]
     )
     output = capsys.readouterr().out
 
-    assert exit_code == 1
-    assert "not implemented yet" in output
+    assert exit_code == 0
+    assert "Batch complete: processed 2 item(s)" in output
+    assert f"Worktree: {wt1.resolve()}" in output
+    assert f"Worktree: {wt2.resolve()}" in output
+    assert captured_repos == [wt1.resolve(), wt2.resolve()]
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert items["First task"].status == "done"
+    assert items["First task"].task_id == "rotated-task-1"
+    assert items["First task"].selected_worktree_path == str(wt1.resolve())
+    assert items["Second task"].status == "done"
+    assert items["Second task"].task_id == "rotated-task-2"
+    assert items["Second task"].selected_worktree_path == str(wt2.resolve())
+
+    first_report = tmp_path / ".ai-orch" / "reports" / "rotated-task-1.md"
+    second_report = tmp_path / ".ai-orch" / "reports" / "rotated-task-2.md"
+    assert first_report.exists()
+    assert second_report.exists()
+    assert f"- Queue worktree: `{wt1.resolve()}`" in first_report.read_text(
+        encoding="utf-8"
+    )
+    assert f"- Queue worktree: `{wt2.resolve()}`" in second_report.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_autopilot_queue_status_summarizes_counts_and_recent_items(

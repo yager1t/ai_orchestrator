@@ -1109,13 +1109,9 @@ def _run_autopilot_queue_batch(
         return 1
 
     if getattr(args, "rotate_worktrees", None):
-        if args.execute:
-            print(
-                "Execution blocked: --execute with --rotate-worktrees is not "
-                "implemented yet"
-            )
-            return 1
-        return _dry_run_rotated_batch(args, repo, plan_path, store)
+        if not args.execute:
+            return _dry_run_rotated_batch(args, repo, plan_path, store)
+        return _run_rotated_autopilot_queue_batch(args, repo, plan_path, store)
 
     if not args.execute:
         items = next_plan_items(store, plan_path, limit=max_items)
@@ -1153,6 +1149,85 @@ def _run_autopilot_queue_batch(
         item_status = plan_item_status_from_supervisor(result.status)
         store.update_plan_item_status(next_item.plan_item_id, item_status, task_id=result.task_id)
         print(f"Queue item {next_item.plan_item_id}: status={item_status}")
+        processed += 1
+        if result.task_id is not None:
+            report_path = _write_task_report(store, repo, result.task_id)
+            if report_path is not None:
+                print(f"Report: {report_path}")
+        if item_status != "done":
+            print(f"Batch stopped after {processed} item(s): status={item_status}")
+            return 1
+
+    print(f"Batch complete: processed {processed} item(s)")
+    return 0
+
+
+def _run_rotated_autopilot_queue_batch(
+    args: argparse.Namespace,
+    repo: Path,
+    plan_path: Path,
+    store: StateStore,
+) -> int:
+    """Execute a serial batch with one selected worktree per queue item."""
+    base_dir = _resolve_rotated_worktree_base(repo, args.rotate_worktrees)
+    if not base_dir.exists():
+        print(f"Rotation base directory does not exist: {base_dir}")
+        return 1
+    if not base_dir.is_dir():
+        print(f"Rotation base path is not a directory: {base_dir}")
+        return 1
+
+    max_items = max(0, args.max_items)
+    items = next_plan_items(store, plan_path, limit=max_items)
+    if not items:
+        print(f"No queued plan items ready in {plan_path}")
+        return 0
+
+    selected = _select_rotated_worktrees(
+        repo, base_dir, store, allow_dirty=args.allow_dirty, count=len(items)
+    )
+    if len(selected) < len(items):
+        print(
+            "Execution blocked: not enough clean, available worktrees under "
+            f"{base_dir} for {len(items)} queued item(s)"
+        )
+        return 1
+
+    processed = 0
+    for item, worktree in zip(items, selected):
+        task = plan_item_to_task(item)
+        run_args = _args_with_worktree(args, worktree)
+        print(f"Worktree: {worktree}")
+
+        def _mark_in_progress(
+            plan_item_id: int = item.plan_item_id,
+            selected_worktree: Path = worktree,
+        ) -> None:
+            store.update_plan_item_status(
+                plan_item_id,
+                "in_progress",
+                selected_worktree_path=selected_worktree,
+            )
+
+        result = _run_autopilot_task(
+            task,
+            repo,
+            plan_path,
+            run_args,
+            store,
+            on_start=_mark_in_progress,
+        )
+        if result is None:
+            print("Batch stopped: unexpected dry run in execute mode")
+            return 1
+        item_status = plan_item_status_from_supervisor(result.status)
+        store.update_plan_item_status(
+            item.plan_item_id,
+            item_status,
+            task_id=result.task_id,
+            selected_worktree_path=worktree,
+        )
+        print(f"Queue item {item.plan_item_id}: status={item_status}")
         processed += 1
         if result.task_id is not None:
             report_path = _write_task_report(store, repo, result.task_id)
@@ -1210,6 +1285,12 @@ def _dry_run_rotated_batch(
     return 0
 
 
+def _args_with_worktree(args: argparse.Namespace, worktree: Path) -> argparse.Namespace:
+    values = vars(args).copy()
+    values["worktree"] = str(worktree)
+    return argparse.Namespace(**values)
+
+
 def _resolve_rotated_worktree_base(repo: Path, base_dir: str) -> Path:
     base_path = Path(base_dir)
     if not base_path.is_absolute():
@@ -1254,6 +1335,9 @@ def _busy_rotated_worktrees(store: StateStore) -> set[Path]:
     """Return worktree paths currently associated with in-progress plan items."""
     busy: set[Path] = set()
     for item in store.list_plan_items(status="in_progress"):
+        if item.selected_worktree_path is not None:
+            busy.add(Path(item.selected_worktree_path).resolve())
+            continue
         if item.task_id is None:
             continue
         task = store.get_task(item.task_id)

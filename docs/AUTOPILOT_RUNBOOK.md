@@ -60,9 +60,9 @@ Preview per-task worktree rotation from a pre-created worktree pool:
 python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --max-items 3 --rotate-worktrees ../ai-orch-worktrees
 ```
 
-`--rotate-worktrees` is currently a dry-run selection and validation preview;
-execution in rotated worktrees is intentionally blocked until the next
-implementation slice adds state and report plumbing.
+Add `--execute` only after this preview selects the intended clean worktrees.
+Batch execution persists the selected worktree path on each queue item and
+includes it in the per-task Markdown report.
 
 ## 2. Dry Run
 
@@ -122,10 +122,17 @@ Run a guarded serial queue batch only after the dry run is correct:
 python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --execute --max-items 3 --worktree ../ai-orch-autopilot
 ```
 
-Batch execution is serial and stops on the first non-`done` result. Without an
-operator commit between items, repository changes from one item can make the
-next item hit the dirty-worktree guard; use `--allow-dirty` only after reviewing
-that state intentionally.
+For per-item isolation, execute from a pre-created linked worktree pool:
+
+```bash
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --execute --max-items 3 --rotate-worktrees ../ai-orch-worktrees
+```
+
+Batch execution is serial and stops on the first non-`done` result. With
+`--rotate-worktrees`, each selected item gets a distinct clean worktree from the
+pool for that batch. Without rotation, repository changes from one item can make
+the next item hit the dirty-worktree guard; use `--allow-dirty` only after
+reviewing that state intentionally.
 
 Use `--allow-mock-agent` only for smoke tests. A mock-agent run is not evidence
 that real development was completed:
