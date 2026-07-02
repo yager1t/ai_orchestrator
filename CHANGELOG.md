@@ -12,6 +12,8 @@
   check for non-mock agents.
 - Added opt-in `--worktree` isolation for autopilot execution in an existing
   linked git worktree.
+- Added opt-in `ai-orch start --worktree PATH` isolation for task runs by
+  reusing the autopilot worktree validation behavior.
 - Added an autopilot operator runbook covering dry-run, execute, approval,
   retry, report, and stop-condition workflows.
 - Added `ai-orch approvals list/show/approve/reject` for persisted approval

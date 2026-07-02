@@ -53,6 +53,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="supervisor",
         help="Memory preflight area to use with --use-memory",
     )
+    start.add_argument(
+        "--worktree",
+        help=(
+            "Run the task in an existing separate git worktree. "
+            "Relative paths are resolved from --repo."
+        ),
+    )
 
     status = sub.add_parser("status", help="Show stored task status")
     status.add_argument("task_id")
@@ -384,6 +391,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "start":
         repo = Path(args.repo)
         config = load_project_config(repo)
+        execution_repo = _autopilot_execution_repo(repo, getattr(args, "worktree", None))
+        if args.worktree:
+            worktree_error = _validate_autopilot_worktree(repo, execution_repo)
+            if worktree_error is not None:
+                print(f"Execution blocked: {worktree_error}")
+                return 1
         planning_context = None
         if args.use_memory:
             memory_context = _load_memory_planning_context(
@@ -407,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         supervisor_result = supervisor.run_once(
             task=args.task,
-            repo=repo,
+            repo=execution_repo,
             planning_context=planning_context,
         )
         task_prefix = f"{supervisor_result.task_id}: " if supervisor_result.task_id else ""
