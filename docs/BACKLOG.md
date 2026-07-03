@@ -13,7 +13,10 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add a read-only `--unlinked-only` filter to
+  `ai-orch autopilot worktree-overview` so operators can focus cleanup review
+  on worktrees not linked to the review repo, without deleting or pruning
+  anything.
 
 ## P3 / Deferred
 
