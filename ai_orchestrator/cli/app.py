@@ -24,6 +24,7 @@ from ai_orchestrator.autopilot import (
 )
 from ai_orchestrator.autopilot.worktree_overview import (
     format_worktree_overview,
+    format_worktree_summary,
     gather_worktree_overviews,
 )
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
@@ -1218,6 +1219,7 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
 
     repo_for_link = _git_rev_parse_path(repo, "--show-toplevel")
     overviews = gather_worktree_overviews(base_dir, repo=repo_for_link)
+    total_count = len(overviews)
     if args.dirty_only:
         overviews = [overview for overview in overviews if overview.dirty]
     branch_filter = getattr(args, "branch_filter", None)
@@ -1227,14 +1229,23 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
         ]
     if not overviews:
         if branch_filter:
+            print(format_worktree_summary(overviews, total_count))
             print(
                 f"No git worktrees matching branch filter '{branch_filter}' "
                 f"found under {base_dir}"
             )
         elif args.dirty_only:
+            print(format_worktree_summary(overviews, total_count))
             print(f"No dirty git worktrees found under {base_dir}")
         return 0
-    print(format_worktree_overview(overviews, base_dir, repo=repo_for_link))
+    print(
+        format_worktree_overview(
+            overviews,
+            base_dir,
+            repo=repo_for_link,
+            total_count=total_count,
+        )
+    )
     return 0
 
 

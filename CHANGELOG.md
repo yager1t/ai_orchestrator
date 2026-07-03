@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a read-only summary line to `ai-orch autopilot worktree-overview` that
+  shows total, shown, dirty, and unlinked counts after filters so operators can
+  quickly understand review scope without deleting or pruning anything.
 - Added `ai-orch autopilot worktree-overview --dirty-only` to show only git
   worktrees with uncommitted or untracked changes, making cleanup review more
   focused without deleting or pruning anything.
