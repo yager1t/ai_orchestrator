@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `ai-orch ci` headless CI entry point that runs configured verification
+  commands and release readiness checks with stable exit codes for CI environments.
 - Changed queue sync to create a fresh `created` item when a plan or backlog
   line is rewritten with different task text instead of reusing stale history.
 - Added `ai-orch autopilot queue reconcile` to find stale `created` queue items

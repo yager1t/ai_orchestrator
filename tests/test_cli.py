@@ -10,7 +10,7 @@ from ai_orchestrator.cli.app import main
 from ai_orchestrator.core.supervisor import Supervisor, SupervisorResult
 from ai_orchestrator.process.runner import ProcessResult, ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
-from ai_orchestrator.verification.release import run_release_checks
+from ai_orchestrator.verification.release import ReleaseCheckResult, run_release_checks
 from ai_orchestrator.verification.runner import VerificationResult, VerificationRunner
 
 
@@ -1110,6 +1110,96 @@ def test_release_check_reports_packaging_status(capsys) -> None:
     assert "entrypoints: passed" in output
     assert "release-docs: passed" in output
     assert all(item.status == "passed" for item in run_release_checks(Path(".")))
+
+
+def test_ci_runs_verification_and_release_checks(
+    capsys, monkeypatch, tmp_path: Path
+) -> None:
+    write_config(tmp_path)
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app.run_release_checks",
+        lambda repo: [
+            ReleaseCheckResult(name="pyproject", status="passed", detail="ok"),
+            ReleaseCheckResult(name="version", status="passed", detail="ok"),
+        ],
+    )
+
+    exit_code = main(["ci", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "verification:" in output
+    assert "custom: passed exit=0" in output
+    assert "release:" in output
+    assert "pyproject: passed" in output
+    assert "version: passed" in output
+
+
+def test_ci_fails_when_verification_fails(capsys, tmp_path: Path) -> None:
+    write_config(tmp_path, command_run="python -c 'import sys; sys.exit(1)'")
+
+    exit_code = main(["ci", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "custom: failed exit=1" in output
+    assert "release:" in output
+
+
+def test_ci_fails_when_release_check_fails(
+    capsys, monkeypatch, tmp_path: Path
+) -> None:
+    write_config(tmp_path)
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app.run_release_checks",
+        lambda repo: [
+            ReleaseCheckResult(
+                name="release-docs",
+                status="failed",
+                detail="Missing docs: CHANGELOG.md",
+            ),
+        ],
+    )
+
+    exit_code = main(["ci", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "custom: passed exit=0" in output
+    assert "release-docs: failed" in output
+
+
+def test_ci_approves_exact_verification_command(
+    capsys, monkeypatch, tmp_path: Path
+) -> None:
+    command = "python -c \"print('approval-token ok')\""
+    write_config(
+        tmp_path,
+        command_name="approval",
+        command_run=command,
+        require_approval_patterns=["approval-token"],
+    )
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app.run_release_checks",
+        lambda repo: [
+            ReleaseCheckResult(name="pyproject", status="passed", detail="ok"),
+        ],
+    )
+
+    exit_code = main(
+        [
+            "ci",
+            "--repo",
+            str(tmp_path),
+            "--approve-command",
+            command,
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "approval: passed exit=0" in output
+    assert "release:" in output
 
 
 def test_start_uses_project_config(capsys, tmp_path: Path) -> None:
