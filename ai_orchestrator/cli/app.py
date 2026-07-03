@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -95,6 +97,14 @@ def build_parser() -> argparse.ArgumentParser:
     report = sub.add_parser("report", help="Write a markdown task report")
     report.add_argument("task_id")
     report.add_argument("--repo", default=".")
+
+    export = sub.add_parser("export", help="Export a task trace as local JSON")
+    export.add_argument("task_id")
+    export.add_argument("--repo", default=".")
+    export.add_argument(
+        "--output",
+        help="Output JSON file path (default: .ai-orch/traces/<task_id>.json)",
+    )
 
     verify = sub.add_parser("verify", help="Run default verification commands")
     verify.add_argument("--repo", default=".")
@@ -578,6 +588,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Report: {report_path}")
         return 0
 
+    if args.command == "export":
+        repo = Path(args.repo)
+        store = _state_store_for_repo(repo)
+        output_path = Path(args.output) if args.output else None
+        trace_path = _export_task_trace(store, repo, args.task_id, output_path)
+        if trace_path is None:
+            print(f"Task not found: {args.task_id}")
+            return 1
+        print(f"Trace: {trace_path}")
+        return 0
+
     if args.command == "start":
         repo = Path(args.repo)
         config = load_project_config(repo)
@@ -637,6 +658,41 @@ def _write_task_report(store: StateStore, repo: Path, task_id: str) -> Path | No
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report, encoding="utf-8")
     return report_path
+
+
+def _export_task_trace(
+    store: StateStore,
+    repo: Path,
+    task_id: str,
+    output_path: Path | None = None,
+) -> Path | None:
+    """Export the stored task trace for *task_id* to local JSON.
+
+    Includes the task summary, iteration details, verification results, and
+    approval requests without changing supervisor execution semantics.
+
+    Returns the destination path on success, or ``None`` if the task is not found.
+    """
+    task = store.get_task(task_id)
+    if task is None:
+        return None
+
+    trace = {
+        "task": asdict(task),
+        "iterations": [asdict(iteration) for iteration in store.list_iteration_details(task_id)],
+        "verification_runs": [
+            asdict(run) for run in store.list_verification_details(task_id)
+        ],
+        "approvals": [asdict(approval) for approval in store.list_approval_requests(task_id=task_id)],
+    }
+
+    destination = output_path or repo / ".ai-orch" / "traces" / f"{task_id}.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(trace, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
+    return destination
 
 
 def _task_report_path(repo: Path, task_id: str | None) -> Path | None:
