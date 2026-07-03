@@ -172,6 +172,27 @@ def test_sync_plan_items_persists_without_duplicates(tmp_path: Path) -> None:
     assert len(store.list_plan_items(plan_path=plan)) == 2
 
 
+def test_sync_plan_items_records_changed_line_as_new_item(tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Original task\n", encoding="utf-8")
+    store = StateStore(tmp_path / "state.db")
+
+    new_items, existing_items = sync_plan_items(plan, store)
+    store.update_plan_item_status(new_items[0].plan_item_id, "skipped")
+    plan.write_text("- [ ] Replacement task\n", encoding="utf-8")
+
+    new_items, existing_items = sync_plan_items(plan, store)
+    items = store.list_plan_items(plan_path=plan)
+
+    assert len(new_items) == 1
+    assert len(existing_items) == 1
+    assert len(items) == 2
+    assert items[0].text == "Original task"
+    assert items[0].status == "skipped"
+    assert items[1].text == "Replacement task"
+    assert items[1].status == "created"
+
+
 def test_sync_backlog_items_persists_without_duplicates(tmp_path: Path) -> None:
     backlog = tmp_path / "BACKLOG.md"
     backlog.write_text(
@@ -198,6 +219,33 @@ def test_sync_backlog_items_persists_without_duplicates(tmp_path: Path) -> None:
 
     assert len(new_items) == 0
     assert len(existing_items) == 1
+
+
+def test_sync_backlog_items_records_changed_line_as_new_item(tmp_path: Path) -> None:
+    backlog = tmp_path / "BACKLOG.md"
+    backlog.write_text(
+        "\n".join(["# Backlog", "", "## P2", "", "- Original backlog task"]),
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / "state.db")
+
+    new_items, existing_items = sync_backlog_items(backlog, store)
+    store.update_plan_item_status(new_items[0].plan_item_id, "skipped")
+    backlog.write_text(
+        "\n".join(["# Backlog", "", "## P2", "", "- Replacement backlog task"]),
+        encoding="utf-8",
+    )
+
+    new_items, existing_items = sync_backlog_items(backlog, store)
+    items = store.list_plan_items(plan_path=backlog)
+
+    assert len(new_items) == 1
+    assert len(existing_items) == 1
+    assert len(items) == 2
+    assert items[0].text == "Original backlog task"
+    assert items[0].status == "skipped"
+    assert items[1].text == "Replacement backlog task"
+    assert items[1].status == "created"
 
 
 def test_next_plan_item_selects_first_created_item(tmp_path: Path) -> None:
