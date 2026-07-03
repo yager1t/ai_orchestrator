@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot queue reconcile` to find stale `created` queue items
+  whose source plan task is no longer open and, with `--apply`, mark them
+  `skipped`.
 - Added `--all-plans` views for `ai-orch autopilot queue list/status` so
   operators can review every persisted queue source without selecting one plan
   file at a time.

@@ -71,6 +71,14 @@ python -m ai_orchestrator autopilot queue status --repo . --all-plans --status b
 python -m ai_orchestrator autopilot queue list --repo . --all-plans --status created --limit 20
 ```
 
+Reconcile stale `created` queue items after a plan or backlog item is completed,
+removed, or rewritten. The command is a dry run unless `--apply` is present:
+
+```bash
+python -m ai_orchestrator autopilot queue reconcile --repo . --all-plans
+python -m ai_orchestrator autopilot queue reconcile --repo . --all-plans --apply
+```
+
 Preview the next queued batch without starting work:
 
 ```bash
