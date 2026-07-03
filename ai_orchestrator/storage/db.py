@@ -995,6 +995,39 @@ class StateStore:
         )
         return self.get_plan_item(plan_item_id)
 
+    def requeue_plan_item(self, plan_item_id: int) -> StoredPlanItem | None:
+        """Move a blocked queue item back to ``created`` and clear stale metadata.
+
+        Only items whose current status is ``blocked`` are affected. The
+        associated task, selected worktree, and blocker reason are all reset so
+        the item can be reviewed and later processed as a fresh queue entry.
+        Returns the updated item, or ``None`` when no blocked item with the
+        given id exists.
+        """
+        self.initialize()
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE plan_items
+                SET status = 'created',
+                    task_id = NULL,
+                    selected_worktree_path = NULL,
+                    blocked_reason = NULL,
+                    updated_at = ?
+                WHERE plan_item_id = ? AND status = 'blocked'
+                """,
+                (now, plan_item_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+
+        logger.debug(
+            "state plan item requeued plan_item_id=%s status=created",
+            plan_item_id,
+        )
+        return self.get_plan_item(plan_item_id)
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row

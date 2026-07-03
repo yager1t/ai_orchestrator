@@ -712,6 +712,37 @@ def test_state_store_records_blocked_reason_for_plan_items(
     assert store.list_plan_items(status="blocked") == [updated]
 
 
+def test_state_store_requeues_blocked_plan_item_and_clears_metadata(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Demo item",
+    )
+    blocked = store.update_plan_item_status(
+        item.plan_item_id,
+        status="blocked",
+        task_id=task.task_id,
+        selected_worktree_path=tmp_path / "old-worktree",
+        blocked_reason="operator review",
+    )
+
+    assert blocked is not None
+
+    requeued = store.requeue_plan_item(item.plan_item_id)
+
+    assert requeued is not None
+    assert requeued.status == "created"
+    assert requeued.task_id is None
+    assert requeued.selected_worktree_path is None
+    assert requeued.blocked_reason is None
+    assert store.requeue_plan_item(item.plan_item_id) is None
+
+
 def test_state_store_updates_plan_item_status(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo", repo_path=tmp_path)

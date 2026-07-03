@@ -88,6 +88,15 @@ python -m ai_orchestrator autopilot queue recover-in-progress --repo . --all-pla
 python -m ai_orchestrator autopilot queue recover-in-progress --repo . --all-plans --apply --reason "batch run timed out before supervisor report"
 ```
 
+Requeue a blocked item back to `created` after operator review. The command is
+a dry run unless `--apply` is present, and it never executes the item:
+
+```bash
+python -m ai_orchestrator autopilot queue list --repo . --all-plans --status blocked
+python -m ai_orchestrator autopilot queue requeue --repo . <plan_item_id>
+python -m ai_orchestrator autopilot queue requeue --repo . --apply <plan_item_id>
+```
+
 Preview the next queued batch without starting work:
 
 ```bash
