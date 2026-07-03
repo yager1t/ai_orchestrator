@@ -13,7 +13,9 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add a read-only `--dirty-only` filter to `ai-orch autopilot worktree-overview`
+  so operators can focus cleanup review on worktrees with uncommitted or
+  untracked changes, without deleting or pruning anything.
 
 ## P3 / Deferred
 
