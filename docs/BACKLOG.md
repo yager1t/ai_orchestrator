@@ -13,7 +13,10 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add the first queue show/details slice: expose a read-only CLI path that
+  prints a selected queue item's status, source, task text, task id, report
+  path, selected worktree, and blocker/skip reason before operator actions such
+  as requeue or skip, without changing queue state.
 
 ## P3 / Deferred
 
