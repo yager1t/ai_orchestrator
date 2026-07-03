@@ -13,7 +13,10 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add the first queue requeue slice: expose a guarded dry-run-by-default CLI
+  path that lets the operator move a selected `blocked` queue item back to
+  `created` after review, clears stale blocker metadata, and does not execute
+  the item automatically.
 
 ## P3 / Deferred
 
