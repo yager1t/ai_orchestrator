@@ -2552,6 +2552,259 @@ def test_autopilot_queue_run_next_returns_zero_when_no_ready_items(
     assert "No queued plan items ready" in output
 
 
+def test_autopilot_queue_run_next_passes_timeout_and_records_blocked_reason_when_budget_exhausted(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    captured_budgets: list[int | None] = []
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        captured_budgets.append(self.max_runtime_sec)
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id="task-budget-1"
+        )
+        return SupervisorResult(
+            status="blocked",
+            summary="Runtime budget exhausted",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-next",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-runtime-sec",
+            "42",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Queue item" in output
+    assert "status=blocked" in output
+    assert captured_budgets == [42]
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    assert item.status == "blocked"
+    assert item.task_id == "task-budget-1"
+    assert item.blocked_reason == "Runtime budget exhausted"
+
+
+def test_autopilot_queue_run_next_uses_config_runtime_budget_by_default(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+    write_config(tmp_path, max_runtime_sec=17)
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    captured_budgets: list[int | None] = []
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        captured_budgets.append(self.max_runtime_sec)
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id="task-default-budget"
+        )
+        return SupervisorResult(
+            status="done",
+            summary="Verification passed: custom",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-next",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+        ]
+    )
+    capsys.readouterr()
+
+    assert exit_code == 0
+    assert captured_budgets == [17]
+
+
+def test_autopilot_queue_run_next_rejects_non_positive_runtime_budget(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-next",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-runtime-sec",
+            "0",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "--max-runtime-sec must be greater than 0" in output
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    assert item.status == "created"
+
+
+def test_autopilot_queue_run_batch_passes_timeout_and_records_blocked_reason_when_budget_exhausted(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    captured_budgets: list[int | None] = []
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        captured_budgets.append(self.max_runtime_sec)
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id="batch-budget-1"
+        )
+        return SupervisorResult(
+            status="blocked",
+            summary="Runtime budget exhausted",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "2",
+            "--max-runtime-sec",
+            "99",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Queue item" in output
+    assert "status=blocked" in output
+    assert "Batch stopped after 1 item(s): status=blocked" in output
+    assert captured_budgets == [99]
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert items["First task"].status == "blocked"
+    assert items["First task"].task_id == "batch-budget-1"
+    assert items["First task"].blocked_reason == "Runtime budget exhausted"
+    assert items["Second task"].status == "created"
+
+
+def test_autopilot_queue_run_batch_rejects_non_positive_runtime_budget(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-runtime-sec",
+            "-1",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "--max-runtime-sec must be greater than 0" in output
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    assert item.status == "created"
+
+
 def test_autopilot_queue_run_batch_defaults_to_dry_run(
     capsys,
     tmp_path: Path,
@@ -3782,6 +4035,7 @@ def write_config(
     generic_args: list[str] | None = None,
     include_memory: bool = False,
     memory_project: str = "",
+    max_runtime_sec: int | None = None,
 ) -> None:
     config_dir = repo / ".ai-orch"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -3881,6 +4135,9 @@ def write_config(
     if fallback_agents:
         fallback_lines = "\n".join(f'    - "{agent}"' for agent in fallback_agents)
         fallback_section = f"  fallback_agents:\n{fallback_lines}\n"
+    runtime_section = ""
+    if max_runtime_sec is not None:
+        runtime_section = f"  max_runtime_sec: {max_runtime_sec}\n"
     memory_section = ""
     if include_memory:
         memory_section = f"""
@@ -3898,7 +4155,7 @@ memory:
         f"""
 orchestrator:
   default_agent: "{default_agent}"
-{fallback_section}  max_iterations: 3
+{fallback_section}{runtime_section}  max_iterations: 3
 
 {agents_section}
 

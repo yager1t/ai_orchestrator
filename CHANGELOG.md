@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added `--max-runtime-sec` to `ai-orch autopilot queue run-next` and
+  `run-batch` so operators can optionally override the configured supervisor
+  runtime budget per run; when the budget is exhausted the queue item is
+  recorded as `blocked` with reason `Runtime budget exhausted` and a report is
+  still written, without changing default execution semantics.
 - Added `ai-orch autopilot queue recover-in-progress` to review interrupted
   queue runs and mark stale `in_progress` items blocked with an operator reason.
 - Added `ai-orch memory preflight` summary line showing total, passed, and failed
