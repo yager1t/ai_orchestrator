@@ -13,7 +13,9 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add the first Codebase Memory preflight summary slice: make `ai-orch memory
+  preflight` print a concise read-only context summary with step counts and
+  failure counts without changing provider execution semantics.
 
 ## P3 / Deferred
 
