@@ -22,6 +22,10 @@ from ai_orchestrator.autopilot import (
     sync_backlog_items,
     sync_plan_items,
 )
+from ai_orchestrator.autopilot.worktree_overview import (
+    format_worktree_overview,
+    gather_worktree_overviews,
+)
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
 from ai_orchestrator.core.supervisor import Supervisor, SupervisorResult
 from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
@@ -210,6 +214,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Run the supervisor in an existing separate git worktree. "
             "Relative paths are resolved from --repo."
         ),
+    )
+
+    autopilot_worktree_overview = autopilot_sub.add_parser(
+        "worktree-overview",
+        help="Inspect git worktrees under a base directory without making changes",
+    )
+    autopilot_worktree_overview.add_argument("--repo", default=".")
+    autopilot_worktree_overview.add_argument(
+        "--base-dir",
+        required=True,
+        help="Directory containing candidate git worktrees to inspect",
     )
 
     autopilot_queue = autopilot_sub.add_parser(
@@ -1148,6 +1163,9 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
     if args.autopilot_command == "queue":
         return _run_autopilot_queue_command(args, parser)
 
+    if args.autopilot_command == "worktree-overview":
+        return _run_autopilot_worktree_overview(args)
+
     plan_path = _resolve_plan_path(repo, Path(args.plan))
     if not plan_path.exists():
         print(f"Plan not found: {plan_path}")
@@ -1171,6 +1189,27 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
 
     parser.print_help()
     return 1
+
+
+def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
+    """Render a read-only overview of git worktrees under a base directory."""
+    repo = Path(args.repo)
+    base_dir = Path(args.base_dir)
+    if not base_dir.is_absolute():
+        base_dir = repo / base_dir
+    base_dir = base_dir.resolve()
+
+    if not base_dir.exists():
+        print(f"Base directory does not exist: {base_dir}")
+        return 1
+    if not base_dir.is_dir():
+        print(f"Base path is not a directory: {base_dir}")
+        return 1
+
+    repo_for_link = _git_rev_parse_path(repo, "--show-toplevel")
+    overviews = gather_worktree_overviews(base_dir, repo=repo_for_link)
+    print(format_worktree_overview(overviews, base_dir, repo=repo_for_link))
+    return 0
 
 
 def _run_autopilot_task(

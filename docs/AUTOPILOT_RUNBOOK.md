@@ -168,6 +168,18 @@ git worktree list
 git worktree prune
 ```
 
+Review old worktrees before any cleanup with the read-only overview command:
+
+```bash
+python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-orch-worktrees
+```
+
+The overview reports each detected git worktree's branch, whether it is linked
+to the review repo, whether that branch is already merged into the review repo
+HEAD, whether a merge is in progress, dirty and untracked counts, and last
+modified time. This command never creates, deletes, prunes, or checks out
+worktrees; cleanup remains a separate manual operator decision.
+
 ## 4. Execute
 
 Start the selected item only after the dry run is correct:

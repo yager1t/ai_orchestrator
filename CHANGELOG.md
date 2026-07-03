@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot worktree-overview --base-dir DIR` to inspect git
+  worktrees under a base directory, including linked branch, whether the branch
+  is merged into the review repo, merge-in-progress state, dirty state, and
+  last modified time, without creating, deleting, or pruning anything.
 - Added `ai-orch autopilot queue show <plan_item_id>` to display a selected
   queue item's status, source, task text, task id, report path, selected
   worktree, and blocker/skip reason without changing queue state.
