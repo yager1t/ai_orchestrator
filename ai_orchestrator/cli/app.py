@@ -325,6 +325,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Relative paths are resolved from --repo."
         ),
     )
+    autopilot_queue_run_next.add_argument(
+        "--max-runtime-sec",
+        type=int,
+        metavar="SECONDS",
+        help=(
+            "Optional per-run supervisor runtime budget in seconds. "
+            "Overrides orchestrator.max_runtime_sec for this queue item."
+        ),
+    )
     autopilot_queue_run_batch = autopilot_queue_sub.add_parser(
         "run-batch",
         help="Run up to a configurable number of persisted queue items serially",
@@ -363,6 +372,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Run each queued item in a separate pre-created git worktree under "
             "BASE_DIR. Mutually exclusive with --worktree. Dry-run by default."
+        ),
+    )
+    autopilot_queue_run_batch.add_argument(
+        "--max-runtime-sec",
+        type=int,
+        metavar="SECONDS",
+        help=(
+            "Optional per-run supervisor runtime budget in seconds. "
+            "Overrides orchestrator.max_runtime_sec for this queue item."
         ),
     )
     autopilot_queue_run_batch.add_argument(
@@ -774,6 +792,23 @@ def _queue_item_refs(repo: Path, item: StoredPlanItem) -> str:
     return f"{task_ref}{worktree_ref}{blocked_reason_ref}{report_ref}"
 
 
+_RUNTIME_BUDGET_EXHAUSTED_SUMMARY = "Runtime budget exhausted"
+
+
+def _runtime_budget_exhausted_reason(result: SupervisorResult) -> str | None:
+    if result.status == "blocked" and result.summary == _RUNTIME_BUDGET_EXHAUSTED_SUMMARY:
+        return _RUNTIME_BUDGET_EXHAUSTED_SUMMARY
+    return None
+
+
+def _validate_max_runtime_sec(args: argparse.Namespace) -> bool:
+    max_runtime_sec = getattr(args, "max_runtime_sec", None)
+    if max_runtime_sec is None or max_runtime_sec > 0:
+        return True
+    print("--max-runtime-sec must be greater than 0")
+    return False
+
+
 def _filter_queue_items(
     items: list[StoredPlanItem],
     statuses: tuple[str, ...],
@@ -1139,6 +1174,10 @@ def _run_autopilot_task(
     if on_start is not None:
         on_start()
 
+    max_runtime_sec = getattr(args, "max_runtime_sec", None)
+    runtime_budget = (
+        max_runtime_sec if max_runtime_sec is not None else config.max_runtime_sec
+    )
     supervisor = Supervisor(
         agent=agent,
         verifier=VerificationRunner(policy_engine=policy_engine),
@@ -1146,7 +1185,7 @@ def _run_autopilot_task(
         state_store=store,
         max_iterations=config.max_iterations,
         max_no_change_iterations=config.max_no_change_iterations,
-        max_runtime_sec=config.max_runtime_sec,
+        max_runtime_sec=runtime_budget,
         require_repo_change=True,
         progress_callback=_print_progress,
     )
@@ -1478,6 +1517,8 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         return _run_autopilot_queue_recover_in_progress(args, repo, store)
 
     if args.autopilot_queue_command == "run-next":
+        if not _validate_max_runtime_sec(args):
+            return 1
         plan_path = _resolve_plan_path(repo, Path(args.plan))
         if not plan_path.exists():
             print(f"Plan not found: {plan_path}")
@@ -1502,7 +1543,13 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         if result is None:
             return 0
         item_status = plan_item_status_from_supervisor(result.status)
-        store.update_plan_item_status(next_item.plan_item_id, item_status, task_id=result.task_id)
+        blocked_reason = _runtime_budget_exhausted_reason(result)
+        store.update_plan_item_status(
+            next_item.plan_item_id,
+            item_status,
+            task_id=result.task_id,
+            blocked_reason=blocked_reason,
+        )
         print(f"Queue item {next_item.plan_item_id}: status={item_status}")
         if result.task_id is not None:
             report_path = _write_task_report(store, repo, result.task_id)
@@ -1511,6 +1558,8 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         return 0 if item_status == "done" else 1
 
     if args.autopilot_queue_command == "run-batch":
+        if not _validate_max_runtime_sec(args):
+            return 1
         plan_path = _resolve_plan_path(repo, Path(args.plan))
         if not plan_path.exists():
             print(f"Plan not found: {plan_path}")
@@ -1577,7 +1626,13 @@ def _run_autopilot_queue_batch(
             print("Batch stopped: unexpected dry run in execute mode")
             return 1
         item_status = plan_item_status_from_supervisor(result.status)
-        store.update_plan_item_status(next_item.plan_item_id, item_status, task_id=result.task_id)
+        blocked_reason = _runtime_budget_exhausted_reason(result)
+        store.update_plan_item_status(
+            next_item.plan_item_id,
+            item_status,
+            task_id=result.task_id,
+            blocked_reason=blocked_reason,
+        )
         print(f"Queue item {next_item.plan_item_id}: status={item_status}")
         processed += 1
         if result.task_id is not None:
@@ -1651,11 +1706,13 @@ def _run_rotated_autopilot_queue_batch(
             print("Batch stopped: unexpected dry run in execute mode")
             return 1
         item_status = plan_item_status_from_supervisor(result.status)
+        blocked_reason = _runtime_budget_exhausted_reason(result)
         store.update_plan_item_status(
             item.plan_item_id,
             item_status,
             task_id=result.task_id,
             selected_worktree_path=worktree,
+            blocked_reason=blocked_reason,
         )
         print(f"Queue item {item.plan_item_id}: status={item_status}")
         processed += 1
