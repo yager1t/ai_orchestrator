@@ -410,6 +410,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Reason for blocking stale in_progress items (required with --apply)",
     )
 
+    autopilot_queue_show = autopilot_queue_sub.add_parser(
+        "show",
+        help="Show a selected queue item's details without changing state",
+    )
+    autopilot_queue_show.add_argument(
+        "plan_item_id",
+        type=int,
+        help="Persisted queue item id to show",
+    )
+    autopilot_queue_show.add_argument("--repo", default=".")
+
     autopilot_queue_requeue = autopilot_queue_sub.add_parser(
         "requeue",
         help="Move a blocked queue item back to created after operator review",
@@ -1415,6 +1426,34 @@ def _run_autopilot_queue_recover_in_progress(
     return 0
 
 
+def _run_autopilot_queue_show(
+    args: argparse.Namespace,
+    repo: Path,
+    store: StateStore,
+) -> int:
+    """Print a selected queue item's details without changing stored state.
+
+    Shows the status, source, task text, task id, report path, selected
+    worktree, and blocker/skip reason so an operator can decide whether to
+    requeue, skip, or continue without mutating the queue.
+    """
+    item = store.get_plan_item(args.plan_item_id)
+    if item is None:
+        print(f"Queue item not found: {args.plan_item_id}")
+        return 1
+
+    report_path = _task_report_path(repo, item.task_id)
+    print(f"Queue item: {item.plan_item_id}")
+    print(f"  status: {item.status}")
+    print(f"  source: {item.plan_path}:{item.line_number}")
+    print(f"  task: {item.text}")
+    print(f"  task_id: {item.task_id or 'none'}")
+    print(f"  report_path: {report_path or 'none'}")
+    print(f"  selected_worktree: {item.selected_worktree_path or 'none'}")
+    print(f"  reason: {item.blocked_reason or 'none'}")
+    return 0
+
+
 def _run_autopilot_queue_requeue(
     args: argparse.Namespace,
     repo: Path,
@@ -1645,6 +1684,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
 
     if args.autopilot_queue_command == "recover-in-progress":
         return _run_autopilot_queue_recover_in_progress(args, repo, store)
+
+    if args.autopilot_queue_command == "show":
+        return _run_autopilot_queue_show(args, repo, store)
 
     if args.autopilot_queue_command == "requeue":
         return _run_autopilot_queue_requeue(args, repo, store)

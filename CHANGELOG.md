@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot queue show <plan_item_id>` to display a selected
+  queue item's status, source, task text, task id, report path, selected
+  worktree, and blocker/skip reason without changing queue state.
 - Added `ai-orch autopilot queue skip` to mark a selected `created` or `blocked`
   queue item as `skipped` with a required operator reason after review. The
   command is dry-run by default and never executes or deletes the item.

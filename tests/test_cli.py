@@ -4017,6 +4017,113 @@ def test_memory_preflight_returns_failure_when_any_step_fails(
     assert calls == 2
 
 
+def test_autopilot_queue_show_prints_item_details_without_changing_state(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Created task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "show",
+            "--repo",
+            str(tmp_path),
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Queue item: {item.plan_item_id}" in output
+    assert "status: created" in output
+    assert f"source: {plan}:1" in output
+    assert "task: Created task" in output
+    assert "task_id: none" in output
+    assert "report_path: none" in output
+    assert "selected_worktree: none" in output
+    assert "reason: none" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+
+
+def test_autopilot_queue_show_prints_blocked_reason_and_report_path(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Done task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    task = store.create_task("Done task", repo_path=tmp_path)
+    report_path = tmp_path / ".ai-orch" / "reports" / f"{task.task_id}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("report", encoding="utf-8")
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "blocked",
+        task_id=task.task_id,
+        selected_worktree_path=tmp_path / "worktree",
+        blocked_reason="needs operator review",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "show",
+            "--repo",
+            str(tmp_path),
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert "status: blocked" in output
+    assert f"task_id: {task.task_id}" in output
+    assert f"report_path: {report_path}" in output
+    assert f"selected_worktree: {tmp_path / 'worktree'}" in output
+    assert "reason: needs operator review" in output
+    assert loaded is not None
+    assert loaded.status == "blocked"
+
+
+def test_autopilot_queue_show_reports_missing_item(capsys, tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "show",
+            "--repo",
+            str(tmp_path),
+            "9999",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Queue item not found: 9999" in output
+
+
 def test_autopilot_queue_requeue_dry_run_reports_blocked_item(
     capsys,
     tmp_path: Path,
