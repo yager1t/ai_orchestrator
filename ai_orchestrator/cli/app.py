@@ -426,6 +426,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Actually move the item back to created; without this flag the command is a dry run",
     )
 
+    autopilot_queue_skip = autopilot_queue_sub.add_parser(
+        "skip",
+        help="Mark a created or blocked queue item as skipped after operator review",
+    )
+    autopilot_queue_skip.add_argument(
+        "plan_item_id",
+        type=int,
+        help="Persisted queue item id to skip",
+    )
+    autopilot_queue_skip.add_argument("--repo", default=".")
+    autopilot_queue_skip.add_argument(
+        "--reason",
+        required=True,
+        help="Reason the item is being skipped (required)",
+    )
+    autopilot_queue_skip.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually mark the item skipped; without this flag the command is a dry run",
+    )
+
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
     memory_sub = memory.add_subparsers(dest="memory_command")
     memory_status = memory_sub.add_parser("status", help="Show memory provider status")
@@ -1440,6 +1461,53 @@ def _run_autopilot_queue_requeue(
     return 0
 
 
+def _run_autopilot_queue_skip(
+    args: argparse.Namespace,
+    repo: Path,
+    store: StateStore,
+) -> int:
+    """Mark a selected ``created`` or ``blocked`` queue item as ``skipped``.
+
+    Dry-run by default. When ``args.apply`` is set, the persisted item is
+    updated to ``skipped`` and the operator-supplied reason is recorded. The
+    item is never executed or deleted by this command.
+    """
+    item = store.get_plan_item(args.plan_item_id)
+    if item is None:
+        print(f"Queue item not found: {args.plan_item_id}")
+        return 1
+
+    if item.status not in {"created", "blocked"}:
+        print(
+            f"Queue item {args.plan_item_id} cannot be skipped (status={item.status})"
+        )
+        return 1
+
+    print(f"Skip queue item {item.plan_item_id}")
+    print(f"  source: {item.plan_path}:{item.line_number}")
+    print(f"  task: {item.text}")
+    print(f"  current_status: {item.status}")
+    print(f"  reason: {args.reason}")
+    if item.blocked_reason and item.status == "blocked":
+        print(f"  blocked_reason: {item.blocked_reason}")
+    if item.task_id:
+        print(f"  task_id: {item.task_id}")
+    if item.selected_worktree_path:
+        print(f"  selected_worktree_path: {item.selected_worktree_path}")
+
+    if not args.apply:
+        print("  dry_run: use --apply to mark this item skipped")
+        return 0
+
+    skipped = store.skip_plan_item(item.plan_item_id, reason=args.reason)
+    if skipped is None:
+        print("  skip failed: item is no longer created or blocked")
+        return 1
+
+    print("  status: skipped")
+    return 0
+
+
 def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.autopilot_queue_command is None:
         parser.print_help()
@@ -1580,6 +1648,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
 
     if args.autopilot_queue_command == "requeue":
         return _run_autopilot_queue_requeue(args, repo, store)
+
+    if args.autopilot_queue_command == "skip":
+        return _run_autopilot_queue_skip(args, repo, store)
 
     if args.autopilot_queue_command == "run-next":
         if not _validate_max_runtime_sec(args):

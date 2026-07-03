@@ -743,6 +743,49 @@ def test_state_store_requeues_blocked_plan_item_and_clears_metadata(
     assert store.requeue_plan_item(item.plan_item_id) is None
 
 
+def test_state_store_skips_created_or_blocked_plan_item_with_reason(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    created_item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Created item",
+    )
+    blocked_item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=2,
+        section="",
+        text="Blocked item",
+    )
+    done_item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=3,
+        section="",
+        text="Done item",
+    )
+    store.update_plan_item_status(blocked_item.plan_item_id, "blocked")
+    store.update_plan_item_status(done_item.plan_item_id, "done")
+
+    skipped_created = store.skip_plan_item(
+        created_item.plan_item_id,
+        reason="operator reviewed: out of scope",
+    )
+    skipped_blocked = store.skip_plan_item(
+        blocked_item.plan_item_id,
+        reason="operator reviewed: blocked for now",
+    )
+
+    assert skipped_created is not None
+    assert skipped_created.status == "skipped"
+    assert skipped_created.blocked_reason == "operator reviewed: out of scope"
+    assert skipped_blocked is not None
+    assert skipped_blocked.status == "skipped"
+    assert skipped_blocked.blocked_reason == "operator reviewed: blocked for now"
+    assert store.skip_plan_item(done_item.plan_item_id, reason="nope") is None
+
+
 def test_state_store_updates_plan_item_status(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo", repo_path=tmp_path)
