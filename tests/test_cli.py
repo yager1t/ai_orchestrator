@@ -4017,6 +4017,149 @@ def test_memory_preflight_returns_failure_when_any_step_fails(
     assert calls == 2
 
 
+def test_autopilot_queue_requeue_dry_run_reports_blocked_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Blocked task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "blocked",
+        blocked_reason="needs operator review",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "requeue",
+            "--repo",
+            str(tmp_path),
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Requeue queue item {item.plan_item_id}" in output
+    assert "blocked_reason: needs operator review" in output
+    assert "dry_run: use --apply to move this item back to created" in output
+    assert loaded is not None
+    assert loaded.status == "blocked"
+    assert loaded.blocked_reason == "needs operator review"
+
+
+def test_autopilot_queue_requeue_apply_clears_metadata_and_moves_to_created(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Blocked task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    task = store.create_task("Blocked task", repo_path=tmp_path, task_id="task-old")
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "blocked",
+        task_id=task.task_id,
+        selected_worktree_path=tmp_path / "old-worktree",
+        blocked_reason="agent timed out",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "requeue",
+            "--repo",
+            str(tmp_path),
+            "--apply",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Requeue queue item {item.plan_item_id}" in output
+    assert "status: created" in output
+    assert "cleared: blocked_reason, task_id, selected_worktree_path" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+    assert loaded.blocked_reason is None
+    assert loaded.task_id is None
+    assert loaded.selected_worktree_path is None
+
+
+def test_autopilot_queue_requeue_apply_requires_blocked_status(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Created task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "requeue",
+            "--repo",
+            str(tmp_path),
+            "--apply",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 1
+    assert f"Queue item {item.plan_item_id} is not blocked (status=created)" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+
+
+def test_autopilot_queue_requeue_reports_missing_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "requeue",
+            "--repo",
+            str(tmp_path),
+            "--apply",
+            "9999",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Queue item not found: 9999" in output
+
+
 def write_config(
     repo: Path,
     command_name: str = "custom",

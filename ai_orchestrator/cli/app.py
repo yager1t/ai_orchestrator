@@ -410,6 +410,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Reason for blocking stale in_progress items (required with --apply)",
     )
 
+    autopilot_queue_requeue = autopilot_queue_sub.add_parser(
+        "requeue",
+        help="Move a blocked queue item back to created after operator review",
+    )
+    autopilot_queue_requeue.add_argument(
+        "plan_item_id",
+        type=int,
+        help="Persisted queue item id to requeue",
+    )
+    autopilot_queue_requeue.add_argument("--repo", default=".")
+    autopilot_queue_requeue.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually move the item back to created; without this flag the command is a dry run",
+    )
+
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
     memory_sub = memory.add_subparsers(dest="memory_command")
     memory_status = memory_sub.add_parser("status", help="Show memory provider status")
@@ -1378,6 +1394,52 @@ def _run_autopilot_queue_recover_in_progress(
     return 0
 
 
+def _run_autopilot_queue_requeue(
+    args: argparse.Namespace,
+    repo: Path,
+    store: StateStore,
+) -> int:
+    """Move a selected blocked queue item back to ``created`` after review.
+
+    Dry-run by default. When ``args.apply`` is set, the persisted item is
+    updated, its blocker metadata is cleared, and the item is left ready for
+    a future queue run. It is never executed by this command.
+    """
+    item = store.get_plan_item(args.plan_item_id)
+    if item is None:
+        print(f"Queue item not found: {args.plan_item_id}")
+        return 1
+
+    if item.status != "blocked":
+        print(
+            f"Queue item {args.plan_item_id} is not blocked (status={item.status})"
+        )
+        return 1
+
+    print(f"Requeue queue item {item.plan_item_id}")
+    print(f"  source: {item.plan_path}:{item.line_number}")
+    print(f"  task: {item.text}")
+    if item.blocked_reason:
+        print(f"  blocked_reason: {item.blocked_reason}")
+    if item.task_id:
+        print(f"  task_id: {item.task_id}")
+    if item.selected_worktree_path:
+        print(f"  selected_worktree_path: {item.selected_worktree_path}")
+
+    if not args.apply:
+        print("  dry_run: use --apply to move this item back to created")
+        return 0
+
+    requeued = store.requeue_plan_item(item.plan_item_id)
+    if requeued is None:
+        print("  requeue failed: item is no longer blocked")
+        return 1
+
+    print("  status: created")
+    print("  cleared: blocked_reason, task_id, selected_worktree_path")
+    return 0
+
+
 def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.autopilot_queue_command is None:
         parser.print_help()
@@ -1515,6 +1577,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
 
     if args.autopilot_queue_command == "recover-in-progress":
         return _run_autopilot_queue_recover_in_progress(args, repo, store)
+
+    if args.autopilot_queue_command == "requeue":
+        return _run_autopilot_queue_requeue(args, repo, store)
 
     if args.autopilot_queue_command == "run-next":
         if not _validate_max_runtime_sec(args):

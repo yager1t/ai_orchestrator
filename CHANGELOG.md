@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot queue requeue` to move a selected `blocked` queue
+  item back to `created` after operator review, clear stale blocker metadata,
+  and leave the item ready for a future queue run without executing it
+  automatically.
 - Added `--max-runtime-sec` to `ai-orch autopilot queue run-next` and
   `run-batch` so operators can optionally override the configured supervisor
   runtime budget per run; when the budget is exhausted the queue item is
