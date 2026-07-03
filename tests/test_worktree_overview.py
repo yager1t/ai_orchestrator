@@ -136,6 +136,25 @@ def test_format_worktree_overview_empty(tmp_path: Path) -> None:
     assert output == f"No git worktrees found under {base}"
 
 
+def test_format_worktree_overview_includes_review_hint(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    overviews = gather_worktree_overviews(base, repo=repo)
+    output = format_worktree_overview(overviews, base, repo=repo)
+
+    assert "Review hint:" in output
+    assert "squash merge" in output
+    assert "strict ancestry" in output
+    assert "git log --oneline HEAD..<branch>" in output
+    assert "git diff --stat HEAD...<branch>" in output
+    assert "never deletes, prunes, or modifies" in output
+
+
 def test_cli_worktree_overview(capsys, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

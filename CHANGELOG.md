@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a review hint to `ai-orch autopilot worktree-overview` explaining that
+  strict ancestry can keep `merged=no` after squash merges and pointing
+  operators to read-only follow-up commands before cleanup.
 - Added `ai-orch autopilot worktree-overview --base-dir DIR` to inspect git
   worktrees under a base directory, including linked branch, whether the branch
   is merged into the review repo, merge-in-progress state, dirty state, and
