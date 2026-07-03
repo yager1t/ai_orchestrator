@@ -226,6 +226,11 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Directory containing candidate git worktrees to inspect",
     )
+    autopilot_worktree_overview.add_argument(
+        "--dirty-only",
+        action="store_true",
+        help="Show only worktrees with uncommitted or untracked changes",
+    )
 
     autopilot_queue = autopilot_sub.add_parser(
         "queue",
@@ -1208,6 +1213,11 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
 
     repo_for_link = _git_rev_parse_path(repo, "--show-toplevel")
     overviews = gather_worktree_overviews(base_dir, repo=repo_for_link)
+    if args.dirty_only:
+        overviews = [overview for overview in overviews if overview.dirty]
+        if not overviews:
+            print(f"No dirty git worktrees found under {base_dir}")
+            return 0
     print(format_worktree_overview(overviews, base_dir, repo=repo_for_link))
     return 0
 

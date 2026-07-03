@@ -177,8 +177,9 @@ python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-
 The overview reports each detected git worktree's branch, whether it is linked
 to the review repo, whether that branch is already merged into the review repo
 HEAD, whether a merge is in progress, dirty and untracked counts, and last
-modified time. This command never creates, deletes, prunes, or checks out
-worktrees; cleanup remains a separate manual operator decision.
+modified time. Add `--dirty-only` to focus the table on worktrees with
+uncommitted or untracked changes. This command never creates, deletes, prunes,
+or checks out worktrees; cleanup remains a separate manual operator decision.
 
 ## 4. Execute
 
