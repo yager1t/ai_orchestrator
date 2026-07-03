@@ -685,6 +685,33 @@ def test_state_store_records_selected_worktree_path_for_plan_items(
     assert store.list_plan_items(status="in_progress") == [updated]
 
 
+def test_state_store_records_blocked_reason_for_plan_items(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Demo item",
+        blocked_reason="initial timeout",
+    )
+
+    assert item.blocked_reason == "initial timeout"
+    assert store.get_plan_item(item.plan_item_id) == item
+
+    updated = store.update_plan_item_status(
+        item.plan_item_id,
+        status="blocked",
+        blocked_reason="interrupted batch run",
+    )
+
+    assert updated is not None
+    assert updated.status == "blocked"
+    assert updated.blocked_reason == "interrupted batch run"
+    assert store.list_plan_items(status="blocked") == [updated]
+
+
 def test_state_store_updates_plan_item_status(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo", repo_path=tmp_path)
@@ -822,3 +849,34 @@ def test_migrate_schema_upgrades_v5_store_with_plan_item_worktree_path(
 
     assert version == SCHEMA_VERSION
     assert "selected_worktree_path" in columns
+
+
+def test_migrate_schema_upgrades_v6_store_with_plan_item_blocked_reason(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 6")
+        connection.execute(
+            """
+            CREATE TABLE plan_items (
+                plan_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_path TEXT NOT NULL,
+                line_number INTEGER NOT NULL,
+                section TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                task_id TEXT,
+                selected_worktree_path TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        version = migrate_schema(connection)
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(plan_items)")
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "blocked_reason" in columns

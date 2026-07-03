@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add the first autopilot queue recovery slice: expose a guarded CLI path that
-  identifies stale `in_progress` queue items and lets the operator mark them
-  `blocked` with a clear reason after a timed-out or interrupted batch run,
-  without changing normal agent execution semantics.
+No open P2 items.
 
 ## P3 / Deferred
 
