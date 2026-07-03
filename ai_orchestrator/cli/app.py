@@ -17,6 +17,7 @@ from ai_orchestrator.autopilot import (
     next_task,
     plan_item_status_from_supervisor,
     plan_item_to_task,
+    sync_backlog_items,
     sync_plan_items,
 )
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
@@ -186,6 +187,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     autopilot_queue_sync.add_argument("--repo", default=".")
     autopilot_queue_sync.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_sync_backlog = autopilot_queue_sub.add_parser(
+        "sync-backlog",
+        help="Load open backlog priority items into the persisted queue",
+    )
+    autopilot_queue_sync_backlog.add_argument("--repo", default=".")
+    autopilot_queue_sync_backlog.add_argument("--backlog", default="docs/BACKLOG.md")
+    autopilot_queue_sync_backlog.add_argument(
+        "--priority",
+        action="append",
+        choices=["P0", "P1", "P2", "P3 / Deferred"],
+        help="Backlog priority section to include; repeat to include multiple sections",
+    )
     autopilot_queue_list = autopilot_queue_sub.add_parser(
         "list",
         help="Display persisted queue status without running batch execution",
@@ -833,14 +846,15 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
         return 1
 
     repo = Path(args.repo)
+    if args.autopilot_command == "queue":
+        return _run_autopilot_queue_command(args, parser)
+
     plan_path = _resolve_plan_path(repo, Path(args.plan))
     if not plan_path.exists():
         print(f"Plan not found: {plan_path}")
         return 1
 
     store = _state_store_for_repo(repo)
-    if args.autopilot_command == "queue":
-        return _run_autopilot_queue_command(args, parser)
 
     tasks = load_plan_tasks(plan_path)
     selected = next_task(tasks, store)
@@ -987,12 +1001,31 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         return 1
 
     repo = Path(args.repo)
+    store = _state_store_for_repo(repo)
+
+    if args.autopilot_queue_command == "sync-backlog":
+        backlog_path = _resolve_plan_path(repo, Path(args.backlog))
+        if not backlog_path.exists():
+            print(f"Backlog not found: {backlog_path}")
+            return 1
+        priorities = tuple(args.priority or ["P0", "P1", "P2"])
+        new_items, existing_items = sync_backlog_items(
+            backlog_path,
+            store,
+            priorities=priorities,
+        )
+        print(f"Synced backlog {backlog_path}")
+        print(f"  priorities: {', '.join(priorities)}")
+        print(f"  new: {len(new_items)}")
+        print(f"  existing: {len(existing_items)}")
+        for item in new_items:
+            print(f"  + {item.section}:{item.line_number}: {item.text}")
+        return 0
+
     plan_path = _resolve_plan_path(repo, Path(args.plan))
     if not plan_path.exists():
         print(f"Plan not found: {plan_path}")
         return 1
-
-    store = _state_store_for_repo(repo)
 
     if args.autopilot_queue_command == "sync":
         new_items, existing_items = sync_plan_items(plan_path, store)

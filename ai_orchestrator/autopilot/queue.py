@@ -9,6 +9,8 @@ from ai_orchestrator.storage.db import StateStore, StoredPlanItem, StoredTask
 
 _CHECKBOX_RE = re.compile(r"^(?P<indent>\s*)-\s+\[\s\]\s+(?P<text>.+)$")
 _NUMBERED_RE = re.compile(r"^(?P<indent>\s*)\d+\.\s+(?P<text>.+)$")
+_BULLET_RE = re.compile(r"^-\s+(?P<text>.+)$")
+_BACKLOG_DEFAULT_PRIORITIES = ("P0", "P1", "P2")
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,65 @@ def load_plan_tasks(plan_path: Path) -> list[AutopilotTask]:
                         section=section,
                     )
                 )
+    return tasks
+
+
+def load_backlog_tasks(
+    backlog_path: Path,
+    priorities: tuple[str, ...] = _BACKLOG_DEFAULT_PRIORITIES,
+) -> list[AutopilotTask]:
+    """Load open backlog bullets from selected priority sections.
+
+    Only top-level bullets are treated as runnable queue items. Continuation
+    lines are folded into the previous bullet so wrapped Markdown items remain
+    one task.
+    """
+    priority_set = set(priorities)
+    text = backlog_path.read_text(encoding="utf-8")
+    tasks: list[AutopilotTask] = []
+    section = ""
+    active_line_number: int | None = None
+    active_text: list[str] = []
+
+    def _flush() -> None:
+        nonlocal active_line_number, active_text
+        if active_line_number is None or not active_text:
+            active_line_number = None
+            active_text = []
+            return
+        task_text = _normalize_task_text(" ".join(active_text))
+        if task_text and not task_text.lower().startswith("no open "):
+            tasks.append(
+                AutopilotTask(
+                    source_path=backlog_path,
+                    line_number=active_line_number,
+                    text=task_text,
+                    section=section,
+                )
+            )
+        active_line_number = None
+        active_text = []
+
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        stripped = raw_line.strip()
+        if stripped.startswith("#"):
+            _flush()
+            section = stripped.lstrip("#").strip()
+            continue
+
+        in_priority_section = section in priority_set
+        bullet_match = _BULLET_RE.match(raw_line)
+        if bullet_match:
+            _flush()
+            if in_priority_section:
+                active_line_number = line_number
+                active_text = [bullet_match.group("text")]
+            continue
+
+        if active_line_number is not None and raw_line.startswith("  ") and stripped:
+            active_text.append(stripped)
+
+    _flush()
     return tasks
 
 
@@ -149,6 +210,31 @@ def sync_plan_items(
         new_items.append(
             store.record_plan_item(
                 plan_path=plan_path,
+                line_number=task.line_number,
+                section=task.section,
+                text=task.text,
+            )
+        )
+    return new_items, list(existing.values())
+
+
+def sync_backlog_items(
+    backlog_path: Path,
+    store: StateStore,
+    priorities: tuple[str, ...] = _BACKLOG_DEFAULT_PRIORITIES,
+) -> tuple[list[StoredPlanItem], list[StoredPlanItem]]:
+    """Load open backlog items and persist them without duplicates."""
+    tasks = load_backlog_tasks(backlog_path, priorities=priorities)
+    existing = {
+        item.line_number: item for item in store.list_plan_items(plan_path=backlog_path)
+    }
+    new_items: list[StoredPlanItem] = []
+    for task in tasks:
+        if task.line_number in existing:
+            continue
+        new_items.append(
+            store.record_plan_item(
+                plan_path=backlog_path,
                 line_number=task.line_number,
                 section=task.section,
                 text=task.text,
