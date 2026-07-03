@@ -219,6 +219,55 @@ def test_cli_worktree_overview_dirty_only(capsys, tmp_path: Path) -> None:
     assert "wt-feature" not in output
 
 
+def test_cli_worktree_overview_branch_filter(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--branch-filter",
+        "fea",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "feature" in output
+    assert "wt1" not in output
+
+
+def test_cli_worktree_overview_branch_filter_empty(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--branch-filter",
+        "nonexistent",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "No git worktrees matching branch filter 'nonexistent'" in output
+
+
 def test_cli_worktree_overview_dirty_only_empty(capsys, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

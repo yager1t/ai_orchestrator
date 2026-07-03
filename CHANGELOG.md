@@ -5,6 +5,9 @@
 - Added `ai-orch autopilot worktree-overview --dirty-only` to show only git
   worktrees with uncommitted or untracked changes, making cleanup review more
   focused without deleting or pruning anything.
+- Added `ai-orch autopilot worktree-overview --branch-filter TEXT` to show only
+  git worktrees whose branch name contains TEXT, helping operators focus cleanup
+  review on matching branches without deleting or pruning anything.
 - Added a review hint to `ai-orch autopilot worktree-overview` explaining that
   strict ancestry can keep `merged=no` after squash merges and pointing
   operators to read-only follow-up commands before cleanup.
