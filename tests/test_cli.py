@@ -1902,6 +1902,65 @@ def test_autopilot_queue_list_filters_by_status_and_limit(
     assert "Created task" not in output
 
 
+def test_autopilot_queue_list_all_plans_filters_across_sources(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    roadmap = tmp_path / "ROADMAP.md"
+    backlog = tmp_path / "BACKLOG.md"
+    roadmap.write_text("- [ ] Roadmap done task\n", encoding="utf-8")
+    backlog.write_text("- [ ] Backlog created task\n", encoding="utf-8")
+
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(roadmap),
+        ]
+    )
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(backlog),
+        ]
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    roadmap_item = store.list_plan_items(plan_path=roadmap)[0]
+    store.update_plan_item_status(roadmap_item.plan_item_id, "done")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "list",
+            "--repo",
+            str(tmp_path),
+            "--all-plans",
+            "--status",
+            "done",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Queue status for all persisted plans" in output
+    assert "total: 2" in output
+    assert "filtered: 1 status=done" in output
+    assert f"[done] {roadmap}:" in output
+    assert "Roadmap done task" in output
+    assert "Backlog created task" not in output
+
+
 def test_autopilot_queue_sync_works_when_no_unstarted_task_exists(
     capsys,
     tmp_path: Path,
@@ -3006,6 +3065,70 @@ def test_autopilot_queue_status_handles_missing_plan(
 
     assert exit_code == 1
     assert "Plan not found:" in output
+
+
+def test_autopilot_queue_status_all_plans_ignores_missing_plan_arg(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    roadmap = tmp_path / "ROADMAP.md"
+    backlog = tmp_path / "BACKLOG.md"
+    missing_plan = tmp_path / "MISSING.md"
+    roadmap.write_text("- [ ] Roadmap blocked task\n", encoding="utf-8")
+    backlog.write_text("- [ ] Backlog created task\n", encoding="utf-8")
+
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(roadmap),
+        ]
+    )
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(backlog),
+        ]
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    roadmap_item = store.list_plan_items(plan_path=roadmap)[0]
+    store.update_plan_item_status(roadmap_item.plan_item_id, "blocked")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "status",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(missing_plan),
+            "--all-plans",
+            "--status",
+            "blocked",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Queue status for all persisted plans" in output
+    assert "Plan not found:" not in output
+    assert "total: 2" in output
+    assert "filtered: 1 status=blocked" in output
+    assert "recent blocked:" in output
+    assert f"{roadmap}:" in output
+    assert "Roadmap blocked task" in output
+    assert "Backlog created task" not in output
 
 
 def test_autopilot_queue_status_shows_report_path_for_completed_item(

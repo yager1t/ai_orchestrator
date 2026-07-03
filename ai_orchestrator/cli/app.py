@@ -209,6 +209,11 @@ def build_parser() -> argparse.ArgumentParser:
     autopilot_queue_list.add_argument("--repo", default=".")
     autopilot_queue_list.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
     autopilot_queue_list.add_argument(
+        "--all-plans",
+        action="store_true",
+        help="Display queue items from every persisted plan path",
+    )
+    autopilot_queue_list.add_argument(
         "--status",
         action="append",
         choices=_QUEUE_STATUSES,
@@ -226,6 +231,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     autopilot_queue_status.add_argument("--repo", default=".")
     autopilot_queue_status.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_status.add_argument(
+        "--all-plans",
+        action="store_true",
+        help="Summarize queue items from every persisted plan path",
+    )
     autopilot_queue_status.add_argument(
         "--status",
         action="append",
@@ -1026,6 +1036,12 @@ def _resolve_plan_path(repo: Path, plan_path: Path) -> Path:
     return repo / plan_path
 
 
+def _queue_item_label(item: StoredPlanItem, *, include_plan_path: bool) -> str:
+    if include_plan_path:
+        return f"{item.plan_path}:{item.line_number}"
+    return str(item.line_number)
+
+
 def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.autopilot_queue_command is None:
         parser.print_help()
@@ -1053,12 +1069,11 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             print(f"  + {item.section}:{item.line_number}: {item.text}")
         return 0
 
-    plan_path = _resolve_plan_path(repo, Path(args.plan))
-    if not plan_path.exists():
-        print(f"Plan not found: {plan_path}")
-        return 1
-
     if args.autopilot_queue_command == "sync":
+        plan_path = _resolve_plan_path(repo, Path(args.plan))
+        if not plan_path.exists():
+            print(f"Plan not found: {plan_path}")
+            return 1
         new_items, existing_items = sync_plan_items(plan_path, store)
         print(f"Synced {plan_path}")
         print(f"  new: {len(new_items)}")
@@ -1068,14 +1083,24 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         return 0
 
     if args.autopilot_queue_command == "list":
-        all_items = store.list_plan_items(plan_path=plan_path)
+        include_plan_path = bool(args.all_plans)
+        if include_plan_path:
+            plan_label = "all persisted plans"
+            all_items = store.list_plan_items()
+        else:
+            plan_path = _resolve_plan_path(repo, Path(args.plan))
+            if not plan_path.exists():
+                print(f"Plan not found: {plan_path}")
+                return 1
+            plan_label = str(plan_path)
+            all_items = store.list_plan_items(plan_path=plan_path)
         statuses = tuple(args.status or [])
         matched_items = _filter_queue_items(all_items, statuses)
         items = matched_items
         limit = max(0, args.limit)
         if limit:
             items = items[:limit]
-        print(f"Queue status for {plan_path}")
+        print(f"Queue status for {plan_label}")
         print(f"  total: {len(all_items)}")
         if statuses:
             print(f"  filtered: {len(matched_items)} status={','.join(statuses)}")
@@ -1092,13 +1117,24 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             print("  by status:", summary)
         for item in items:
             refs = _queue_item_refs(repo, item)
-            print(f"  [{item.status}] {item.line_number}: {item.text}{refs}")
+            item_label = _queue_item_label(item, include_plan_path=include_plan_path)
+            print(f"  [{item.status}] {item_label}: {item.text}{refs}")
         return 0
 
     if args.autopilot_queue_command == "status":
-        items = store.list_plan_items(plan_path=plan_path)
+        include_plan_path = bool(args.all_plans)
+        if include_plan_path:
+            plan_label = "all persisted plans"
+            items = store.list_plan_items()
+        else:
+            plan_path = _resolve_plan_path(repo, Path(args.plan))
+            if not plan_path.exists():
+                print(f"Plan not found: {plan_path}")
+                return 1
+            plan_label = str(plan_path)
+            items = store.list_plan_items(plan_path=plan_path)
         statuses = tuple(args.status or [])
-        print(f"Queue status for {plan_path}")
+        print(f"Queue status for {plan_label}")
         print(f"  total: {len(items)}")
         if statuses:
             filtered_count = len(_filter_queue_items(items, statuses))
@@ -1134,10 +1170,15 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             print(f"  recent {label}:")
             for item in recent:
                 refs = _queue_item_refs(repo, item)
-                print(f"    {item.line_number}: {item.text}{refs}")
+                item_label = _queue_item_label(item, include_plan_path=include_plan_path)
+                print(f"    {item_label}: {item.text}{refs}")
         return 0
 
     if args.autopilot_queue_command == "run-next":
+        plan_path = _resolve_plan_path(repo, Path(args.plan))
+        if not plan_path.exists():
+            print(f"Plan not found: {plan_path}")
+            return 1
         next_item = next_plan_item(store, plan_path)
         if next_item is None:
             print(f"No queued plan items ready in {plan_path}")
@@ -1167,6 +1208,10 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         return 0 if item_status == "done" else 1
 
     if args.autopilot_queue_command == "run-batch":
+        plan_path = _resolve_plan_path(repo, Path(args.plan))
+        if not plan_path.exists():
+            print(f"Plan not found: {plan_path}")
+            return 1
         return _run_autopilot_queue_batch(args, repo, plan_path, store)
 
     parser.print_help()
