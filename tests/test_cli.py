@@ -1015,6 +1015,94 @@ def test_export_writes_to_custom_output_path(capsys, tmp_path: Path) -> None:
     assert trace["task"]["status"] == "blocked"
 
 
+def test_export_redact_flag_omits_bulky_fields(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("redacted export", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo redact",
+        raw_output="bulky raw output",
+        decision_status="done",
+        decision_reason="Verification passed: unit",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="bulky stdout",
+            stderr="bulky stderr",
+        ),
+    )
+    store.update_task_status(task.task_id, "done")
+
+    exit_code = main(["export", task.task_id, "--repo", str(tmp_path), "--redact"])
+    output = capsys.readouterr().out
+    trace_path = tmp_path / ".ai-orch" / "traces" / f"{task.task_id}.json"
+
+    assert exit_code == 0
+    assert f"Trace: {trace_path}" in output
+    assert trace_path.exists()
+
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert trace["iterations"][0]["prompt"] == "demo redact"
+    assert "raw_output" not in trace["iterations"][0]
+    assert trace["verification_runs"][0]["name"] == "unit"
+    assert trace["verification_runs"][0]["status"] == "passed"
+    assert "stdout" not in trace["verification_runs"][0]
+    assert "stderr" not in trace["verification_runs"][0]
+
+    loaded_iteration = store.list_iteration_details(task.task_id)[0]
+    assert loaded_iteration.raw_output == "bulky raw output"
+    loaded_run = store.list_verification_details(task.task_id)[0]
+    assert loaded_run.stdout == "bulky stdout"
+    assert loaded_run.stderr == "bulky stderr"
+
+
+def test_export_without_redact_keeps_bulky_fields(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("full export", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo full",
+        raw_output="raw agent output",
+        decision_status="done",
+        decision_reason="Verification passed: unit",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="verification stdout",
+            stderr="verification stderr",
+        ),
+    )
+
+    exit_code = main(["export", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+    trace_path = tmp_path / ".ai-orch" / "traces" / f"{task.task_id}.json"
+
+    assert exit_code == 0
+    assert f"Trace: {trace_path}" in output
+    assert trace_path.exists()
+
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert trace["iterations"][0]["raw_output"] == "raw agent output"
+    assert trace["verification_runs"][0]["stdout"] == "verification stdout"
+    assert trace["verification_runs"][0]["stderr"] == "verification stderr"
+
+
 def test_agents_lists_project_config(capsys, tmp_path: Path) -> None:
     write_config(
         tmp_path,

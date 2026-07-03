@@ -5,6 +5,8 @@
 - Added `ai-orch export <task_id>` to export an existing task's stored summary,
   iterations, verification results, and approvals as local JSON without changing
   supervisor execution semantics.
+- Added `--redact` flag for `ai-orch export` to omit bulky raw agent output and
+  verification streams from the exported JSON without changing stored task state.
 - Added `ai-orch ci` headless CI entry point that runs configured verification
   commands and release readiness checks with stable exit codes for CI environments.
 - Changed queue sync to create a fresh `created` item when a plan or backlog

@@ -105,6 +105,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         help="Output JSON file path (default: .ai-orch/traces/<task_id>.json)",
     )
+    export.add_argument(
+        "--redact",
+        action="store_true",
+        help=(
+            "Omit bulky raw agent output and verification streams "
+            "(stdout/stderr) from the exported JSON without changing stored state"
+        ),
+    )
 
     verify = sub.add_parser("verify", help="Run default verification commands")
     verify.add_argument("--repo", default=".")
@@ -592,7 +600,9 @@ def main(argv: list[str] | None = None) -> int:
         repo = Path(args.repo)
         store = _state_store_for_repo(repo)
         output_path = Path(args.output) if args.output else None
-        trace_path = _export_task_trace(store, repo, args.task_id, output_path)
+        trace_path = _export_task_trace(
+            store, repo, args.task_id, output_path, redact=args.redact
+        )
         if trace_path is None:
             print(f"Task not found: {args.task_id}")
             return 1
@@ -665,11 +675,16 @@ def _export_task_trace(
     repo: Path,
     task_id: str,
     output_path: Path | None = None,
+    redact: bool = False,
 ) -> Path | None:
     """Export the stored task trace for *task_id* to local JSON.
 
     Includes the task summary, iteration details, verification results, and
     approval requests without changing supervisor execution semantics.
+
+    When *redact* is ``True``, bulky fields such as raw agent output and
+    verification stdout/stderr are omitted from the exported JSON. The stored
+    task state is left unchanged.
 
     Returns the destination path on success, or ``None`` if the task is not found.
     """
@@ -677,12 +692,22 @@ def _export_task_trace(
     if task is None:
         return None
 
+    iterations = [asdict(iteration) for iteration in store.list_iteration_details(task_id)]
+    verification_runs = [
+        asdict(run) for run in store.list_verification_details(task_id)
+    ]
+
+    if redact:
+        for iteration in iterations:
+            iteration.pop("raw_output", None)
+        for run in verification_runs:
+            run.pop("stdout", None)
+            run.pop("stderr", None)
+
     trace = {
         "task": asdict(task),
-        "iterations": [asdict(iteration) for iteration in store.list_iteration_details(task_id)],
-        "verification_runs": [
-            asdict(run) for run in store.list_verification_details(task_id)
-        ],
+        "iterations": iterations,
+        "verification_runs": verification_runs,
         "approvals": [asdict(approval) for approval in store.list_approval_requests(task_id=task_id)],
     }
 
