@@ -22,3 +22,4 @@ Use this plan for the first post-v0.1.0 real-agent autopilot development run.
 - [x] Add ADR-0005 state/report plumbing for selected rotated worktree paths without enabling `--execute --rotate-worktrees` yet.
 - [x] Enable guarded `ai-orch autopilot queue run-batch --execute --rotate-worktrees BASE_DIR` execution with one selected clean worktree per queue item and stops on approvals/blockers/failures.
 - [x] Add `ai-orch autopilot queue sync-backlog` so open backlog items can feed the persisted queue without manually editing this plan file.
+- [x] Add queue history filters for focused `ai-orch autopilot queue list/status` operator review.

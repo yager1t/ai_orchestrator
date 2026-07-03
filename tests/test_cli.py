@@ -1849,6 +1849,59 @@ def test_autopilot_queue_list_shows_status_without_running_execution(
     assert "Dry run" not in output
 
 
+def test_autopilot_queue_list_filters_by_status_and_limit(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] Created task",
+                "- [ ] Done task",
+                "- [ ] Blocked task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(items["Done task"].plan_item_id, "done")
+    store.update_plan_item_status(items["Blocked task"].plan_item_id, "blocked")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "list",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--status",
+            "done",
+            "--status",
+            "blocked",
+            "--limit",
+            "1",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "total: 3" in output
+    assert "filtered: 2 status=done,blocked" in output
+    assert "limit: 1" in output
+    assert "showing: 1" in output
+    assert "[done]" in output
+    assert "Done task" in output
+    assert "Blocked task" not in output
+    assert "Created task" not in output
+
+
 def test_autopilot_queue_sync_works_when_no_unstarted_task_exists(
     capsys,
     tmp_path: Path,
@@ -2822,6 +2875,60 @@ def test_autopilot_queue_status_summarizes_counts_and_recent_items(
     assert "Skipped task" in output
     assert "Autopilot selected:" not in output
     assert "Dry run" not in output
+
+
+def test_autopilot_queue_status_filters_recent_items_by_status(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] Created task",
+                "- [ ] Done task",
+                "- [ ] Blocked task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(items["Done task"].plan_item_id, "done")
+    store.update_plan_item_status(items["Blocked task"].plan_item_id, "blocked")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "status",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--status",
+            "created",
+            "--status",
+            "blocked",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "total: 3" in output
+    assert "filtered: 2 status=created,blocked" in output
+    assert "created=1" in output
+    assert "done=1" in output
+    assert "blocked=1" in output
+    assert "recent created:" in output
+    assert "recent blocked:" in output
+    assert "recent done:" not in output
+    assert "Created task" in output
+    assert "Blocked task" in output
+    assert "Done task" not in output
 
 
 def test_autopilot_queue_status_limits_recent_items(

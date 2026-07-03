@@ -56,6 +56,12 @@ python -m ai_orchestrator autopilot queue status --repo . --plan docs/BACKLOG.md
 ```
 
 Completed queue items show `report=...` when their Markdown task report exists.
+Use repeated `--status` filters and `--limit` for focused queue history views:
+
+```bash
+python -m ai_orchestrator autopilot queue status --repo . --plan docs/BACKLOG.md --status blocked --status done --limit 10
+python -m ai_orchestrator autopilot queue list --repo . --plan docs/BACKLOG.md --status created --limit 5
+```
 
 Preview the next queued batch without starting work:
 
