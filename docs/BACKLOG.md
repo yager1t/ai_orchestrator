@@ -13,9 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add the first JSON trace redaction slice: an opt-in CLI flag for `ai-orch
-  export` that omits bulky raw agent output and verification streams from the
-  exported local JSON without changing stored task state.
+No open P2 items.
 
 ## P3 / Deferred
 
