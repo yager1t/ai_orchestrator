@@ -11,6 +11,7 @@ build/
 *.db
 .ai-orch/state/
 .ai-orch/reports/
+.ai-orch/traces/
 .codex/
 .DS_Store
 REVIEW.md
