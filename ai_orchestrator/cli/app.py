@@ -47,6 +47,9 @@ from ai_orchestrator.verification.runner import VerificationCommand, Verificatio
 
 _QUEUE_STATUSES = ("created", "in_progress", "done", "blocked", "skipped")
 
+# Schema version for the JSON trace produced by ``ai-orch export``.
+TRACE_SCHEMA_VERSION = "1.0"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-orch", description="Local supervisor for CLI AI agents")
@@ -679,8 +682,10 @@ def _export_task_trace(
 ) -> Path | None:
     """Export the stored task trace for *task_id* to local JSON.
 
-    Includes the task summary, iteration details, verification results, and
-    approval requests without changing supervisor execution semantics.
+    Includes the task summary, iteration details, verification results,
+    approval requests, and top-level metadata (schema version, exported
+    timestamp, task id, redaction mode) without changing supervisor execution
+    semantics or stored task state.
 
     When *redact* is ``True``, bulky fields such as raw agent output and
     verification stdout/stderr are omitted from the exported JSON. The stored
@@ -705,6 +710,12 @@ def _export_task_trace(
             run.pop("stderr", None)
 
     trace = {
+        "metadata": {
+            "schema_version": TRACE_SCHEMA_VERSION,
+            "exported_at": datetime.now(UTC).isoformat(),
+            "task_id": task.task_id,
+            "redaction_mode": "redacted" if redact else "none",
+        },
         "task": asdict(task),
         "iterations": iterations,
         "verification_runs": verification_runs,

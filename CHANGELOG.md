@@ -7,6 +7,8 @@
   supervisor execution semantics.
 - Added `--redact` flag for `ai-orch export` to omit bulky raw agent output and
   verification streams from the exported JSON without changing stored task state.
+- Added top-level trace metadata (`schema_version`, `exported_at`, `task_id`,
+  `redaction_mode`) to `ai-orch export` JSON output without changing stored task state.
 - Added `ai-orch ci` headless CI entry point that runs configured verification
   commands and release readiness checks with stable exit codes for CI environments.
 - Changed queue sync to create a fresh `created` item when a plan or backlog
