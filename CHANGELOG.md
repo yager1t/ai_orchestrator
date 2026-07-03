@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added queue history filters for `ai-orch autopilot queue list/status`,
+  including repeated `--status` filters and display limits for focused operator
+  review.
 - Added `ai-orch autopilot queue sync-backlog` to load open P0/P1/P2 backlog
   bullets directly into the persisted queue without manually copying them into
   `docs/NEXT_AUTOPILOT_PLAN.md`.

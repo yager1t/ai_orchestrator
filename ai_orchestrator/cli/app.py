@@ -43,6 +43,9 @@ from ai_orchestrator.verification.release import run_release_checks
 from ai_orchestrator.verification.runner import VerificationCommand, VerificationRunner
 
 
+_QUEUE_STATUSES = ("created", "in_progress", "done", "blocked", "skipped")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-orch", description="Local supervisor for CLI AI agents")
     parser.add_argument("--version", action="version", version=f"ai-orch {__version__}")
@@ -205,12 +208,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     autopilot_queue_list.add_argument("--repo", default=".")
     autopilot_queue_list.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_list.add_argument(
+        "--status",
+        action="append",
+        choices=_QUEUE_STATUSES,
+        help="Only show queue items with this status; repeat to include multiple statuses",
+    )
+    autopilot_queue_list.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Limit displayed items after filtering; 0 means all items (default: 0)",
+    )
     autopilot_queue_status = autopilot_queue_sub.add_parser(
         "status",
         help="Summarize persisted queue counts and recent items",
     )
     autopilot_queue_status.add_argument("--repo", default=".")
     autopilot_queue_status.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_status.add_argument(
+        "--status",
+        action="append",
+        choices=_QUEUE_STATUSES,
+        help="Only show recent items for this status; repeat to include multiple statuses",
+    )
     autopilot_queue_status.add_argument(
         "--limit",
         type=int,
@@ -597,6 +618,16 @@ def _queue_item_refs(repo: Path, item: StoredPlanItem) -> str:
     report_path = _task_report_path(repo, item.task_id)
     report_ref = f" report={report_path}" if report_path else ""
     return f"{task_ref}{worktree_ref}{report_ref}"
+
+
+def _filter_queue_items(
+    items: list[StoredPlanItem],
+    statuses: tuple[str, ...],
+) -> list[StoredPlanItem]:
+    if not statuses:
+        return items
+    allowed = set(statuses)
+    return [item for item in items if item.status in allowed]
 
 
 def _format_metrics_summary(summary: StoredMetricsSummary) -> str:
@@ -1037,11 +1068,22 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         return 0
 
     if args.autopilot_queue_command == "list":
-        items = store.list_plan_items(plan_path=plan_path)
+        all_items = store.list_plan_items(plan_path=plan_path)
+        statuses = tuple(args.status or [])
+        matched_items = _filter_queue_items(all_items, statuses)
+        items = matched_items
+        limit = max(0, args.limit)
+        if limit:
+            items = items[:limit]
         print(f"Queue status for {plan_path}")
-        print(f"  total: {len(items)}")
+        print(f"  total: {len(all_items)}")
+        if statuses:
+            print(f"  filtered: {len(matched_items)} status={','.join(statuses)}")
+        if limit:
+            print(f"  limit: {limit}")
+            print(f"  showing: {len(items)}")
         status_counts: dict[str, int] = {}
-        for item in items:
+        for item in all_items:
             status_counts[item.status] = status_counts.get(item.status, 0) + 1
         if status_counts:
             summary = ", ".join(
@@ -1055,8 +1097,12 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
 
     if args.autopilot_queue_command == "status":
         items = store.list_plan_items(plan_path=plan_path)
+        statuses = tuple(args.status or [])
         print(f"Queue status for {plan_path}")
         print(f"  total: {len(items)}")
+        if statuses:
+            filtered_count = len(_filter_queue_items(items, statuses))
+            print(f"  filtered: {filtered_count} status={','.join(statuses)}")
         status_counts = {}
         for item in items:
             status_counts[item.status] = status_counts.get(item.status, 0) + 1
@@ -1070,11 +1116,14 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
 
         limit = max(0, args.limit)
         for status, label in (
+            ("created", "created"),
             ("in_progress", "started"),
             ("done", "done"),
             ("blocked", "blocked"),
             ("skipped", "skipped"),
         ):
+            if statuses and status not in statuses:
+                continue
             recent = sorted(
                 [item for item in items if item.status == status],
                 key=lambda item: (item.updated_at, item.plan_item_id),

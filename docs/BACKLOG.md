@@ -13,8 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add deeper queue history filters if recent status summaries are not enough
-  for daily operation.
+No open P2 items.
 
 ## P3 / Deferred
 
