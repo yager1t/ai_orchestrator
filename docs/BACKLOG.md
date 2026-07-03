@@ -13,7 +13,9 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add the first optional JSON trace export slice: a CLI path that exports an
+  existing task's stored summary, iterations, verification results, and
+  approvals as local JSON without changing supervisor execution semantics.
 
 ## P3 / Deferred
 
