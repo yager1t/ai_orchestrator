@@ -13,7 +13,9 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add a read-only `--branch-filter TEXT` option to
+  `ai-orch autopilot worktree-overview` so operators can focus cleanup review
+  on matching branch names, without deleting or pruning anything.
 
 ## P3 / Deferred
 
