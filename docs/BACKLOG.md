@@ -13,7 +13,10 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add the first queue runtime-budget slice: expose an optional timeout for
+  `ai-orch autopilot queue run-next` and `run-batch` that passes through the
+  existing supervisor runtime budget, records a blocked queue item/report when
+  exhausted, and does not change default execution semantics.
 
 ## P3 / Deferred
 
