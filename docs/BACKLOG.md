@@ -13,7 +13,9 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add a read-only summary line to `ai-orch autopilot worktree-overview` showing
+  total, shown, dirty, and unlinked counts after filters so operators can
+  quickly understand review scope, without deleting or pruning anything.
 
 ## P3 / Deferred
 
