@@ -1028,6 +1028,42 @@ class StateStore:
         )
         return self.get_plan_item(plan_item_id)
 
+    def skip_plan_item(
+        self,
+        plan_item_id: int,
+        reason: str,
+    ) -> StoredPlanItem | None:
+        """Mark a ``created`` or ``blocked`` queue item as ``skipped``.
+
+        The persisted item is updated in place: its status becomes ``skipped``,
+        the supplied reason is recorded, and the update timestamp is refreshed.
+        Existing task and worktree metadata are preserved for audit. Returns
+        ``None`` when the item does not exist or is not in a skippable status.
+        """
+        self.initialize()
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE plan_items
+                SET status = 'skipped',
+                    blocked_reason = ?,
+                    updated_at = ?
+                WHERE plan_item_id = ?
+                  AND status IN ('created', 'blocked')
+                """,
+                (redact_secrets(reason), now, plan_item_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+
+        logger.debug(
+            "state plan item skipped plan_item_id=%s reason=%s",
+            plan_item_id,
+            reason,
+        )
+        return self.get_plan_item(plan_item_id)
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row

@@ -4160,6 +4160,219 @@ def test_autopilot_queue_requeue_reports_missing_item(
     assert "Queue item not found: 9999" in output
 
 
+def test_autopilot_queue_skip_dry_run_reports_created_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Created task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--reason",
+            "operator reviewed: out of scope",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Skip queue item {item.plan_item_id}" in output
+    assert "current_status: created" in output
+    assert "reason: operator reviewed: out of scope" in output
+    assert "dry_run: use --apply to mark this item skipped" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+    assert loaded.blocked_reason is None
+
+
+def test_autopilot_queue_skip_apply_skips_created_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Created task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--reason",
+            "operator reviewed: out of scope",
+            "--apply",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Skip queue item {item.plan_item_id}" in output
+    assert "status: skipped" in output
+    assert loaded is not None
+    assert loaded.status == "skipped"
+    assert loaded.blocked_reason == "operator reviewed: out of scope"
+
+
+def test_autopilot_queue_skip_apply_skips_blocked_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Blocked task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "blocked",
+        blocked_reason="needs external dependency",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--reason",
+            "operator reviewed: defer until next quarter",
+            "--apply",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Skip queue item {item.plan_item_id}" in output
+    assert "current_status: blocked" in output
+    assert "blocked_reason: needs external dependency" in output
+    assert "status: skipped" in output
+    assert loaded is not None
+    assert loaded.status == "skipped"
+    assert loaded.blocked_reason == "operator reviewed: defer until next quarter"
+
+
+def test_autopilot_queue_skip_apply_requires_reason(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Created task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "autopilot",
+                "queue",
+                "skip",
+                "--repo",
+                str(tmp_path),
+                "--apply",
+                str(item.plan_item_id),
+            ]
+        )
+    output = capsys.readouterr().err
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exc.value.code == 2
+    assert "--reason" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+
+
+def test_autopilot_queue_skip_apply_rejects_non_skippable_status(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Done task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(item.plan_item_id, "done")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--reason",
+            "operator reviewed",
+            "--apply",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 1
+    assert f"Queue item {item.plan_item_id} cannot be skipped (status=done)" in output
+    assert loaded is not None
+    assert loaded.status == "done"
+
+
+def test_autopilot_queue_skip_reports_missing_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--reason",
+            "operator reviewed",
+            "--apply",
+            "9999",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Queue item not found: 9999" in output
+
+
 def write_config(
     repo: Path,
     command_name: str = "custom",

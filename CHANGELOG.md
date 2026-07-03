@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot queue skip` to mark a selected `created` or `blocked`
+  queue item as `skipped` with a required operator reason after review. The
+  command is dry-run by default and never executes or deletes the item.
 - Added `ai-orch autopilot queue requeue` to move a selected `blocked` queue
   item back to `created` after operator review, clear stale blocker metadata,
   and leave the item ready for a future queue run without executing it

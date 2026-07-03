@@ -13,9 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add the first queue skip slice: expose a guarded dry-run-by-default CLI path
-  that lets the operator mark selected `created` or `blocked` queue items as
-  `skipped` with a reason after review, without executing or deleting the item.
+No open P2 items.
 
 ## P3 / Deferred
 
