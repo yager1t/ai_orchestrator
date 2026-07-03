@@ -13,9 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only worktree housekeeping overview that helps operators inspect
-  old ai-orch worktrees, linked branches, merge state, and dirty state before
-  any manual cleanup, without deleting or pruning anything.
+No open P2 items.
 
 ## P3 / Deferred
 
