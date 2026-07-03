@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot worktree-overview --merged-only` to show only git
+  worktrees whose branch is merged into the review repo HEAD according to strict
+  ancestry, helping operators focus cleanup review without deleting or pruning
+  anything.
 - Added `ai-orch autopilot worktree-overview --unlinked-only` to show only git
   worktrees not linked to the review repo, helping operators focus cleanup
   review on potentially orphaned worktrees without deleting or pruning anything.

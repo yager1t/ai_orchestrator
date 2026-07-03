@@ -182,8 +182,10 @@ dirty rows, and unlinked rows after filters. Add `--dirty-only` to focus the
 table on worktrees with uncommitted or untracked changes, or use
 `--branch-filter TEXT` to focus on worktrees whose branch name contains TEXT.
 Use `--unlinked-only` to show worktrees that do not share the review repo's git
-common directory. This command never creates, deletes, prunes, or checks out
-worktrees; cleanup remains a separate manual operator decision.
+common directory. Use `--merged-only` to show worktrees whose branch is already
+merged into the review repo HEAD according to strict ancestry. This command
+never creates, deletes, prunes, or checks out worktrees; cleanup remains a
+separate manual operator decision.
 
 ## 4. Execute
 

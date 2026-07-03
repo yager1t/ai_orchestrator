@@ -276,6 +276,62 @@ def test_cli_worktree_overview_unlinked_only_empty(capsys, tmp_path: Path) -> No
     assert "No unlinked git worktrees found under" in output
 
 
+def test_cli_worktree_overview_merged_only(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, wt2 = _create_worktrees(repo, base)
+    (wt2 / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(wt2, "add", "feature.txt")
+    _git(wt2, "commit", "-m", "feature change")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--merged-only",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "wt-main" in output
+    assert "wt-feature" not in output
+    assert "Summary: total=2 shown=1 dirty=0 unlinked=0" in output
+
+
+def test_cli_worktree_overview_merged_only_empty(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt = base / "wt-feature"
+    _git(repo, "worktree", "add", "-b", "feature", str(wt), "main")
+    (wt / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(wt, "add", "feature.txt")
+    _git(wt, "commit", "-m", "feature change")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--merged-only",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=1 shown=0 dirty=0 unlinked=0" in output
+    assert "No merged git worktrees found under" in output
+
+
 def test_cli_worktree_overview_branch_filter(capsys, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
