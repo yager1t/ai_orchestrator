@@ -192,3 +192,51 @@ def test_cli_worktree_overview_missing_base_dir(capsys, tmp_path: Path) -> None:
 
     assert exit_code == 1
     assert "Base directory does not exist" in output
+
+
+def test_cli_worktree_overview_dirty_only(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, wt2 = _create_worktrees(repo, base)
+    (wt1 / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--dirty-only",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "wt-main" in output
+    assert "wt-feature" not in output
+
+
+def test_cli_worktree_overview_dirty_only_empty(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--dirty-only",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "No dirty git worktrees found under" in output
