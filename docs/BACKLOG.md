@@ -13,7 +13,9 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add the first JSON trace metadata slice: include top-level export metadata
+  such as schema version, exported timestamp, task id, and redaction mode in
+  `ai-orch export` output without changing stored task state.
 
 ## P3 / Deferred
 
