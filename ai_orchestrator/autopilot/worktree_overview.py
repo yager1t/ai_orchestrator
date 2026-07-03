@@ -151,6 +151,18 @@ def gather_worktree_overviews(
     return overviews
 
 
+_REVIEW_HINT = """
+Review hint:
+  The 'merged' column uses strict ancestry (git merge-base --is-ancestor <branch> HEAD).
+  After a squash merge, the branch commits are usually not ancestors of HEAD, so
+  'merged' can stay 'no' even when the changes are already present in the main history.
+  Before cleanup, confirm the branch state with:
+    git log --oneline HEAD..<branch>
+    git diff --stat HEAD...<branch>
+  Then review manually. This tool never deletes, prunes, or modifies worktrees.
+""".strip()
+
+
 def format_worktree_overview(
     overviews: list[WorktreeOverview],
     base_dir: Path,
@@ -192,4 +204,6 @@ def format_worktree_overview(
             f"{path_str:<50} {overview.branch:<20} {linked:<7} {merged:<7} {merge:<6} "
             f"{dirty:<6} {overview.dirty_count:<8} {overview.untracked_count:<10} {last_modified}"
         )
+    lines.append("")
+    lines.append(_REVIEW_HINT)
     return "\n".join(lines)

@@ -13,9 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only worktree overview review hint that explains strict
-  `merged` ancestry can stay `no` after squash merges and points operators to
-  safe follow-up review before cleanup, without deleting or pruning anything.
+No open P2 items.
 
 ## P3 / Deferred
 
