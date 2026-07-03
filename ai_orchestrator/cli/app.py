@@ -242,6 +242,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show only worktrees not linked to the review repo",
     )
+    autopilot_worktree_overview.add_argument(
+        "--merged-only",
+        action="store_true",
+        help="Show only worktrees whose branch is merged into the review repo HEAD",
+    )
 
     autopilot_queue = autopilot_sub.add_parser(
         "queue",
@@ -1234,6 +1239,8 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
         ]
     if args.unlinked_only:
         overviews = [overview for overview in overviews if overview.linked is False]
+    if args.merged_only:
+        overviews = [overview for overview in overviews if overview.merged is True]
     if not overviews:
         if branch_filter:
             print(format_worktree_summary(overviews, total_count))
@@ -1247,6 +1254,9 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
         elif args.unlinked_only:
             print(format_worktree_summary(overviews, total_count))
             print(f"No unlinked git worktrees found under {base_dir}")
+        elif args.merged_only:
+            print(format_worktree_summary(overviews, total_count))
+            print(f"No merged git worktrees found under {base_dir}")
         return 0
     print(
         format_worktree_overview(

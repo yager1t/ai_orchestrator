@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only `--merged-only` filter to
-  `ai-orch autopilot worktree-overview` so operators can focus cleanup review
-  on worktree branches that strict-ancestry reports as merged into review repo
-  HEAD, without deleting or pruning anything.
+No open P2 items.
 
 ## P3 / Deferred
 
