@@ -178,7 +178,8 @@ The overview reports each detected git worktree's branch, whether it is linked
 to the review repo, whether that branch is already merged into the review repo
 HEAD, whether a merge is in progress, dirty and untracked counts, and last
 modified time. Add `--dirty-only` to focus the table on worktrees with
-uncommitted or untracked changes. This command never creates, deletes, prunes,
+uncommitted or untracked changes, or `--branch-filter TEXT` to focus on worktrees
+whose branch name contains TEXT. This command never creates, deletes, prunes,
 or checks out worktrees; cleanup remains a separate manual operator decision.
 
 ## 4. Execute
