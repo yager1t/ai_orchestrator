@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot queue recover-in-progress` to review interrupted
+  queue runs and mark stale `in_progress` items blocked with an operator reason.
 - Added `ai-orch memory preflight` summary line showing total, passed, and failed
   step counts while preserving existing provider execution semantics.
 - Added `ai-orch export <task_id>` to export an existing task's stored summary,

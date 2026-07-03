@@ -4,7 +4,7 @@ import sqlite3
 from collections.abc import Callable
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 Migration = Callable[[sqlite3.Connection], None]
 
 
@@ -156,6 +156,17 @@ def _migrate_5_to_6(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_6_to_7(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "plan_items"):
+        return
+    _add_column_if_missing(
+        connection,
+        "plan_items",
+        "blocked_reason",
+        "TEXT",
+    )
+
+
 def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     row = connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -181,6 +192,7 @@ MIGRATIONS: dict[int, Migration] = {
     3: _migrate_3_to_4,
     4: _migrate_4_to_5,
     5: _migrate_5_to_6,
+    6: _migrate_6_to_7,
 }
 
 

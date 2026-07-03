@@ -371,6 +371,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Maximum number of queue items to process (default: 1)",
     )
+    autopilot_queue_recover = autopilot_queue_sub.add_parser(
+        "recover-in-progress",
+        help="Find stale in_progress queue items and optionally mark them blocked",
+    )
+    autopilot_queue_recover.add_argument("--repo", default=".")
+    autopilot_queue_recover.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_recover.add_argument(
+        "--all-plans",
+        action="store_true",
+        help="Recover in_progress items from every persisted plan path",
+    )
+    autopilot_queue_recover.add_argument(
+        "--apply",
+        action="store_true",
+        help="Mark stale in_progress queue items as blocked; dry-run by default",
+    )
+    autopilot_queue_recover.add_argument(
+        "--reason",
+        help="Reason for blocking stale in_progress items (required with --apply)",
+    )
 
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
     memory_sub = memory.add_subparsers(dest="memory_command")
@@ -748,9 +768,10 @@ def _queue_item_refs(repo: Path, item: StoredPlanItem) -> str:
     worktree_ref = (
         f" worktree={item.selected_worktree_path}" if item.selected_worktree_path else ""
     )
+    blocked_reason_ref = f" reason={item.blocked_reason}" if item.blocked_reason else ""
     report_path = _task_report_path(repo, item.task_id)
     report_ref = f" report={report_path}" if report_path else ""
-    return f"{task_ref}{worktree_ref}{report_ref}"
+    return f"{task_ref}{worktree_ref}{blocked_reason_ref}{report_ref}"
 
 
 def _filter_queue_items(
@@ -1264,6 +1285,60 @@ def _run_autopilot_queue_reconcile(
     return 0
 
 
+def _run_autopilot_queue_recover_in_progress(
+    args: argparse.Namespace,
+    repo: Path,
+    store: StateStore,
+) -> int:
+    """Find stale in_progress queue items and optionally mark them blocked.
+
+    Dry-run by default.  When ``args.apply`` is set, every ``in_progress``
+    queue item is moved to ``blocked`` and the supplied ``--reason`` is
+    persisted so the operator can later decide whether to continue, mark
+    done, or keep blocked.
+    """
+    include_plan_path = bool(args.all_plans)
+    if include_plan_path:
+        plan_label = "all persisted plans"
+        items = store.list_plan_items(status="in_progress")
+    else:
+        plan_path = _resolve_plan_path(repo, Path(args.plan))
+        if not plan_path.exists():
+            print(f"Plan not found: {plan_path}")
+            return 1
+        plan_label = str(plan_path)
+        items = store.list_plan_items(plan_path=plan_path, status="in_progress")
+
+    if args.apply and not args.reason:
+        print("--reason is required when --apply is set")
+        return 1
+
+    print(f"Queue recover for {plan_label}")
+    print(f"  stale_in_progress: {len(items)}")
+    if not items:
+        print("  No stale in_progress queue items found.")
+        return 0
+
+    if args.apply:
+        for item in items:
+            store.update_plan_item_status(
+                item.plan_item_id,
+                "blocked",
+                blocked_reason=args.reason,
+            )
+        print(f"  blocked: {len(items)}")
+        print(f"  reason: {args.reason}")
+    else:
+        print(
+            "  dry_run: use --apply --reason '...' to mark stale items blocked"
+        )
+
+    for item in items:
+        item_label = _queue_item_label(item, include_plan_path=include_plan_path)
+        print(f"  [stale_in_progress] {item_label}: {item.text}")
+    return 0
+
+
 def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.autopilot_queue_command is None:
         parser.print_help()
@@ -1398,6 +1473,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
 
     if args.autopilot_queue_command == "reconcile":
         return _run_autopilot_queue_reconcile(args, repo, store)
+
+    if args.autopilot_queue_command == "recover-in-progress":
+        return _run_autopilot_queue_recover_in_progress(args, repo, store)
 
     if args.autopilot_queue_command == "run-next":
         plan_path = _resolve_plan_path(repo, Path(args.plan))

@@ -79,6 +79,15 @@ python -m ai_orchestrator autopilot queue reconcile --repo . --all-plans
 python -m ai_orchestrator autopilot queue reconcile --repo . --all-plans --apply
 ```
 
+Recover interrupted or timed-out batch runs by reviewing `in_progress` queue
+items and, when appropriate, marking them blocked with an operator reason. The
+command is a dry run unless `--apply` is present:
+
+```bash
+python -m ai_orchestrator autopilot queue recover-in-progress --repo . --all-plans
+python -m ai_orchestrator autopilot queue recover-in-progress --repo . --all-plans --apply --reason "batch run timed out before supervisor report"
+```
+
 Preview the next queued batch without starting work:
 
 ```bash

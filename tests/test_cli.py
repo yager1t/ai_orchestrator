@@ -3496,6 +3496,196 @@ def test_autopilot_queue_reconcile_all_plans_apply_skips_only_stale_created_item
     assert items["Current task"].status == "created"
 
 
+def test_autopilot_queue_recover_in_progress_dry_run_reports_stale_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Orphan task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(item.plan_item_id, "in_progress")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert "Queue recover for" in output
+    assert "stale_in_progress: 1" in output
+    assert "dry_run: use --apply --reason" in output
+    assert "[stale_in_progress]" in output
+    assert "Orphan task" in output
+    assert loaded is not None
+    assert loaded.status == "in_progress"
+    assert loaded.blocked_reason is None
+
+
+def test_autopilot_queue_recover_in_progress_apply_blocks_with_reason(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Orphan task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(item.plan_item_id, "in_progress")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--apply",
+            "--reason",
+            "batch run timed out",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert "stale_in_progress: 1" in output
+    assert "blocked: 1" in output
+    assert "batch run timed out" in output
+    assert loaded is not None
+    assert loaded.status == "blocked"
+    assert loaded.blocked_reason == "batch run timed out"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "list",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--status",
+            "blocked",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "reason=batch run timed out" in output
+
+
+def test_autopilot_queue_recover_in_progress_apply_requires_reason(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Orphan task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(item.plan_item_id, "in_progress")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--apply",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 1
+    assert "--reason is required when --apply is set" in output
+    assert loaded is not None
+    assert loaded.status == "in_progress"
+
+
+def test_autopilot_queue_recover_in_progress_all_plans_blocks_only_in_progress(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    roadmap = tmp_path / "ROADMAP.md"
+    backlog = tmp_path / "BACKLOG.md"
+    roadmap.write_text("- [ ] Roadmap stuck task\n", encoding="utf-8")
+    backlog.write_text("\n".join(["# Backlog", "", "## P2", "", "- Backlog stuck task"]), encoding="utf-8")
+
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(roadmap),
+        ]
+    )
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync-backlog",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+        ]
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items()}
+    store.update_plan_item_status(items["Roadmap stuck task"].plan_item_id, "in_progress")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--all-plans",
+            "--apply",
+            "--reason",
+            "interrupted",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = {item.text: item for item in store.list_plan_items()}
+
+    assert exit_code == 0
+    assert "Queue recover for all persisted plans" in output
+    assert "stale_in_progress: 1" in output
+    assert "blocked: 1" in output
+    assert loaded["Roadmap stuck task"].status == "blocked"
+    assert loaded["Roadmap stuck task"].blocked_reason == "interrupted"
+    assert loaded["Backlog stuck task"].status == "created"
+
+
 def test_autopilot_queue_status_shows_report_path_for_completed_item(
     capsys,
     tmp_path: Path,
