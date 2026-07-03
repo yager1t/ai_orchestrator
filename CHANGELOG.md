@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot worktree-overview --unlinked-only` to show only git
+  worktrees not linked to the review repo, helping operators focus cleanup
+  review on potentially orphaned worktrees without deleting or pruning anything.
 - Added a read-only summary line to `ai-orch autopilot worktree-overview` that
   shows total, shown, dirty, and unlinked counts after filters so operators can
   quickly understand review scope without deleting or pruning anything.
