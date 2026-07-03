@@ -265,6 +265,7 @@ def test_cli_worktree_overview_branch_filter_empty(capsys, tmp_path: Path) -> No
     output = capsys.readouterr().out
 
     assert exit_code == 0
+    assert "Summary: total=2 shown=0 dirty=0 unlinked=0" in output
     assert "No git worktrees matching branch filter 'nonexistent'" in output
 
 
@@ -288,4 +289,95 @@ def test_cli_worktree_overview_dirty_only_empty(capsys, tmp_path: Path) -> None:
     output = capsys.readouterr().out
 
     assert exit_code == 0
+    assert "Summary: total=2 shown=0 dirty=0 unlinked=0" in output
     assert "No dirty git worktrees found under" in output
+
+
+def test_format_worktree_overview_summary_line(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, wt2 = _create_worktrees(repo, base)
+    (wt1 / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    overviews = gather_worktree_overviews(base, repo=repo)
+    output = format_worktree_overview(overviews, base, repo=repo, total_count=len(overviews))
+
+    assert "Summary: total=2 shown=2 dirty=1 unlinked=0" in output
+
+
+def test_cli_worktree_overview_includes_summary_line(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, wt2 = _create_worktrees(repo, base)
+    (wt1 / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=2 shown=2 dirty=1 unlinked=0" in output
+
+
+def test_cli_worktree_overview_summary_reflects_filters(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, wt2 = _create_worktrees(repo, base)
+    (wt1 / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--dirty-only",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=2 shown=1 dirty=1 unlinked=0" in output
+    assert "wt-feature" not in output
+
+
+def test_cli_worktree_overview_unlinked_summary_count(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    other_repo = tmp_path / "other-repo"
+    other_repo.mkdir()
+    _init_repo(other_repo)
+
+    base = tmp_path / "worktrees"
+    wt = base / "wt-other"
+    _git(other_repo, "worktree", "add", "-b", "wt-other", str(wt), "main")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=1 shown=1 dirty=0 unlinked=1" in output

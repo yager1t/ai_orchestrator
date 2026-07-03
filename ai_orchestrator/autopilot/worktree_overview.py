@@ -151,6 +151,17 @@ def gather_worktree_overviews(
     return overviews
 
 
+def format_worktree_summary(
+    overviews: list[WorktreeOverview],
+    total_count: int,
+) -> str:
+    """Render a one-line read-only summary for an overview result set."""
+    shown = len(overviews)
+    dirty = sum(1 for overview in overviews if overview.dirty)
+    unlinked = sum(1 for overview in overviews if overview.linked is False)
+    return f"Summary: total={total_count} shown={shown} dirty={dirty} unlinked={unlinked}"
+
+
 _REVIEW_HINT = """
 Review hint:
   The 'merged' column uses strict ancestry (git merge-base --is-ancestor <branch> HEAD).
@@ -167,8 +178,14 @@ def format_worktree_overview(
     overviews: list[WorktreeOverview],
     base_dir: Path,
     repo: Path | None = None,
+    total_count: int | None = None,
 ) -> str:
-    """Render *overviews* as a plain-text table for operator review."""
+    """Render *overviews* as a plain-text table for operator review.
+
+    When *total_count* is provided, a read-only summary line is included before
+    the table showing the total discovered count, the number shown after any
+    filters, and the dirty and unlinked counts within the shown set.
+    """
     if not overviews:
         return f"No git worktrees found under {base_dir}"
 
@@ -176,9 +193,14 @@ def format_worktree_overview(
         f"Worktree overview for {base_dir}"
         + (f" (repo: {repo})" if repo else ""),
         "",
-        f"{'path':<50} {'branch':<20} {'linked':<7} {'merged':<7} {'merge':<6} {'dirty':<6} {'changes':<8} {'untracked':<10} {'last_modified'}",
-        "-" * 133,
     ]
+    if total_count is not None:
+        lines.append(format_worktree_summary(overviews, total_count))
+        lines.append("")
+    lines.append(
+        f"{'path':<50} {'branch':<20} {'linked':<7} {'merged':<7} {'merge':<6} {'dirty':<6} {'changes':<8} {'untracked':<10} {'last_modified'}"
+    )
+    lines.append("-" * 133)
     for overview in overviews:
         linked = (
             "yes"
@@ -191,7 +213,7 @@ def format_worktree_overview(
             else ("no" if overview.merged is False else "-")
         )
         merge = "yes" if overview.merge_in_progress else "no"
-        dirty = "yes" if overview.dirty else "no"
+        dirty_display = "yes" if overview.dirty else "no"
         last_modified = (
             overview.last_modified.isoformat()
             if overview.last_modified is not None
@@ -202,7 +224,7 @@ def format_worktree_overview(
             path_str = "..." + path_str[-45:]
         lines.append(
             f"{path_str:<50} {overview.branch:<20} {linked:<7} {merged:<7} {merge:<6} "
-            f"{dirty:<6} {overview.dirty_count:<8} {overview.untracked_count:<10} {last_modified}"
+            f"{dirty_display:<6} {overview.dirty_count:<8} {overview.untracked_count:<10} {last_modified}"
         )
     lines.append("")
     lines.append(_REVIEW_HINT)
