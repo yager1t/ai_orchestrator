@@ -71,6 +71,14 @@ python -m ai_orchestrator autopilot queue status --repo . --all-plans --status b
 python -m ai_orchestrator autopilot queue list --repo . --all-plans --status created --limit 20
 ```
 
+Show a single queue item before deciding whether to requeue, skip, or continue
+operator review. This is read-only and prints the item status, source, task
+text, task id, report path, selected worktree, and blocker or skip reason:
+
+```bash
+python -m ai_orchestrator autopilot queue show --repo . <plan_item_id>
+```
+
 Reconcile stale `created` queue items after a plan or backlog item is completed,
 removed, or rewritten. The command is a dry run unless `--apply` is present:
 
