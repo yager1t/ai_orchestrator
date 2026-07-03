@@ -3131,6 +3131,103 @@ def test_autopilot_queue_status_all_plans_ignores_missing_plan_arg(
     assert "Backlog created task" not in output
 
 
+def test_autopilot_queue_reconcile_dry_run_reports_stale_created_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Stale task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    plan.write_text("- [x] Stale task\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "reconcile",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+        ]
+    )
+    output = capsys.readouterr().out
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+
+    assert exit_code == 0
+    assert "Queue reconcile for" in output
+    assert "total: 1" in output
+    assert "stale_created: 1" in output
+    assert "dry_run: use --apply to mark stale items skipped" in output
+    assert "[stale]" in output
+    assert "Stale task" in output
+    assert item.status == "created"
+
+
+def test_autopilot_queue_reconcile_all_plans_apply_skips_only_stale_created_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    stale_plan = tmp_path / "STALE.md"
+    current_plan = tmp_path / "CURRENT.md"
+    stale_plan.write_text("- [ ] Stale task\n", encoding="utf-8")
+    current_plan.write_text("- [ ] Current task\n", encoding="utf-8")
+
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(stale_plan),
+        ]
+    )
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(current_plan),
+        ]
+    )
+    stale_plan.write_text("- [x] Stale task\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "reconcile",
+            "--repo",
+            str(tmp_path),
+            "--all-plans",
+            "--apply",
+        ]
+    )
+    output = capsys.readouterr().out
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items()}
+
+    assert exit_code == 0
+    assert "Queue reconcile for all persisted plans" in output
+    assert "total: 2" in output
+    assert "stale_created: 1" in output
+    assert "skipped: 1" in output
+    assert f"[stale] {stale_plan}:" in output
+    assert "Stale task" in output
+    assert "Current task" not in output
+    assert items["Stale task"].status == "skipped"
+    assert items["Current task"].status == "created"
+
+
 def test_autopilot_queue_status_shows_report_path_for_completed_item(
     capsys,
     tmp_path: Path,

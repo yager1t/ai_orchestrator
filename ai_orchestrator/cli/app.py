@@ -248,6 +248,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Number of recent items to show per status (default: 5)",
     )
+    autopilot_queue_reconcile = autopilot_queue_sub.add_parser(
+        "reconcile",
+        help="Find stale created queue items whose source plan task is no longer open",
+    )
+    autopilot_queue_reconcile.add_argument("--repo", default=".")
+    autopilot_queue_reconcile.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_queue_reconcile.add_argument(
+        "--all-plans",
+        action="store_true",
+        help="Reconcile created items from every persisted plan path",
+    )
+    autopilot_queue_reconcile.add_argument(
+        "--apply",
+        action="store_true",
+        help="Mark stale created queue items as skipped; dry-run by default",
+    )
     autopilot_queue_run_next = autopilot_queue_sub.add_parser(
         "run-next",
         help="Select and execute the next persisted queue item",
@@ -1042,6 +1058,74 @@ def _queue_item_label(item: StoredPlanItem, *, include_plan_path: bool) -> str:
     return str(item.line_number)
 
 
+def _resolve_stored_plan_path(repo: Path, stored_plan_path: Path | str) -> Path:
+    plan_path = Path(stored_plan_path)
+    if plan_path.is_absolute():
+        return plan_path
+    return repo / plan_path
+
+
+def _stale_created_queue_items(
+    repo: Path,
+    items: list[StoredPlanItem],
+) -> list[StoredPlanItem]:
+    open_task_keys_by_plan: dict[str, set[tuple[int, str]]] = {}
+    stale_items: list[StoredPlanItem] = []
+    for item in items:
+        if item.status != "created":
+            continue
+        plan_key = str(item.plan_path)
+        if plan_key not in open_task_keys_by_plan:
+            source_path = _resolve_stored_plan_path(repo, item.plan_path)
+            if source_path.exists():
+                open_task_keys_by_plan[plan_key] = {
+                    (task.line_number, task.text) for task in load_plan_tasks(source_path)
+                }
+            else:
+                open_task_keys_by_plan[plan_key] = set()
+        if (item.line_number, item.text) not in open_task_keys_by_plan[plan_key]:
+            stale_items.append(item)
+    return stale_items
+
+
+def _run_autopilot_queue_reconcile(
+    args: argparse.Namespace,
+    repo: Path,
+    store: StateStore,
+) -> int:
+    include_plan_path = bool(args.all_plans)
+    if include_plan_path:
+        plan_label = "all persisted plans"
+        all_items = store.list_plan_items()
+    else:
+        plan_path = _resolve_plan_path(repo, Path(args.plan))
+        if not plan_path.exists():
+            print(f"Plan not found: {plan_path}")
+            return 1
+        plan_label = str(plan_path)
+        all_items = store.list_plan_items(plan_path=plan_path)
+
+    stale_items = _stale_created_queue_items(repo, all_items)
+    print(f"Queue reconcile for {plan_label}")
+    print(f"  total: {len(all_items)}")
+    print(f"  stale_created: {len(stale_items)}")
+    if not stale_items:
+        print("  No stale created queue items found.")
+        return 0
+
+    if args.apply:
+        for item in stale_items:
+            store.update_plan_item_status(item.plan_item_id, "skipped")
+        print(f"  skipped: {len(stale_items)}")
+    else:
+        print("  dry_run: use --apply to mark stale items skipped")
+
+    for item in stale_items:
+        item_label = _queue_item_label(item, include_plan_path=include_plan_path)
+        print(f"  [stale] {item_label}: {item.text}")
+    return 0
+
+
 def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.autopilot_queue_command is None:
         parser.print_help()
@@ -1173,6 +1257,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
                 item_label = _queue_item_label(item, include_plan_path=include_plan_path)
                 print(f"    {item_label}: {item.text}{refs}")
         return 0
+
+    if args.autopilot_queue_command == "reconcile":
+        return _run_autopilot_queue_reconcile(args, repo, store)
 
     if args.autopilot_queue_command == "run-next":
         plan_path = _resolve_plan_path(repo, Path(args.plan))
