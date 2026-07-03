@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `--all-plans` views for `ai-orch autopilot queue list/status` so
+  operators can review every persisted queue source without selecting one plan
+  file at a time.
 - Added queue history filters for `ai-orch autopilot queue list/status`,
   including repeated `--status` filters and display limits for focused operator
   review.

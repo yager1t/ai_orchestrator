@@ -63,6 +63,14 @@ python -m ai_orchestrator autopilot queue status --repo . --plan docs/BACKLOG.md
 python -m ai_orchestrator autopilot queue list --repo . --plan docs/BACKLOG.md --status created --limit 5
 ```
 
+Use `--all-plans` when reviewing all persisted queue sources together. This is
+read-only; execution commands still require a specific `--plan`.
+
+```bash
+python -m ai_orchestrator autopilot queue status --repo . --all-plans --status blocked --status done --limit 10
+python -m ai_orchestrator autopilot queue list --repo . --all-plans --status created --limit 20
+```
+
 Preview the next queued batch without starting work:
 
 ```bash
