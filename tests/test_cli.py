@@ -931,6 +931,90 @@ def test_report_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
     assert "Task not found: missing-task" in output
 
 
+def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo export", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo export",
+        raw_output="done",
+        decision_status="done",
+        decision_reason="Verification passed: unit",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="ok",
+            stderr="",
+        ),
+    )
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        command_string="git push",
+        reason="approval required",
+    )
+    store.resolve_approval_request(approval.approval_id, status="approved")
+    store.update_task_status(task.task_id, "done")
+
+    exit_code = main(["export", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+    trace_path = tmp_path / ".ai-orch" / "traces" / f"{task.task_id}.json"
+
+    assert exit_code == 0
+    assert f"Trace: {trace_path}" in output
+    assert trace_path.exists()
+
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert trace["task"]["task_id"] == task.task_id
+    assert trace["task"]["status"] == "done"
+    assert len(trace["iterations"]) == 1
+    assert trace["iterations"][0]["prompt"] == "demo export"
+    assert trace["iterations"][0]["decision_status"] == "done"
+    assert len(trace["verification_runs"]) == 1
+    assert trace["verification_runs"][0]["name"] == "unit"
+    assert trace["verification_runs"][0]["status"] == "passed"
+    assert trace["verification_runs"][0]["stdout"] == "ok"
+    assert len(trace["approvals"]) == 1
+    assert trace["approvals"][0]["status"] == "approved"
+
+
+def test_export_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
+    exit_code = main(["export", "missing-task", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Task not found: missing-task" in output
+
+
+def test_export_writes_to_custom_output_path(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("custom export", repo_path=tmp_path)
+    store.update_task_status(task.task_id, "blocked")
+
+    custom_path = tmp_path / "trace.json"
+    exit_code = main(
+        ["export", task.task_id, "--repo", str(tmp_path), "--output", str(custom_path)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Trace: {custom_path}" in output
+    assert custom_path.exists()
+
+    trace = json.loads(custom_path.read_text(encoding="utf-8"))
+    assert trace["task"]["task_id"] == task.task_id
+    assert trace["task"]["status"] == "blocked"
+
+
 def test_agents_lists_project_config(capsys, tmp_path: Path) -> None:
     write_config(
         tmp_path,

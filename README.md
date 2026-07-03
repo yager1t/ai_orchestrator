@@ -17,7 +17,7 @@ The MVP control plane is implemented in the current local branch.
 
 Current working surface:
 
-- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `verify`, `release-check`, `ci`, `agents`, `metrics`, `approvals`, `autopilot`, `tui`.
+- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `export`, `verify`, `release-check`, `ci`, `agents`, `metrics`, `approvals`, `autopilot`, `tui`.
 - Supervisor loop with verification-gated completion.
 - SQLite task, iteration, verification, and schema-version storage.
 - Policy checks for agent and verification commands.
