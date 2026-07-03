@@ -40,10 +40,19 @@ Show the next roadmap item without starting work:
 python -m ai_orchestrator autopilot next --repo . --plan docs/POST_MVP_ROADMAP.md
 ```
 
+Load open P0/P1/P2 backlog items directly into the persisted queue:
+
+```bash
+python -m ai_orchestrator autopilot queue sync-backlog --repo . --backlog docs/BACKLOG.md
+```
+
+Use `--priority P1 --priority P2` when the operator wants an explicit subset.
+Deferred `P3 / Deferred` items are not included by default.
+
 Inspect the persisted queue without starting work:
 
 ```bash
-python -m ai_orchestrator autopilot queue status --repo . --plan docs/POST_MVP_ROADMAP.md
+python -m ai_orchestrator autopilot queue status --repo . --plan docs/BACKLOG.md
 ```
 
 Completed queue items show `report=...` when their Markdown task report exists.
@@ -51,13 +60,13 @@ Completed queue items show `report=...` when their Markdown task report exists.
 Preview the next queued batch without starting work:
 
 ```bash
-python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --max-items 3
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 3
 ```
 
 Preview per-task worktree rotation from a pre-created worktree pool:
 
 ```bash
-python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --max-items 3 --rotate-worktrees ../ai-orch-worktrees
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 3 --rotate-worktrees ../ai-orch-worktrees
 ```
 
 Add `--execute` only after this preview selects the intended clean worktrees.
@@ -119,13 +128,13 @@ python -m ai_orchestrator autopilot run --repo . --plan docs/POST_MVP_ROADMAP.md
 Run a guarded serial queue batch only after the dry run is correct:
 
 ```bash
-python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --execute --max-items 3 --worktree ../ai-orch-autopilot
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --execute --max-items 3 --worktree ../ai-orch-autopilot
 ```
 
 For per-item isolation, execute from a pre-created linked worktree pool:
 
 ```bash
-python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/POST_MVP_ROADMAP.md --execute --max-items 3 --rotate-worktrees ../ai-orch-worktrees
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --execute --max-items 3 --rotate-worktrees ../ai-orch-worktrees
 ```
 
 Batch execution is serial and stops on the first non-`done` result. With
@@ -241,7 +250,7 @@ Commands:
 ```bash
 git diff --stat
 git diff --check
-python -m ai_orchestrator autopilot queue status --repo . --plan docs/POST_MVP_ROADMAP.md
+python -m ai_orchestrator autopilot queue status --repo . --plan docs/BACKLOG.md
 python -m ai_orchestrator autopilot next --repo . --plan docs/POST_MVP_ROADMAP.md
 ```
 

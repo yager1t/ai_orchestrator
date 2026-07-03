@@ -1759,6 +1759,73 @@ def test_autopilot_queue_sync_loads_plan_items_without_duplicates(
     assert "existing: 2" in output
 
 
+def test_autopilot_queue_sync_backlog_loads_open_priority_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    backlog = tmp_path / "BACKLOG.md"
+    backlog.write_text(
+        "\n".join(
+            [
+                "# Backlog",
+                "",
+                "## P2",
+                "",
+                "- Add deeper queue history filters if recent status summaries are not enough",
+                "  for daily operation.",
+                "",
+                "## P3 / Deferred",
+                "",
+                "- Defer web dashboard.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "sync-backlog",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Synced backlog" in output
+    assert "priorities: P0, P1, P2" in output
+    assert "new: 1" in output
+    assert "existing: 0" in output
+    assert "Add deeper queue history filters" in output
+    assert "Defer web dashboard" not in output
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = store.list_plan_items(plan_path=backlog)
+    assert len(items) == 1
+    assert items[0].section == "P2"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "sync-backlog",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "new: 0" in output
+    assert "existing: 1" in output
+
+
 def test_autopilot_queue_list_shows_status_without_running_execution(
     capsys,
     tmp_path: Path,

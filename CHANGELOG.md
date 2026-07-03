@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot queue sync-backlog` to load open P0/P1/P2 backlog
+  bullets directly into the persisted queue without manually copying them into
+  `docs/NEXT_AUTOPILOT_PLAN.md`.
 - Enabled guarded `ai-orch autopilot queue run-batch --execute
   --rotate-worktrees BASE_DIR` execution, selecting one clean pre-created
   worktree per queue item and stopping on approvals/blockers/failures.

@@ -1,10 +1,12 @@
 from pathlib import Path
 
 from ai_orchestrator.autopilot import (
+    load_backlog_tasks,
     load_plan_tasks,
     next_plan_item,
     next_task,
     plan_item_status_from_supervisor,
+    sync_backlog_items,
     sync_plan_items,
 )
 from ai_orchestrator.storage.db import StateStore
@@ -40,6 +42,43 @@ def test_load_plan_tasks_reads_checkboxes_and_immediate_track(tmp_path: Path) ->
     ]
     assert tasks[0].section == "Phase 1"
     assert tasks[1].section == "Immediate Implementation Track"
+
+
+def test_load_backlog_tasks_reads_open_priority_bullets(tmp_path: Path) -> None:
+    backlog = tmp_path / "BACKLOG.md"
+    backlog.write_text(
+        "\n".join(
+            [
+                "# Backlog",
+                "",
+                "## P0",
+                "",
+                "No open P0 items.",
+                "",
+                "## P1",
+                "",
+                "- Ship critical fix",
+                "",
+                "## P2",
+                "",
+                "- Add queue history filters if recent summaries are not enough",
+                "  for daily operation.",
+                "",
+                "## P3 / Deferred",
+                "",
+                "- Defer optional dashboard.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    tasks = load_backlog_tasks(backlog)
+
+    assert [task.text for task in tasks] == [
+        "Ship critical fix",
+        "Add queue history filters if recent summaries are not enough for daily operation.",
+    ]
+    assert [task.section for task in tasks] == ["P1", "P2"]
 
 
 def test_next_task_skips_existing_stored_tasks(tmp_path: Path) -> None:
@@ -131,6 +170,34 @@ def test_sync_plan_items_persists_without_duplicates(tmp_path: Path) -> None:
     assert len(new_items) == 0
     assert len(existing_items) == 2
     assert len(store.list_plan_items(plan_path=plan)) == 2
+
+
+def test_sync_backlog_items_persists_without_duplicates(tmp_path: Path) -> None:
+    backlog = tmp_path / "BACKLOG.md"
+    backlog.write_text(
+        "\n".join(
+            [
+                "# Backlog",
+                "",
+                "## P2",
+                "",
+                "- Add queue history filters",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / "state.db")
+
+    new_items, existing_items = sync_backlog_items(backlog, store)
+
+    assert len(new_items) == 1
+    assert len(existing_items) == 0
+    assert store.list_plan_items(plan_path=backlog)[0].section == "P2"
+
+    new_items, existing_items = sync_backlog_items(backlog, store)
+
+    assert len(new_items) == 0
+    assert len(existing_items) == 1
 
 
 def test_next_plan_item_selects_first_created_item(tmp_path: Path) -> None:
