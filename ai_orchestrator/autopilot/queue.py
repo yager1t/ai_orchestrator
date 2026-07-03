@@ -202,10 +202,11 @@ def sync_plan_items(
     Returns a tuple of (new_items, existing_items) for the plan.
     """
     tasks = load_plan_tasks(plan_path)
-    existing = {item.line_number: item for item in store.list_plan_items(plan_path=plan_path)}
+    existing = _latest_plan_items_by_line(store.list_plan_items(plan_path=plan_path))
     new_items: list[StoredPlanItem] = []
     for task in tasks:
-        if task.line_number in existing:
+        existing_item = existing.get(task.line_number)
+        if existing_item is not None and _same_plan_task(existing_item, task):
             continue
         new_items.append(
             store.record_plan_item(
@@ -218,6 +219,16 @@ def sync_plan_items(
     return new_items, list(existing.values())
 
 
+def _latest_plan_items_by_line(
+    items: list[StoredPlanItem],
+) -> dict[int, StoredPlanItem]:
+    return {item.line_number: item for item in items}
+
+
+def _same_plan_task(item: StoredPlanItem, task: AutopilotTask) -> bool:
+    return item.section == task.section and item.text == task.text
+
+
 def sync_backlog_items(
     backlog_path: Path,
     store: StateStore,
@@ -225,12 +236,11 @@ def sync_backlog_items(
 ) -> tuple[list[StoredPlanItem], list[StoredPlanItem]]:
     """Load open backlog items and persist them without duplicates."""
     tasks = load_backlog_tasks(backlog_path, priorities=priorities)
-    existing = {
-        item.line_number: item for item in store.list_plan_items(plan_path=backlog_path)
-    }
+    existing = _latest_plan_items_by_line(store.list_plan_items(plan_path=backlog_path))
     new_items: list[StoredPlanItem] = []
     for task in tasks:
-        if task.line_number in existing:
+        existing_item = existing.get(task.line_number)
+        if existing_item is not None and _same_plan_task(existing_item, task):
             continue
         new_items.append(
             store.record_plan_item(
