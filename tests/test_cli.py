@@ -1948,6 +1948,7 @@ def test_memory_preflight_adapter_runs_read_only_steps(
     assert exit_code == 0
     assert "preflight: area=adapter" in output
     assert "available: yes" in output
+    assert "preflight summary: area=adapter total=6 passed=6 failed=0" in output
     assert captured_argv == [
         [
             "codebase-memory-mcp",
@@ -3568,6 +3569,8 @@ def test_memory_preflight_returns_failure_when_any_step_fails(
 
     assert exit_code == 1
     assert "detect_changes: failed exit=2" in output
+    assert "preflight summary: area=release total=2 passed=1 failed=1" in output
+    assert "failures:\n  impact: failed" in output
     assert calls == 2
 
 

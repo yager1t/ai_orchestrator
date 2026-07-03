@@ -1855,12 +1855,27 @@ def _run_memory_preflight(
     print(f"available: {'yes' if client.check_available() else 'no'}")
 
     statuses: list[str] = []
+    step_results: list[tuple[str, CodebaseMemoryResult]] = []
     for label, tool, tool_args in _memory_preflight_steps(args.area, project, args.limit):
         print(f"step: {label}")
         result = client.run_tool(tool, tool_args, cwd=repo)
         _print_memory_result(tool, result)
         statuses.append(result.status)
-    return 0 if all(status == "passed" for status in statuses) else 1
+        step_results.append((label, result))
+
+    total = len(statuses)
+    passed_count = sum(1 for status in statuses if status == "passed")
+    failure_count = total - passed_count
+    print(
+        f"preflight summary: area={args.area} total={total} "
+        f"passed={passed_count} failed={failure_count}"
+    )
+    if failure_count:
+        print("failures:")
+        for label, result in step_results:
+            if result.status != "passed":
+                print(f"  {label}: {result.status}")
+    return 0 if failure_count == 0 else 1
 
 
 def _load_memory_planning_context(
