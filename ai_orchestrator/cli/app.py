@@ -108,6 +108,18 @@ def build_parser() -> argparse.ArgumentParser:
     release_check = sub.add_parser("release-check", help="Run release packaging readiness checks")
     release_check.add_argument("--repo", default=".")
 
+    ci = sub.add_parser(
+        "ci",
+        help="Run verification and release checks for CI environments",
+    )
+    ci.add_argument("--repo", default=".")
+    ci.add_argument(
+        "--approve-command",
+        action="append",
+        default=[],
+        help="Approve one exact verification command string that policy marked as requiring approval",
+    )
+
     agents = sub.add_parser("agents", help="List configured starter agents")
     agents.add_argument("--repo", default=".")
     agents.add_argument("--check", action="store_true", help="Check enabled agent availability")
@@ -453,6 +465,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{release_item.name}: {release_item.status} - {release_item.detail}")
         return 0 if all(release_item.status == "passed" for release_item in results) else 1
 
+    if args.command == "ci":
+        return _run_ci_command(args)
+
     if args.command == "status":
         store = _state_store_for_repo(Path(args.repo))
         task = store.get_task(args.task_id)
@@ -741,6 +756,37 @@ def _verification_runner(
         policy_engine=_policy_engine(config),
         approved_commands=approved_commands,
     )
+
+
+def _run_ci_command(args: argparse.Namespace) -> int:
+    """Run verification and release checks for CI environments.
+
+    Returns 0 when every check passes, 1 when any verification or release
+    check fails or requires approval. Output is grouped and parseable.
+    """
+    repo = Path(args.repo)
+    config = load_project_config(repo)
+    exit_code = 0
+
+    print("verification:")
+    if not config.verification_commands:
+        print("  (none configured)")
+    else:
+        runner = _verification_runner(config, approved_commands=set(args.approve_command))
+        verification_results = runner.run_many(config.verification_commands, cwd=repo)
+        for item in verification_results:
+            print(f"  {item.name}: {item.status} exit={item.exit_code}")
+            if item.status != "passed":
+                exit_code = 1
+
+    print("release:")
+    release_results = run_release_checks(repo)
+    for release_item in release_results:
+        print(f"  {release_item.name}: {release_item.status} - {release_item.detail}")
+        if release_item.status != "passed":
+            exit_code = 1
+
+    return exit_code
 
 
 def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:

@@ -13,9 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add the first headless CI mode slice: a non-interactive CLI entry point that
-  runs the existing verification and release readiness checks with stable exit
-  codes for CI environments.
+No open P2 items.
 
 ## P3 / Deferred
 
