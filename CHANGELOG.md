@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `ai-orch memory preflight` summary line showing total, passed, and failed
+  step counts while preserving existing provider execution semantics.
 - Added `ai-orch export <task_id>` to export an existing task's stored summary,
   iterations, verification results, and approvals as local JSON without changing
   supervisor execution semantics.
