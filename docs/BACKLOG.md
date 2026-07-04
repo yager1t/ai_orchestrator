@@ -13,7 +13,10 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Extract the repeated `--plan` queue item ownership validation used by
+  `queue show`, `queue requeue`, and `queue skip` into a shared CLI helper so
+  the three commands keep identical guard behavior, without changing user-facing
+  output or queue state transitions.
 
 ## P3 / Deferred
 
