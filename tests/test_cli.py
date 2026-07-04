@@ -4849,6 +4849,148 @@ def test_autopilot_queue_skip_reports_missing_item(
     assert "Queue item not found: 9999" in output
 
 
+def test_autopilot_queue_skip_with_plan_dry_run_and_apply(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Created task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--reason",
+            "operator reviewed: out of scope",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Skip queue item {item.plan_item_id}" in output
+    assert "current_status: created" in output
+    assert "dry_run: use --apply to mark this item skipped" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--reason",
+            "operator reviewed: out of scope",
+            "--apply",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert "status: skipped" in output
+    assert loaded is not None
+    assert loaded.status == "skipped"
+
+
+def test_autopilot_queue_skip_with_plan_apply_skips_blocked_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Blocked task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "blocked",
+        blocked_reason="needs operator review",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--reason",
+            "operator reviewed: out of scope",
+            "--apply",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Skip queue item {item.plan_item_id}" in output
+    assert "current_status: blocked" in output
+    assert "status: skipped" in output
+    assert loaded is not None
+    assert loaded.status == "skipped"
+    assert loaded.blocked_reason == "operator reviewed: out of scope"
+
+
+def test_autopilot_queue_skip_with_plan_rejects_mismatched_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan_a = tmp_path / "ROADMAP.md"
+    plan_a.write_text("- [ ] Plan A task\n", encoding="utf-8")
+    plan_b = tmp_path / "BACKLOG.md"
+    plan_b.write_text("- Plan B task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan_a)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item_a = store.list_plan_items(plan_path=plan_a)[0]
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan_b),
+            "--reason",
+            "operator reviewed: out of scope",
+            "--apply",
+            str(item_a.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item_a.plan_item_id)
+
+    assert exit_code == 1
+    assert f"Queue item {item_a.plan_item_id} does not belong to plan {plan_b}" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+
+
 def write_config(
     repo: Path,
     command_name: str = "custom",
