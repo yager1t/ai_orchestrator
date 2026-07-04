@@ -464,6 +464,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Persisted queue item id to show",
     )
     autopilot_queue_show.add_argument("--repo", default=".")
+    autopilot_queue_show.add_argument(
+        "--plan",
+        help=(
+            "Optional plan path for compatibility with queue history commands. "
+            "When given, the item is shown only if it belongs to this plan."
+        ),
+    )
 
     autopilot_queue_requeue = autopilot_queue_sub.add_parser(
         "requeue",
@@ -1551,11 +1558,26 @@ def _run_autopilot_queue_show(
     Shows the status, source, task text, task id, report path, selected
     worktree, and blocker/skip reason so an operator can decide whether to
     requeue, skip, or continue without mutating the queue.
+
+    When ``--plan`` is provided, the command validates that the selected item
+    belongs to the requested plan before displaying it.
     """
     item = store.get_plan_item(args.plan_item_id)
     if item is None:
         print(f"Queue item not found: {args.plan_item_id}")
         return 1
+
+    requested_plan = getattr(args, "plan", None)
+    if requested_plan is not None:
+        plan_path = _resolve_plan_path(repo, Path(requested_plan))
+        if not plan_path.exists():
+            print(f"Plan not found: {plan_path}")
+            return 1
+        if Path(item.plan_path) != plan_path:
+            print(
+                f"Queue item {args.plan_item_id} does not belong to plan {plan_path}"
+            )
+            return 1
 
     report_path = _task_report_path(repo, item.task_id)
     print(f"Queue item: {item.plan_item_id}")

@@ -83,6 +83,13 @@ text, task id, report path, selected worktree, and blocker or skip reason:
 python -m ai_orchestrator autopilot queue show --repo . <plan_item_id>
 ```
 
+Use `--plan PLAN` when you want `queue show` to validate that the selected item
+belongs to the same plan you were reviewing:
+
+```bash
+python -m ai_orchestrator autopilot queue show --repo . --plan docs/BACKLOG.md <plan_item_id>
+```
+
 Reconcile stale `created` queue items after a plan or backlog item is completed,
 removed, or rewritten. The command is a dry run unless `--apply` is present:
 

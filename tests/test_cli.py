@@ -4298,6 +4298,78 @@ def test_autopilot_queue_show_reports_missing_item(capsys, tmp_path: Path) -> No
     assert "Queue item not found: 9999" in output
 
 
+def test_autopilot_queue_show_with_plan_validates_matching_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Created task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "show",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Queue item: {item.plan_item_id}" in output
+    assert "status: created" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+
+
+def test_autopilot_queue_show_with_plan_rejects_mismatched_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan_a = tmp_path / "ROADMAP.md"
+    plan_a.write_text("- [ ] Plan A task\n", encoding="utf-8")
+    plan_b = tmp_path / "BACKLOG.md"
+    plan_b.write_text("- Plan B task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan_a)])
+    main(
+        ["autopilot", "queue", "sync-backlog", "--repo", str(tmp_path), "--backlog", str(plan_b)]
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item_a = store.list_plan_items(plan_path=plan_a)[0]
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "show",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan_b),
+            str(item_a.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item_a.plan_item_id)
+
+    assert exit_code == 1
+    assert f"Queue item {item_a.plan_item_id} does not belong to plan {plan_b}" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+
+
 def test_autopilot_queue_requeue_dry_run_reports_blocked_item(
     capsys,
     tmp_path: Path,
