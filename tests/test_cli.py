@@ -2395,6 +2395,8 @@ def test_autopilot_queue_run_next_executes_one_item_and_updates_status(
     )
 
     main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    first_item = store.list_plan_items(plan_path=plan)[0]
 
     def fake_run_once(
         self: Supervisor,
@@ -2428,10 +2430,9 @@ def test_autopilot_queue_run_next_executes_one_item_and_updates_status(
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Queue item" in output
+    assert f"Queue item: {first_item.plan_item_id}" in output
     assert "status=done" in output
 
-    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
     assert items["First task"].status == "done"
     assert items["First task"].task_id == "task-1"
@@ -2899,6 +2900,8 @@ def test_autopilot_queue_run_batch_executes_up_to_max_items(
     )
 
     main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    queued_items = store.list_plan_items(plan_path=plan)
 
     call_count = 0
 
@@ -2940,10 +2943,11 @@ def test_autopilot_queue_run_batch_executes_up_to_max_items(
     output = capsys.readouterr().out
 
     assert exit_code == 0
+    assert f"Queue item: {queued_items[0].plan_item_id}" in output
+    assert f"Queue item: {queued_items[1].plan_item_id}" in output
     assert "Batch complete: processed 2 item(s)" in output
     assert call_count == 2
 
-    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
     assert items["First task"].status == "done"
     assert items["First task"].task_id == "batch-task-1"

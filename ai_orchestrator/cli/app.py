@@ -1829,8 +1829,7 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         def _mark_in_progress() -> None:
             store.update_plan_item_status(next_item.plan_item_id, "in_progress")
 
-        if not args.execute:
-            print(f"Queue item: {next_item.plan_item_id}")
+        print(f"Queue item: {next_item.plan_item_id}")
 
         result = _run_autopilot_task(
             task,
@@ -1915,6 +1914,7 @@ def _run_autopilot_queue_batch(
             print(f"No more queued plan items ready in {plan_path}")
             break
         task = plan_item_to_task(next_item)
+        print(f"Queue item: {next_item.plan_item_id}")
 
         def _mark_in_progress(
             plan_item_id: int = next_item.plan_item_id,
@@ -1995,6 +1995,7 @@ def _run_rotated_autopilot_queue_batch(
     for item, worktree in zip(items, selected):
         task = plan_item_to_task(item)
         run_args = _args_with_worktree(args, worktree)
+        print(f"Queue item: {item.plan_item_id}")
         print(f"Worktree: {worktree}")
 
         def _mark_in_progress(

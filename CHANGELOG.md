@@ -11,6 +11,12 @@
 - Show persisted queue item ids in `ai-orch autopilot queue run-batch` dry-run
   output so operators can immediately inspect the selected item with
   `queue show <plan_item_id>` before executing.
+- Show persisted queue item id at the start of `ai-orch autopilot queue run-next
+  --execute` output so real-agent logs can be tied back to
+  `queue show <plan_item_id>`, without changing execution behavior.
+- Show persisted queue item id at the start of each item's output in `ai-orch
+  autopilot queue run-batch --execute` so real-agent logs can be tied back to
+  `queue show <plan_item_id>`, without changing execution behavior.
 - Persist selected fixed worktree paths for `ai-orch autopilot queue run-batch
   --worktree PATH` runs so queue details, queue history views, and task reports
   identify the execution worktree.
