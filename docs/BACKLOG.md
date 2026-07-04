@@ -13,7 +13,11 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add a read-only `--json` output option to `ai-orch autopilot queue readiness`
+  for a selected plan or `--all-plans`, reporting the same total counts,
+  created readiness, blocked/in-progress risk, stale created item refs, and
+  stale in-progress item refs in a machine-readable object while preserving the
+  default text output and existing `--fail-on-risk` exit-code behavior.
 
 ## P3 / Deferred
 
