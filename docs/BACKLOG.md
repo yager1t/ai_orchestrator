@@ -13,7 +13,11 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Include existing queue item refs (`task=`, `worktree=`, `report=`,
+  `reason=` when available) in the stale-row output from
+  `ai-orch autopilot queue reconcile` and `queue recover-in-progress`, without
+  changing dry-run/apply behavior, queue state transitions, filters, or exit
+  codes.
 
 ## P3 / Deferred
 
