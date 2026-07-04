@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Allow `ai-orch autopilot queue show --plan PLAN <plan_item_id>` as a
-  read-only compatibility form that validates the selected item belongs to the
-  requested plan, so operators can reuse the same `--plan docs\BACKLOG.md`
-  habit from queue history commands without changing queue state.
+No open P2 items.
 
 ## P3 / Deferred
 
