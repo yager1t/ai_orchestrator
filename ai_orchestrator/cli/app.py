@@ -1825,6 +1825,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         def _mark_in_progress() -> None:
             store.update_plan_item_status(next_item.plan_item_id, "in_progress")
 
+        if not args.execute:
+            print(f"Queue item: {next_item.plan_item_id}")
+
         result = _run_autopilot_task(
             task,
             repo,

@@ -114,6 +114,16 @@ python -m ai_orchestrator autopilot queue skip --repo . --reason "operator revie
 python -m ai_orchestrator autopilot queue skip --repo . --reason "operator reviewed: out of scope" --apply <plan_item_id>
 ```
 
+Preview the next queued item without starting work:
+
+```bash
+python -m ai_orchestrator autopilot queue run-next --repo . --plan docs/BACKLOG.md
+```
+
+Dry-run `run-next` output includes the selected persisted queue item id. Use
+that id with `queue show <plan_item_id>` when you want to inspect the exact
+queued item before adding `--execute`.
+
 Preview the next queued batch without starting work:
 
 ```bash
