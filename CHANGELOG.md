@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added an operator-facing final summary to `ai-orch autopilot queue run-batch`
+  dry-run and `--execute` output with selected/processed counts, status counts,
+  first active non-done queue item, selected worktrees, and report paths,
+  without changing execution behavior or exit-code semantics.
+
 - Documented the empty-backlog operator handoff for seeding exactly one
   bounded P2 item before running `queue run-batch`; no CLI behavior changed.
 

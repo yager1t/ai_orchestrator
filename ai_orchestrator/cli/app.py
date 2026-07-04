@@ -52,6 +52,7 @@ from ai_orchestrator.verification.runner import VerificationCommand, Verificatio
 
 
 _QUEUE_STATUSES = ("created", "in_progress", "done", "blocked", "skipped")
+_TERMINAL_QUEUE_STATUSES = {"done", "skipped"}
 
 # Schema version for the JSON trace produced by ``ai-orch export``.
 TRACE_SCHEMA_VERSION = "1.0"
@@ -1937,6 +1938,60 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
     return 1
 
 
+def _print_batch_summary(
+    store: StateStore,
+    plan_path: Path,
+    item_ids: list[int],
+    report_paths: list[Path],
+    worktree_paths: list[Path],
+    mode: str,
+) -> None:
+    """Print an operator-facing summary for a batch dry-run or execution."""
+    label = "Selected" if mode == "dry-run" else "Processed"
+
+    if not item_ids:
+        print("=== Batch summary ===")
+        print(f"{label}: 0 item(s)")
+        print("Status counts: (none)")
+        return
+
+    all_items = store.list_plan_items(plan_path=plan_path)
+    item_by_id = {item.plan_item_id: item for item in all_items}
+    selected_items = [item_by_id[item_id] for item_id in item_ids if item_id in item_by_id]
+
+    status_counts: dict[str, int] = {}
+    for item in selected_items:
+        status_counts[item.status] = status_counts.get(item.status, 0) + 1
+
+    first_non_done = next(
+        (item for item in all_items if item.status not in _TERMINAL_QUEUE_STATUSES),
+        None,
+    )
+
+    print("=== Batch summary ===")
+    print(f"{label}: {len(selected_items)} item(s)")
+    print(
+        "Status counts: "
+        + (
+            ", ".join(f"{status}={count}" for status, count in sorted(status_counts.items()))
+            or "(none)"
+        )
+    )
+    if first_non_done is not None:
+        print(
+            f"First non-done queue item: {first_non_done.plan_item_id} "
+            f"(status={first_non_done.status})"
+        )
+    if worktree_paths:
+        print("Selected worktrees:")
+        for path in worktree_paths:
+            print(f"  {path}")
+    if report_paths:
+        print("Reports:")
+        for path in report_paths:
+            print(f"  {path}")
+
+
 def _run_autopilot_queue_batch(
     args: argparse.Namespace,
     repo: Path,
@@ -1973,9 +2028,18 @@ def _run_autopilot_queue_batch(
             task = plan_item_to_task(item)
             _run_autopilot_task(task, repo, plan_path, args, store)
         print(f"Dry run: would process {len(items)} item(s). Add --execute to run.")
+        _print_batch_summary(
+            store,
+            plan_path,
+            [item.plan_item_id for item in items],
+            [],
+            [fixed_worktree] if fixed_worktree else [],
+            mode="dry-run",
+        )
         return 0
 
-    processed = 0
+    processed_ids: list[int] = []
+    report_paths: list[Path] = []
     for _ in range(max_items):
         next_item = next_plan_item(store, plan_path)
         if next_item is None:
@@ -2014,17 +2078,34 @@ def _run_autopilot_queue_batch(
             selected_worktree_path=fixed_worktree,
             blocked_reason=blocked_reason,
         )
+        processed_ids.append(next_item.plan_item_id)
         print(f"Queue item {next_item.plan_item_id}: status={item_status}")
-        processed += 1
         if result.task_id is not None:
             report_path = _write_task_report(store, repo, result.task_id)
             if report_path is not None:
                 print(f"Report: {report_path}")
+                report_paths.append(report_path)
         if item_status != "done":
-            print(f"Batch stopped after {processed} item(s): status={item_status}")
+            print(f"Batch stopped after {len(processed_ids)} item(s): status={item_status}")
+            _print_batch_summary(
+                store,
+                plan_path,
+                processed_ids,
+                report_paths,
+                [fixed_worktree] if fixed_worktree else [],
+                mode="execute",
+            )
             return 1
 
-    print(f"Batch complete: processed {processed} item(s)")
+    print(f"Batch complete: processed {len(processed_ids)} item(s)")
+    _print_batch_summary(
+        store,
+        plan_path,
+        processed_ids,
+        report_paths,
+        [fixed_worktree] if fixed_worktree else [],
+        mode="execute",
+    )
     return 0
 
 
@@ -2059,7 +2140,8 @@ def _run_rotated_autopilot_queue_batch(
         )
         return 1
 
-    processed = 0
+    processed_ids: list[int] = []
+    report_paths: list[Path] = []
     for item, worktree in zip(items, selected):
         task = plan_item_to_task(item)
         run_args = _args_with_worktree(args, worktree)
@@ -2096,17 +2178,34 @@ def _run_rotated_autopilot_queue_batch(
             selected_worktree_path=worktree,
             blocked_reason=blocked_reason,
         )
+        processed_ids.append(item.plan_item_id)
         print(f"Queue item {item.plan_item_id}: status={item_status}")
-        processed += 1
         if result.task_id is not None:
             report_path = _write_task_report(store, repo, result.task_id)
             if report_path is not None:
                 print(f"Report: {report_path}")
+                report_paths.append(report_path)
         if item_status != "done":
-            print(f"Batch stopped after {processed} item(s): status={item_status}")
+            print(f"Batch stopped after {len(processed_ids)} item(s): status={item_status}")
+            _print_batch_summary(
+                store,
+                plan_path,
+                processed_ids,
+                report_paths,
+                selected,
+                mode="execute",
+            )
             return 1
 
-    print(f"Batch complete: processed {processed} item(s)")
+    print(f"Batch complete: processed {len(processed_ids)} item(s)")
+    _print_batch_summary(
+        store,
+        plan_path,
+        processed_ids,
+        report_paths,
+        selected,
+        mode="execute",
+    )
     return 0
 
 
@@ -2151,6 +2250,14 @@ def _dry_run_rotated_batch(
     print(
         f"Dry run: would process {len(items)} item(s) using rotated worktrees. "
         "Add --execute to start."
+    )
+    _print_batch_summary(
+        store,
+        plan_path,
+        [item.plan_item_id for item in items],
+        [],
+        selected,
+        mode="dry-run",
     )
     return 0
 
