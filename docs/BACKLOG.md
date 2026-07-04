@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Document in `docs/AUTOPILOT_RUNBOOK.md` the operator handoff for an empty
-  P0/P1/P2 backlog: seed exactly one bounded P2 item, merge that seed to
-  `main`, run `queue sync-backlog`, verify exactly one `created` queue item,
-  and only then start `queue run-batch`, without changing CLI behavior.
+No open P2 items.
 
 ## P3 / Deferred
 
