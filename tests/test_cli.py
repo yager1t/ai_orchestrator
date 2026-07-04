@@ -4418,6 +4418,133 @@ def test_autopilot_queue_recover_in_progress_all_plans_blocks_only_in_progress(
     assert loaded["Backlog stuck task"].status == "created"
 
 
+def test_autopilot_queue_reconcile_stale_row_includes_refs(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Stale task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    task = store.create_task("stale task", repo_path=tmp_path)
+    worktree = tmp_path / "wt"
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "created",
+        task_id=task.task_id,
+        selected_worktree_path=worktree,
+    )
+    report_path = tmp_path / ".ai-orch" / "reports" / f"{task.task_id}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("report", encoding="utf-8")
+    plan.write_text("- [x] Stale task\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "reconcile",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert loaded is not None
+    assert loaded.status == "created"
+    assert f"task={task.task_id}" in output
+    assert f"worktree={worktree}" in output
+    assert f"report={report_path}" in output
+
+
+def test_autopilot_queue_recover_in_progress_stale_row_includes_refs_and_reason(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Orphan task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    task = store.create_task("orphan task", repo_path=tmp_path)
+    worktree = tmp_path / "wt"
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "in_progress",
+        task_id=task.task_id,
+        selected_worktree_path=worktree,
+    )
+    report_path = tmp_path / ".ai-orch" / "reports" / f"{task.task_id}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("report", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--apply",
+            "--reason",
+            "interrupted",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert loaded is not None
+    assert loaded.status == "blocked"
+    assert loaded.blocked_reason == "interrupted"
+    assert f"task={task.task_id}" in output
+    assert f"worktree={worktree}" in output
+    assert f"report={report_path}" in output
+    assert "reason=interrupted" in output
+
+
+def test_autopilot_queue_reconcile_stale_row_omits_refs_when_unset(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Stale task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    plan.write_text("- [x] Stale task\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "reconcile",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[stale]" in output
+    assert "task=" not in output
+    assert "worktree=" not in output
+    assert "report=" not in output
+
+
 def test_autopilot_queue_status_shows_report_path_for_completed_item(
     capsys,
     tmp_path: Path,

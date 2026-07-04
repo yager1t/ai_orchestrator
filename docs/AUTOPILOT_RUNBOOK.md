@@ -178,6 +178,10 @@ python -m ai_orchestrator autopilot queue recover-in-progress --repo . --all-pla
 python -m ai_orchestrator autopilot queue recover-in-progress --repo . --all-plans --apply --reason "batch run timed out before supervisor report"
 ```
 
+Stale rows from `queue reconcile` and `queue recover-in-progress` include
+available refs such as `task=`, `worktree=`, `report=`, and `reason=` so
+operators can inspect recovery context without immediately running `queue show`.
+
 Requeue a blocked item back to `created` after operator review. The command is
 a dry run unless `--apply` is present, and it never executes the item:
 

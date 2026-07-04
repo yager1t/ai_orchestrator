@@ -1557,8 +1557,9 @@ def _run_autopilot_queue_reconcile(
         print("  dry_run: use --apply to mark stale items skipped")
 
     for item in stale_items:
+        refs = _queue_item_refs(repo, item)
         item_label = _queue_item_label(item, include_plan_path=include_plan_path)
-        print(f"  [stale] {item_label}: {item.text}")
+        print(f"  [stale] {item_label}: {item.text}{refs}")
     return 0
 
 
@@ -1597,12 +1598,15 @@ def _run_autopilot_queue_recover_in_progress(
         return 0
 
     if args.apply:
+        updated_items: list[StoredPlanItem] = []
         for item in items:
-            store.update_plan_item_status(
+            updated = store.update_plan_item_status(
                 item.plan_item_id,
                 "blocked",
                 blocked_reason=args.reason,
             )
+            updated_items.append(updated if updated is not None else item)
+        items = updated_items
         print(f"  blocked: {len(items)}")
         print(f"  reason: {args.reason}")
     else:
@@ -1611,8 +1615,9 @@ def _run_autopilot_queue_recover_in_progress(
         )
 
     for item in items:
+        refs = _queue_item_refs(repo, item)
         item_label = _queue_item_label(item, include_plan_path=include_plan_path)
-        print(f"  [stale_in_progress] {item_label}: {item.text}")
+        print(f"  [stale_in_progress] {item_label}: {item.text}{refs}")
     return 0
 
 
