@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only problem summary to `ai-orch autopilot queue status` and
-  `queue list` output that groups `blocked` and `in_progress` items by reason,
-  shows the latest affected queue item ids, and preserves existing queue state,
-  filters, limits, and exit-code semantics.
+No open P2 items.
 
 ## P3 / Deferred
 

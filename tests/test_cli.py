@@ -3919,6 +3919,218 @@ def test_autopilot_queue_status_all_plans_ignores_missing_plan_arg(
     assert "Backlog created task" not in output
 
 
+def test_autopilot_queue_status_problem_summary_groups_by_reason_and_latest_ids(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] Done task",
+                "- [ ] In progress task",
+                "- [ ] Blocked task A1",
+                "- [ ] Blocked task A2",
+                "- [ ] Blocked task B",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(items["Done task"].plan_item_id, "done")
+    store.update_plan_item_status(
+        items["Blocked task A1"].plan_item_id,
+        "blocked",
+        blocked_reason="needs approval",
+    )
+    store.update_plan_item_status(
+        items["Blocked task A2"].plan_item_id,
+        "blocked",
+        blocked_reason="needs approval",
+    )
+    store.update_plan_item_status(
+        items["Blocked task B"].plan_item_id,
+        "blocked",
+        blocked_reason="runtime budget exhausted",
+    )
+    store.update_plan_item_status(
+        items["In progress task"].plan_item_id,
+        "in_progress",
+    )
+    expected_in_progress = items["In progress task"].plan_item_id
+    expected_a_ids = [
+        items["Blocked task A2"].plan_item_id,
+        items["Blocked task A1"].plan_item_id,
+    ]
+    expected_b_id = items["Blocked task B"].plan_item_id
+    capsys.readouterr()
+
+    exit_code = main(
+        ["autopilot", "queue", "status", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Problem summary:" in output
+    assert f"in_progress ((no reason)): count=1 latest=[{expected_in_progress}]" in output
+    assert (
+        f"blocked (needs approval): count=2 latest=[{expected_a_ids[0]}, {expected_a_ids[1]}]"
+        in output
+    )
+    assert (
+        f"blocked (runtime budget exhausted): count=1 latest=[{expected_b_id}]"
+        in output
+    )
+    # State must be preserved (read-only summary).
+    refreshed = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert refreshed["In progress task"].status == "in_progress"
+    assert refreshed["Blocked task A1"].status == "blocked"
+    assert refreshed["Blocked task A2"].blocked_reason == "needs approval"
+
+
+def test_autopilot_queue_list_problem_summary_respects_status_filter(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] Created task",
+                "- [ ] Blocked task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(
+        items["Blocked task"].plan_item_id,
+        "blocked",
+        blocked_reason="policy denied",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "list",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--status",
+            "done",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Problem summary:" not in output
+    assert "Blocked task" not in output
+
+
+def test_autopilot_queue_list_problem_summary_groups_problem_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] Blocked task",
+                "- [ ] In progress task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    blocked_item = items["Blocked task"]
+    in_progress_item = items["In progress task"]
+    store.update_plan_item_status(
+        blocked_item.plan_item_id,
+        "blocked",
+        blocked_reason="needs review",
+    )
+    store.update_plan_item_status(in_progress_item.plan_item_id, "in_progress")
+    capsys.readouterr()
+
+    exit_code = main(
+        ["autopilot", "queue", "list", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Problem summary:" in output
+    assert (
+        f"blocked (needs review): count=1 latest=[{blocked_item.plan_item_id}]"
+        in output
+    )
+    assert (
+        "in_progress ((no reason)): count=1 "
+        f"latest=[{in_progress_item.plan_item_id}]"
+    ) in output
+    refreshed = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert refreshed["Blocked task"].status == "blocked"
+    assert refreshed["In progress task"].status == "in_progress"
+
+
+def test_autopilot_queue_status_problem_summary_limits_latest_ids(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join([f"- [ ] Blocked task {i}" for i in range(4)]),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item_ids: list[int] = []
+    for item in store.list_plan_items(plan_path=plan):
+        store.update_plan_item_status(
+            item.plan_item_id,
+            "blocked",
+            blocked_reason="same reason",
+        )
+        item_ids.append(item.plan_item_id)
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "status",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--limit",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Problem summary:" in output
+    latest_two = ", ".join(str(plan_item_id) for plan_item_id in reversed(item_ids[-2:]))
+    excluded = str(item_ids[0])
+    assert f"blocked (same reason): count=4 latest=[{latest_two}]" in output
+    assert excluded not in output.split("Problem summary:")[1].split("\n")[1]
+
+
 def test_autopilot_queue_reconcile_dry_run_reports_stale_created_items(
     capsys,
     tmp_path: Path,

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added a read-only problem summary to `ai-orch autopilot queue status` and
+  `ai-orch autopilot queue list` output that groups `blocked` and `in_progress`
+  items by reason, shows the count and latest affected queue item ids for each
+  group, and preserves existing queue state, filters, limits, and exit-code
+  semantics.
+
 - Added an operator-facing final summary to `ai-orch autopilot queue run-batch`
   dry-run and `--execute` output with selected/processed counts, status counts,
   first active non-done queue item, selected worktrees, and report paths,
