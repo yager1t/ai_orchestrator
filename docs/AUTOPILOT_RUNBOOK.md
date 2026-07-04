@@ -49,6 +49,72 @@ python -m ai_orchestrator autopilot queue sync-backlog --repo . --backlog docs/B
 Use `--priority P1 --priority P2` when the operator wants an explicit subset.
 Deferred `P3 / Deferred` items are not included by default.
 
+### 1.1 Empty backlog handoff
+
+When `docs/BACKLOG.md` has no open P0/P1/P2 items, do not start
+`queue run-batch` until exactly one bounded P2 item has been seeded, merged to
+`main`, and synced to the queue.
+
+1. Confirm the backlog has no open P0/P1/P2 bullets and the queue has no
+   pending created item for the backlog:
+
+   ```bash
+   git status --short
+   python -m ai_orchestrator autopilot queue status --repo . --plan docs/BACKLOG.md
+   python -m ai_orchestrator autopilot queue list --repo . --plan docs/BACKLOG.md --status created --limit 10
+   ```
+
+   The queue can still show historical `done` or `skipped` items; proceed only
+   when the created-item view shows `filtered: 0 status=created`.
+
+2. Create a short-lived branch from `main`:
+
+   ```bash
+   git switch -c codex/seed-bounded-p2-item
+   ```
+
+3. Add exactly one bounded P2 item to `docs/BACKLOG.md` under `## P2`,
+   replacing the `No open P2 items.` placeholder. Keep the task small enough
+   to complete in a single `queue run-batch` cycle.
+
+4. Commit the seed:
+
+   ```bash
+   git add docs/BACKLOG.md
+   git commit -m "docs(backlog): seed bounded P2 item"
+   ```
+
+5. Merge the seed into `main` through your normal review path (for example, a
+   pull request or a local fast-forward merge). `ai-orch` does not merge or
+   push automatically.
+
+6. Sync the backlog to the persisted queue:
+
+   ```bash
+   python -m ai_orchestrator autopilot queue sync-backlog --repo . --backlog docs/BACKLOG.md
+   ```
+
+   Verify the output shows `new: 1`. The `existing` count may be non-zero when
+   the queue already has historical items for the same backlog.
+
+7. Confirm exactly one queue item is `created`:
+
+   ```bash
+   python -m ai_orchestrator autopilot queue list --repo . --plan docs/BACKLOG.md --status created --limit 10
+   ```
+
+   Expected output shows `filtered: 1 status=created` and `by status: created=1`.
+
+8. Only then preview or execute `queue run-batch`:
+
+   ```bash
+   python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 1 --worktree ../ai-orch-worktrees/<task-worktree>
+   python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 1 --execute --worktree ../ai-orch-worktrees/<task-worktree>
+   ```
+
+This procedure does not change CLI behavior; it is a manual operator gate to
+ensure `queue run-batch` has one well-defined item before it starts.
+
 Inspect the persisted queue without starting work:
 
 ```bash

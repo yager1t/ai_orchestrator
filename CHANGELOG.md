@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented the empty-backlog operator handoff for seeding exactly one
+  bounded P2 item before running `queue run-batch`; no CLI behavior changed.
+
 - Allow `ai-orch autopilot queue requeue --plan PLAN <plan_item_id>` as a
   guarded compatibility form that validates the selected blocked item belongs to
   the requested plan before dry-run or `--apply`, so operators can reuse the
