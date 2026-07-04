@@ -265,6 +265,10 @@ Run a guarded serial queue batch only after the dry run is correct:
 python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --execute --max-items 3 --worktree ../ai-orch-autopilot
 ```
 
+Fixed `--worktree` batch runs persist the selected worktree path on the queue
+item, so `queue show`, queue history views, and task reports identify the
+execution checkout used for that item.
+
 Use `--max-runtime-sec` when an operator wants a shorter per-item supervisor
 runtime budget for a queue run. If the budget is exhausted, the queue item is
 marked `blocked`, a task report is written, and the blocked reason is shown in
