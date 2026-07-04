@@ -23,6 +23,9 @@ class WorktreeOverview:
     cleanup_status: str
 
 
+CLEANUP_STATUSES = ("candidate", "needs_review", "do_not_remove")
+
+
 def _cleanup_status(overview: WorktreeOverview) -> str:
     """Classify a worktree for operator cleanup review.
 

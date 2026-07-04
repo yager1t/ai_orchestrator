@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `ai-orch autopilot worktree-overview --cleanup-status STATUS` to show
+  only git worktrees labeled `candidate`, `needs_review`, or `do_not_remove`,
+  helping operators focus cleanup review without deleting or pruning anything.
 - Added a read-only cleanup candidate report to `ai-orch autopilot worktree-overview`
   that labels each shown worktree as `candidate`, `needs_review`, or
   `do_not_remove` for operator review, and prints cleanup counts in the summary,
