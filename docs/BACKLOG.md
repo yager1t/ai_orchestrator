@@ -13,9 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a docs-only manual worktree cleanup checklist to
-  `docs/AUTOPILOT_RUNBOOK.md` that describes review gates before an operator
-  removes old worktrees, without running or automating deletion.
+No open P2 items.
 
 ## P3 / Deferred
 
