@@ -258,6 +258,18 @@ Dry-run batch output includes each selected persisted queue item id. Use that
 id with `queue show <plan_item_id>` when you want to inspect the exact queued
 item before adding `--execute`.
 
+Add `--summary-json PATH` when scripts or reports need the final batch summary
+as a machine-readable artifact without changing the normal stdout summary:
+
+```bash
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 3 --summary-json .ai-orch/reports/batch-summary.json
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --execute --max-items 3 --worktree ../ai-orch-autopilot --summary-json .ai-orch/reports/batch-summary.json
+```
+
+The JSON summary includes the dry-run selected count or execute processed count,
+per-status counts, first non-done queue item, report paths, and selected
+worktree paths.
+
 Preview per-task worktree rotation from a pre-created worktree pool:
 
 ```bash

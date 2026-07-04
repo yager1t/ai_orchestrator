@@ -13,11 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add an opt-in `--summary-json PATH` option to `ai-orch autopilot queue
-  run-batch` dry-run and `--execute` flows that writes the final batch summary
-  as a machine-readable JSON artifact with selected/processed counts,
-  per-status counts, first non-done item, report paths, and selected worktree
-  paths, while preserving existing stdout output and exit-code semantics.
+No open P2 items.
 
 ## P3 / Deferred
 

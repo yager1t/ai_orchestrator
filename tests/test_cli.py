@@ -3666,6 +3666,390 @@ def test_autopilot_queue_run_batch_fixed_worktree_persists_and_reports(
     assert f"worktree={worktree.resolve()}" in status_output
 
 
+def test_autopilot_queue_run_batch_summary_json_dry_run(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    summary_path = tmp_path / "batch-summary.json"
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-items",
+            "2",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "=== Batch summary ===" in output
+    assert summary_path.exists()
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert summary["mode"] == "dry-run"
+    assert summary["selected_count"] == 2
+    assert summary["status_counts"] == {"created": 2}
+    assert summary["report_paths"] == []
+    assert summary["selected_worktree_paths"] == []
+    assert summary["first_non_done_item"] == {
+        "plan_item_id": items["First task"].plan_item_id,
+        "status": "created",
+        "text": "First task",
+        "source": f"{plan}:1",
+    }
+
+
+def test_autopilot_queue_run_batch_summary_json_execute(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+                "- [ ] Third task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+
+    call_count = 0
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        nonlocal call_count
+        call_count += 1
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id=f"batch-task-{call_count}"
+        )
+        return SupervisorResult(
+            status="done",
+            summary=f"Verification passed: {call_count}",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    summary_path = tmp_path / "batch-summary.json"
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "2",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "=== Batch summary ===" in output
+    assert summary_path.exists()
+
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    report_dir = tmp_path / ".ai-orch" / "reports"
+
+    assert summary["mode"] == "execute"
+    assert summary["processed_count"] == 2
+    assert summary["status_counts"] == {"done": 2}
+    assert summary["first_non_done_item"] == {
+        "plan_item_id": items["Third task"].plan_item_id,
+        "status": "created",
+        "text": "Third task",
+        "source": f"{plan}:3",
+    }
+    assert summary["report_paths"] == [
+        str(report_dir / "batch-task-1.md"),
+        str(report_dir / "batch-task-2.md"),
+    ]
+    assert summary["selected_worktree_paths"] == []
+
+
+def test_autopilot_queue_run_batch_summary_json_rotated_worktrees(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    wt1 = pool / "wt1"
+    wt1.mkdir()
+    wt2 = pool / "wt2"
+    wt2.mkdir()
+
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._validate_autopilot_worktree",
+        lambda _repo, _wt: None,
+    )
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._repo_has_uncommitted_changes",
+        lambda _repo: False,
+    )
+
+    captured_repos: list[Path] = []
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        captured_repos.append(repo.resolve())
+        stored = self.state_store.create_task(
+            task,
+            repo_path=repo,
+            task_id=f"rotated-task-{len(captured_repos)}",
+        )
+        return SupervisorResult(
+            status="done",
+            summary=f"Verification passed: {stored.task_id}",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    summary_path = tmp_path / "batch-summary.json"
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--rotate-worktrees",
+            str(pool),
+            "--execute",
+            "--allow-mock-agent",
+            "--max-items",
+            "2",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "=== Batch summary ===" in output
+    assert summary_path.exists()
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    report_dir = tmp_path / ".ai-orch" / "reports"
+
+    assert summary["mode"] == "execute"
+    assert summary["processed_count"] == 2
+    assert summary["status_counts"] == {"done": 2}
+    assert summary["selected_worktree_paths"] == [
+        str(wt1.resolve()),
+        str(wt2.resolve()),
+    ]
+    assert summary["report_paths"] == [
+        str(report_dir / "rotated-task-1.md"),
+        str(report_dir / "rotated-task-2.md"),
+    ]
+
+
+def test_autopilot_queue_run_batch_summary_json_dry_run_rotated_worktrees(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    wt1 = pool / "wt1"
+    wt1.mkdir()
+    wt2 = pool / "wt2"
+    wt2.mkdir()
+
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._validate_autopilot_worktree",
+        lambda _repo, _wt: None,
+    )
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._repo_has_uncommitted_changes",
+        lambda _repo: False,
+    )
+
+    summary_path = tmp_path / "batch-summary.json"
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--rotate-worktrees",
+            str(pool),
+            "--max-items",
+            "2",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "=== Batch summary ===" in output
+    assert summary_path.exists()
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert summary["mode"] == "dry-run"
+    assert summary["selected_count"] == 2
+    assert summary["status_counts"] == {"created": 2}
+    assert summary["selected_worktree_paths"] == [
+        str(wt1.resolve()),
+        str(wt2.resolve()),
+    ]
+    assert summary["report_paths"] == []
+
+
+def test_autopilot_queue_run_batch_summary_json_preserves_nonzero_exit_code(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id="blocked-task-1"
+        )
+        return SupervisorResult(
+            status="blocked",
+            summary="Blocked by policy",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    summary_path = tmp_path / "batch-summary.json"
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "2",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "=== Batch summary ===" in output
+    assert summary_path.exists()
+
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert summary["mode"] == "execute"
+    assert summary["processed_count"] == 1
+    assert summary["status_counts"] == {"blocked": 1}
+    assert summary["first_non_done_item"] == {
+        "plan_item_id": items["First task"].plan_item_id,
+        "status": "blocked",
+        "text": "First task",
+        "source": f"{plan}:1",
+    }
+
+
 def test_autopilot_queue_status_summarizes_counts_and_recent_items(
     capsys,
     tmp_path: Path,
