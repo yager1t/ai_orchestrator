@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Document in `docs/AUTOPILOT_RUNBOOK.md` that `queue show --plan`,
-  `queue requeue --plan`, and `queue skip --plan` share the same plan ownership
-  guard before displaying or changing a queue item, without changing CLI
-  behavior.
+No open P2 items.
 
 ## P3 / Deferred
 
