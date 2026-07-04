@@ -365,6 +365,36 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit a machine-readable JSON object instead of the default text summary",
     )
+    autopilot_queue_preflight = autopilot_queue_sub.add_parser(
+        "preflight",
+        help=(
+            "Read-only preflight for a selected plan combining queue readiness "
+            "with the selected agent profile summary"
+        ),
+    )
+    autopilot_queue_preflight.add_argument("--repo", default=".")
+    autopilot_queue_preflight.add_argument(
+        "--plan", default="docs/POST_MVP_ROADMAP.md"
+    )
+    autopilot_queue_preflight.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Maximum stale and at-risk items to list (default: 5)",
+    )
+    autopilot_queue_preflight.add_argument(
+        "--fail-on-risk",
+        action="store_true",
+        help=(
+            "Return a non-zero exit code when stale created items, blocked items, "
+            "in-progress items, or the selected agent is unavailable"
+        ),
+    )
+    autopilot_queue_preflight.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of the default text summary",
+    )
     autopilot_queue_reconcile = autopilot_queue_sub.add_parser(
         "reconcile",
         help="Find stale created queue items whose source plan task is no longer open",
@@ -1688,6 +1718,162 @@ def _run_autopilot_queue_readiness(
     return 0
 
 
+def _run_autopilot_queue_preflight(
+    args: argparse.Namespace,
+    repo: Path,
+    store: StateStore,
+) -> int:
+    """Render a read-only preflight summary for a selected plan.
+
+    Combines queue readiness with the selected agent profile summary
+    (``name``, ``type``, ``mode``, configured command, and availability).
+    The command never executes queue items or mutates stored state.
+    With ``--fail-on-risk`` the command exits ``2`` when readiness risk or
+    agent unavailability is present.
+    """
+    plan_path = _resolve_plan_path(repo, Path(args.plan))
+    if not plan_path.exists():
+        if args.json:
+            print(
+                json.dumps(
+                    {"error": f"Plan not found: {plan_path}"},
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"Plan not found: {plan_path}")
+        return 1
+
+    all_items = store.list_plan_items(plan_path=plan_path)
+
+    status_counts: dict[str, int] = {}
+    for item in all_items:
+        status_counts[item.status] = status_counts.get(item.status, 0) + 1
+
+    stale_created = _stale_created_queue_items(repo, all_items)
+    stale_in_progress = [item for item in all_items if item.status == "in_progress"]
+    created_total = status_counts.get("created", 0)
+    created_ready = max(0, created_total - len(stale_created))
+    blocked_total = status_counts.get("blocked", 0)
+    in_progress_total = status_counts.get("in_progress", 0)
+    has_readiness_risk = bool(stale_created or blocked_total or in_progress_total)
+
+    config = load_project_config(repo)
+    policy_engine = _policy_engine(config)
+    agent = _select_agent(config, policy_engine)
+    agent_config = config.agents.get(agent.name)
+    agent_available = agent.check_available()
+    mode = "mock" if agent.name == "mock" else "real"
+
+    preflight_ok = not has_readiness_risk and agent_available
+
+    limit = max(0, args.limit)
+
+    if args.json:
+        result = {
+            "plan": str(plan_path),
+            "total": len(all_items),
+            "by_status": dict(sorted(status_counts.items())),
+            "created_readiness": {
+                "ready": created_ready,
+                "stale": len(stale_created),
+            },
+            "blocked_in_progress_risk": {
+                "blocked": blocked_total,
+                "in_progress": in_progress_total,
+            },
+            "stale_created": {
+                "count": len(stale_created),
+                "items": [
+                    _queue_item_readiness_ref(repo, item)
+                    for item in stale_created[:limit]
+                ],
+            },
+            "stale_in_progress": {
+                "count": len(stale_in_progress),
+                "items": [
+                    _queue_item_readiness_ref(repo, item)
+                    for item in stale_in_progress[:limit]
+                ],
+            },
+            "problem_summary": _problem_summary_data(
+                all_items,
+                limit=limit if limit else None,
+            ),
+            "agent_profile": {
+                "name": agent.name,
+                "type": _agent_config_value(agent_config, "type"),
+                "profile": _agent_config_value(agent_config, "profile"),
+                "mode": mode,
+                "command": _agent_config_value(agent_config, "command"),
+                "available": agent_available,
+            },
+            "preflight_result": "pass" if preflight_ok else "risk_or_unavailable",
+        }
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        if args.fail_on_risk and not preflight_ok:
+            return 2
+        return 0
+
+    print(f"Queue preflight for {plan_path}")
+    print(f"  total: {len(all_items)}")
+    if status_counts:
+        summary = ", ".join(
+            f"{status}={count}" for status, count in sorted(status_counts.items())
+        )
+        print("  by status:", summary)
+    else:
+        print("  No plan items found.")
+
+    print("  created readiness:", f"ready={created_ready} stale={len(stale_created)}")
+    print(
+        "  blocked/in_progress risk:",
+        f"blocked={blocked_total} in_progress={in_progress_total}",
+    )
+    print("  stale created:", len(stale_created))
+    print("  stale in_progress:", len(stale_in_progress))
+
+    if stale_created:
+        print("  stale created items:")
+        for item in stale_created[:limit]:
+            refs = _queue_item_refs(repo, item)
+            item_label = _queue_item_label(item, include_plan_path=False)
+            print(f"    id={item.plan_item_id} {item_label}: {item.text}{refs}")
+        if len(stale_created) > limit:
+            print(f"    ... and {len(stale_created) - limit} more")
+
+    if stale_in_progress:
+        print("  stale in_progress items:")
+        for item in stale_in_progress[:limit]:
+            refs = _queue_item_refs(repo, item)
+            item_label = _queue_item_label(item, include_plan_path=False)
+            print(f"    id={item.plan_item_id} {item_label}: {item.text}{refs}")
+        if len(stale_in_progress) > limit:
+            print(f"    ... and {len(stale_in_progress) - limit} more")
+
+    problem_summary = _format_problem_summary(
+        all_items,
+        limit=limit if limit else None,
+    )
+    if problem_summary:
+        print(problem_summary)
+
+    print("Agent profile:")
+    print(f"  name: {agent.name}")
+    print(f"  type: {_agent_config_value(agent_config, 'type')}")
+    print(f"  profile: {_agent_config_value(agent_config, 'profile')}")
+    print(f"  mode: {mode}")
+    print(f"  command: {_agent_config_value(agent_config, 'command')}")
+    print(f"  available: {'yes' if agent_available else 'no'}")
+    print(f"preflight_result: {'pass' if preflight_ok else 'risk_or_unavailable'}")
+
+    if args.fail_on_risk and not preflight_ok:
+        return 2
+
+    return 0
+
+
 def _queue_item_readiness_ref(repo: Path, item: StoredPlanItem) -> dict[str, object]:
     """Return a machine-readable reference for a queue item."""
     report_path = _task_report_path(repo, item.task_id)
@@ -2164,6 +2350,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
 
     if args.autopilot_queue_command == "readiness":
         return _run_autopilot_queue_readiness(args, repo, store)
+
+    if args.autopilot_queue_command == "preflight":
+        return _run_autopilot_queue_preflight(args, repo, store)
 
     if args.autopilot_queue_command == "reconcile":
         return _run_autopilot_queue_reconcile(args, repo, store)

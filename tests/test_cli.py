@@ -4625,6 +4625,218 @@ def test_autopilot_queue_readiness_json_handles_missing_plan(
     assert "Plan not found:" in result["error"]
 
 
+def test_autopilot_queue_preflight_shows_readiness_and_agent_profile(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] Ready task",
+                "- [ ] Done task",
+                "- [ ] Blocked task",
+                "- [ ] Started task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    write_config(
+        tmp_path,
+        default_agent="generic",
+        include_generic_agent=True,
+        generic_command="python",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(items["Done task"].plan_item_id, "done")
+    store.update_plan_item_status(
+        items["Blocked task"].plan_item_id,
+        "blocked",
+        blocked_reason="needs review",
+    )
+    store.update_plan_item_status(
+        items["Started task"].plan_item_id,
+        "in_progress",
+    )
+
+    exit_code = main(
+        ["autopilot", "queue", "preflight", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Queue preflight for" in output
+    assert "total: 4" in output
+    assert "created readiness: ready=1 stale=0" in output
+    assert "blocked/in_progress risk: blocked=1 in_progress=1" in output
+    assert "Agent profile:" in output
+    assert "name: generic" in output
+    assert "type: generic_cli" in output
+    assert "mode: real" in output
+    assert "command: python" in output
+    assert "available: yes" in output
+    assert "preflight_result: risk_or_unavailable" in output
+
+
+def test_autopilot_queue_preflight_preserves_queue_state(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Ready task\n", encoding="utf-8")
+    write_config(tmp_path, default_agent="generic", include_generic_agent=True)
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    before = {item.plan_item_id: item.status for item in store.list_plan_items()}
+
+    exit_code = main(
+        ["autopilot", "queue", "preflight", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    after = {item.plan_item_id: item.status for item in store.list_plan_items()}
+
+    assert exit_code == 0
+    assert after == before
+
+
+def test_autopilot_queue_preflight_fail_on_risk_exits_nonzero_for_readiness_risk(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Stale task\n", encoding="utf-8")
+    write_config(tmp_path, default_agent="generic", include_generic_agent=True)
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    plan.write_text("- [x] Stale task\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "preflight",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--fail-on-risk",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 2
+    assert "created readiness: ready=0 stale=1" in output
+    assert "preflight_result: risk_or_unavailable" in output
+
+
+def test_autopilot_queue_preflight_fail_on_risk_exits_nonzero_for_unavailable_agent(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Ready task\n", encoding="utf-8")
+    write_config(
+        tmp_path,
+        default_agent="generic",
+        include_generic_agent=True,
+        generic_command="nonexistent_command_for_preflight_test",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "preflight",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--fail-on-risk",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 2
+    assert "Agent profile:" in output
+    assert "available: no" in output
+    assert "preflight_result: risk_or_unavailable" in output
+
+
+def test_autopilot_queue_preflight_json_outputs_combined_object(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Ready task\n", encoding="utf-8")
+    write_config(
+        tmp_path,
+        default_agent="generic",
+        include_generic_agent=True,
+        generic_command="python",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "preflight",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--json",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    result = json.loads(output)
+    assert result["plan"] == str(plan)
+    assert result["total"] == 1
+    assert result["created_readiness"] == {"ready": 1, "stale": 0}
+    assert result["agent_profile"]["name"] == "generic"
+    assert result["agent_profile"]["type"] == "generic_cli"
+    assert result["agent_profile"]["mode"] == "real"
+    assert result["agent_profile"]["command"] == "python"
+    assert result["agent_profile"]["available"] is True
+    assert result["preflight_result"] == "pass"
+
+
+def test_autopilot_queue_preflight_handles_missing_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    missing_plan = tmp_path / "MISSING.md"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "preflight",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(missing_plan),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Plan not found:" in output
+
+
 def test_autopilot_queue_reconcile_dry_run_reports_stale_created_items(
     capsys,
     tmp_path: Path,
