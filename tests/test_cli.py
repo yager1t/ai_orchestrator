@@ -4437,6 +4437,194 @@ def test_autopilot_queue_readiness_fail_on_risk_exits_zero_when_clean(
     assert "blocked/in_progress risk: blocked=0 in_progress=0" in output
 
 
+def test_autopilot_queue_readiness_json_outputs_machine_readable_object(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] Ready task",
+                "- [ ] Done task",
+                "- [ ] Blocked task",
+                "- [ ] Started task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(items["Done task"].plan_item_id, "done")
+    store.update_plan_item_status(
+        items["Blocked task"].plan_item_id,
+        "blocked",
+        blocked_reason="needs review",
+    )
+    store.update_plan_item_status(
+        items["Started task"].plan_item_id,
+        "in_progress",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "readiness",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--json",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    result = json.loads(output)
+    assert result["plan"] == str(plan)
+    assert result["total"] == 4
+    assert result["by_status"] == {
+        "blocked": 1,
+        "created": 1,
+        "done": 1,
+        "in_progress": 1,
+    }
+    assert result["created_readiness"] == {"ready": 1, "stale": 0}
+    assert result["blocked_in_progress_risk"] == {"blocked": 1, "in_progress": 1}
+    assert result["stale_created"] == {"count": 0, "items": []}
+    assert result["stale_in_progress"]["count"] == 1
+    assert result["stale_in_progress"]["items"][0]["text"] == "Started task"
+    assert result["problem_summary"] == [
+        {
+            "status": "in_progress",
+            "reason": "(no reason)",
+            "count": 1,
+            "latest_ids": [items["Started task"].plan_item_id],
+        },
+        {
+            "status": "blocked",
+            "reason": "needs review",
+            "count": 1,
+            "latest_ids": [items["Blocked task"].plan_item_id],
+        },
+    ]
+
+
+def test_autopilot_queue_readiness_json_all_plans_aggregates(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    roadmap = tmp_path / "ROADMAP.md"
+    backlog = tmp_path / "BACKLOG.md"
+    roadmap.write_text("- [ ] Roadmap blocked task\n", encoding="utf-8")
+    backlog.write_text("- [ ] Backlog stale task\n", encoding="utf-8")
+
+    main(
+        ["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(roadmap)]
+    )
+    main(
+        ["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(backlog)]
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    roadmap_item = store.list_plan_items(plan_path=roadmap)[0]
+    store.update_plan_item_status(roadmap_item.plan_item_id, "blocked")
+    backlog.write_text("- [x] Backlog stale task\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "readiness",
+            "--repo",
+            str(tmp_path),
+            "--all-plans",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    result = json.loads(output)
+    assert result["plan"] == "all persisted plans"
+    assert result["total"] == 2
+    assert result["created_readiness"] == {"ready": 0, "stale": 1}
+    assert result["blocked_in_progress_risk"] == {"blocked": 1, "in_progress": 0}
+    assert result["stale_created"]["count"] == 1
+    assert result["stale_created"]["items"][0]["plan_path"] == str(backlog)
+    assert result["problem_summary"] == [
+        {
+            "status": "blocked",
+            "reason": "(no reason)",
+            "count": 1,
+            "latest_ids": [roadmap_item.plan_item_id],
+        },
+    ]
+
+
+def test_autopilot_queue_readiness_json_preserves_fail_on_risk(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Stale task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    plan.write_text("- [x] Stale task\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "readiness",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--json",
+            "--fail-on-risk",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 2
+    result = json.loads(output)
+    assert result["created_readiness"] == {"ready": 0, "stale": 1}
+
+
+def test_autopilot_queue_readiness_json_handles_missing_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    missing_plan = tmp_path / "MISSING.md"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "readiness",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(missing_plan),
+            "--json",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    result = json.loads(output)
+    assert "error" in result
+    assert "Plan not found:" in result["error"]
+
+
 def test_autopilot_queue_reconcile_dry_run_reports_stale_created_items(
     capsys,
     tmp_path: Path,
