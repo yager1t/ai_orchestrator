@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Show existing queue item refs (`task=`, `worktree=`, `report=`, and
+  `reason=` when available) in stale-row output from `ai-orch autopilot queue
+  reconcile` and `queue recover-in-progress`, without changing dry-run/apply
+  behavior, queue state transitions, filters, or exit-code semantics.
+
 - Added read-only `ai-orch autopilot worktree-overview --limit N` output so
   large worktree directories can show only the first N filtered rows while the
   summary reports total discovered, filtered, and shown row counts, without
