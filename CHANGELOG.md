@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Documented a manual worktree cleanup checklist with review gates before an
+  operator removes old worktrees; no cleanup automation was added.
 - Added `ai-orch autopilot worktree-overview --merged-only` to show only git
   worktrees whose branch is merged into the review repo HEAD according to strict
   ancestry, helping operators focus cleanup review without deleting or pruning

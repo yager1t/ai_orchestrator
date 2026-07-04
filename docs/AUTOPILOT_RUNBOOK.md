@@ -187,6 +187,60 @@ merged into the review repo HEAD according to strict ancestry. This command
 never creates, deletes, prunes, or checks out worktrees; cleanup remains a
 separate manual operator decision.
 
+### 3.1 Manual worktree cleanup checklist
+
+Before removing any old worktree, walk through these gates manually. `ai-orch`
+does not delete worktrees automatically; these gates are documentation only and
+must be executed by the operator outside the tool.
+
+1. **List candidate worktrees** with the read-only overview:
+
+   ```bash
+   python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-orch-worktrees
+   ```
+
+2. **Confirm branch merge status.** Only consider removing worktrees whose
+   branch is already merged into the review repo HEAD, unless the branch was
+   explicitly abandoned.
+
+3. **Check for dirty or untracked state.** Do not remove worktrees with
+   uncommitted changes or untracked files without first reviewing, stashing, or
+   copying the work out.
+
+4. **Check for active autopilot runs.** Verify no queue item is `in_progress`
+   or `blocked` against the worktree path:
+
+   ```bash
+   python -m ai_orchestrator autopilot queue status --repo . --all-plans
+   ```
+
+5. **Confirm no local-only branches or commits are needed.** Compare the
+   worktree branch against `origin` if the branch was ever pushed.
+
+6. **Archive or record value before deletion.** If the worktree contains
+   experiment results, logs, or reports that are not stored elsewhere, copy them
+   to a durable location first.
+
+7. **Use `git worktree remove`, not `rm -rf`.** Example:
+
+   ```bash
+   git worktree remove ../ai-orch-worktrees/<branch-name>
+   ```
+
+   If the worktree is already unlinked or corrupt, use
+   `git worktree remove --force` only after the previous gates pass.
+
+8. **Verify removal.** Confirm the worktree no longer appears:
+
+   ```bash
+   git worktree list
+   python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-orch-worktrees
+   ```
+
+9. **Stop and escalate** if any gate is unclear. Do not delete worktrees that
+   are dirty, unlinked, currently in use, or whose branch status is uncertain
+   without operator review.
+
 ## 4. Execute
 
 Start the selected item only after the dry run is correct:
