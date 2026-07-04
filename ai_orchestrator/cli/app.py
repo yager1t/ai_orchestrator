@@ -483,6 +483,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     autopilot_queue_requeue.add_argument("--repo", default=".")
     autopilot_queue_requeue.add_argument(
+        "--plan",
+        help=(
+            "Optional plan path for compatibility with queue history commands. "
+            "When given, the item is requeued only if it belongs to this plan."
+        ),
+    )
+    autopilot_queue_requeue.add_argument(
         "--apply",
         action="store_true",
         help="Actually move the item back to created; without this flag the command is a dry run",
@@ -1612,6 +1619,18 @@ def _run_autopilot_queue_requeue(
             f"Queue item {args.plan_item_id} is not blocked (status={item.status})"
         )
         return 1
+
+    requested_plan = getattr(args, "plan", None)
+    if requested_plan is not None:
+        plan_path = _resolve_plan_path(repo, Path(requested_plan))
+        if not plan_path.exists():
+            print(f"Plan not found: {plan_path}")
+            return 1
+        if Path(item.plan_path) != plan_path:
+            print(
+                f"Queue item {args.plan_item_id} does not belong to plan {plan_path}"
+            )
+            return 1
 
     print(f"Requeue queue item {item.plan_item_id}")
     print(f"  source: {item.plan_path}:{item.line_number}")

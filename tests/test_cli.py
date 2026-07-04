@@ -4513,6 +4513,129 @@ def test_autopilot_queue_requeue_reports_missing_item(
     assert "Queue item not found: 9999" in output
 
 
+def test_autopilot_queue_requeue_with_plan_dry_run_reports_blocked_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Blocked task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "blocked",
+        blocked_reason="needs operator review",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "requeue",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Requeue queue item {item.plan_item_id}" in output
+    assert "dry_run: use --apply to move this item back to created" in output
+    assert loaded is not None
+    assert loaded.status == "blocked"
+    assert loaded.blocked_reason == "needs operator review"
+
+
+def test_autopilot_queue_requeue_with_plan_apply_moves_blocked_item_to_created(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Blocked task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "blocked",
+        blocked_reason="needs operator review",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "requeue",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--apply",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert f"Requeue queue item {item.plan_item_id}" in output
+    assert "status: created" in output
+    assert loaded is not None
+    assert loaded.status == "created"
+    assert loaded.blocked_reason is None
+
+
+def test_autopilot_queue_requeue_with_plan_rejects_mismatched_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan_a = tmp_path / "ROADMAP.md"
+    plan_a.write_text("- [ ] Plan A task\n", encoding="utf-8")
+    plan_b = tmp_path / "BACKLOG.md"
+    plan_b.write_text("- Plan B task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan_a)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item_a = store.list_plan_items(plan_path=plan_a)[0]
+    store.update_plan_item_status(
+        item_a.plan_item_id,
+        "blocked",
+        blocked_reason="needs operator review",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "requeue",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan_b),
+            "--apply",
+            str(item_a.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item_a.plan_item_id)
+
+    assert exit_code == 1
+    assert f"Queue item {item_a.plan_item_id} does not belong to plan {plan_b}" in output
+    assert loaded is not None
+    assert loaded.status == "blocked"
+    assert loaded.blocked_reason == "needs operator review"
+
+
 def test_autopilot_queue_skip_dry_run_reports_created_item(
     capsys,
     tmp_path: Path,
