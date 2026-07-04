@@ -1756,33 +1756,19 @@ def _next_action_for_preflight(
     return "none"
 
 
-def _run_autopilot_queue_preflight(
-    args: argparse.Namespace,
+def _queue_preflight_snapshot(
     repo: Path,
+    plan_path: Path,
     store: StateStore,
-) -> int:
-    """Render a read-only preflight summary for a selected plan.
+    *,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Return a read-only preflight snapshot for *plan_path*.
 
-    Combines queue readiness with the selected agent profile summary
-    (``name``, ``type``, ``mode``, configured command, and availability).
-    The command never executes queue items or mutates stored state.
-    With ``--fail-on-risk`` the command exits ``2`` when readiness risk or
-    agent unavailability is present.
+    Combines queue readiness counts with the selected agent profile summary,
+    ``preflight_result``, and ``next_action``. The snapshot reflects the
+    persisted queue state before any batch selection or execution.
     """
-    plan_path = _resolve_plan_path(repo, Path(args.plan))
-    if not plan_path.exists():
-        if args.json:
-            print(
-                json.dumps(
-                    {"error": f"Plan not found: {plan_path}"},
-                    indent=2,
-                    ensure_ascii=False,
-                )
-            )
-        else:
-            print(f"Plan not found: {plan_path}")
-        return 1
-
     all_items = store.list_plan_items(plan_path=plan_path)
 
     status_counts: dict[str, int] = {}
@@ -1813,109 +1799,160 @@ def _run_autopilot_queue_preflight(
         blocked_count=blocked_total,
     )
 
+    bounded_limit = max(0, limit)
+    return {
+        "plan": str(plan_path),
+        "total": len(all_items),
+        "by_status": dict(sorted(status_counts.items())),
+        "created_readiness": {
+            "ready": created_ready,
+            "stale": len(stale_created),
+        },
+        "blocked_in_progress_risk": {
+            "blocked": blocked_total,
+            "in_progress": in_progress_total,
+        },
+        "stale_created": {
+            "count": len(stale_created),
+            "items": [
+                _queue_item_readiness_ref(repo, item)
+                for item in stale_created[:bounded_limit]
+            ],
+        },
+        "stale_in_progress": {
+            "count": len(stale_in_progress),
+            "items": [
+                _queue_item_readiness_ref(repo, item)
+                for item in stale_in_progress[:bounded_limit]
+            ],
+        },
+        "problem_summary": _problem_summary_data(
+            all_items,
+            limit=bounded_limit if bounded_limit else None,
+        ),
+        "agent_profile": {
+            "name": agent.name,
+            "type": _agent_config_value(agent_config, "type"),
+            "profile": _agent_config_value(agent_config, "profile"),
+            "mode": mode,
+            "command": _agent_config_value(agent_config, "command"),
+            "available": agent_available,
+        },
+        "preflight_result": "pass" if preflight_ok else "risk_or_unavailable",
+        "next_action": next_action,
+    }
+
+
+def _run_autopilot_queue_preflight(
+    args: argparse.Namespace,
+    repo: Path,
+    store: StateStore,
+) -> int:
+    """Render a read-only preflight summary for a selected plan.
+
+    Combines queue readiness with the selected agent profile summary
+    (``name``, ``type``, ``mode``, configured command, and availability).
+    The command never executes queue items or mutates stored state.
+    With ``--fail-on-risk`` the command exits ``2`` when readiness risk or
+    agent unavailability is present.
+    """
+    plan_path = _resolve_plan_path(repo, Path(args.plan))
+    if not plan_path.exists():
+        if args.json:
+            print(
+                json.dumps(
+                    {"error": f"Plan not found: {plan_path}"},
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(f"Plan not found: {plan_path}")
+        return 1
+
     limit = max(0, args.limit)
+    snapshot = _queue_preflight_snapshot(repo, plan_path, store, limit=limit)
 
     if args.json:
-        result = {
-            "plan": str(plan_path),
-            "total": len(all_items),
-            "by_status": dict(sorted(status_counts.items())),
-            "created_readiness": {
-                "ready": created_ready,
-                "stale": len(stale_created),
-            },
-            "blocked_in_progress_risk": {
-                "blocked": blocked_total,
-                "in_progress": in_progress_total,
-            },
-            "stale_created": {
-                "count": len(stale_created),
-                "items": [
-                    _queue_item_readiness_ref(repo, item)
-                    for item in stale_created[:limit]
-                ],
-            },
-            "stale_in_progress": {
-                "count": len(stale_in_progress),
-                "items": [
-                    _queue_item_readiness_ref(repo, item)
-                    for item in stale_in_progress[:limit]
-                ],
-            },
-            "problem_summary": _problem_summary_data(
-                all_items,
-                limit=limit if limit else None,
-            ),
-            "agent_profile": {
-                "name": agent.name,
-                "type": _agent_config_value(agent_config, "type"),
-                "profile": _agent_config_value(agent_config, "profile"),
-                "mode": mode,
-                "command": _agent_config_value(agent_config, "command"),
-                "available": agent_available,
-            },
-            "preflight_result": "pass" if preflight_ok else "risk_or_unavailable",
-            "next_action": next_action,
-        }
-        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
-        if args.fail_on_risk and not preflight_ok:
+        print(json.dumps(snapshot, indent=2, ensure_ascii=False, default=str))
+        if args.fail_on_risk and snapshot["preflight_result"] != "pass":
             return 2
         return 0
 
     print(f"Queue preflight for {plan_path}")
-    print(f"  total: {len(all_items)}")
-    if status_counts:
+    print(f"  total: {snapshot['total']}")
+    by_status = snapshot["by_status"]
+    if by_status:
         summary = ", ".join(
-            f"{status}={count}" for status, count in sorted(status_counts.items())
+            f"{status}={count}" for status, count in sorted(by_status.items())
         )
         print("  by status:", summary)
     else:
         print("  No plan items found.")
 
-    print("  created readiness:", f"ready={created_ready} stale={len(stale_created)}")
+    created_readiness = snapshot["created_readiness"]
+    blocked_in_progress_risk = snapshot["blocked_in_progress_risk"]
+    print(
+        "  created readiness:",
+        f"ready={created_readiness['ready']} stale={created_readiness['stale']}",
+    )
     print(
         "  blocked/in_progress risk:",
-        f"blocked={blocked_total} in_progress={in_progress_total}",
+        f"blocked={blocked_in_progress_risk['blocked']} "
+        f"in_progress={blocked_in_progress_risk['in_progress']}",
     )
-    print("  stale created:", len(stale_created))
-    print("  stale in_progress:", len(stale_in_progress))
+    print("  stale created:", created_readiness["stale"])
+    print("  stale in_progress:", snapshot["stale_in_progress"]["count"])
 
-    if stale_created:
+    stale_created_items = snapshot["stale_created"]["items"]
+    if stale_created_items:
         print("  stale created items:")
-        for item in stale_created[:limit]:
+        for ref in stale_created_items:
+            item_id = ref["plan_item_id"]
+            item = store.get_plan_item(item_id)
+            if item is None:
+                continue
             refs = _queue_item_refs(repo, item)
             item_label = _queue_item_label(item, include_plan_path=False)
-            print(f"    id={item.plan_item_id} {item_label}: {item.text}{refs}")
-        if len(stale_created) > limit:
-            print(f"    ... and {len(stale_created) - limit} more")
+            print(f"    id={item_id} {item_label}: {item.text}{refs}")
+        if snapshot["stale_created"]["count"] > limit:
+            print(f"    ... and {snapshot['stale_created']['count'] - limit} more")
 
-    if stale_in_progress:
+    stale_in_progress_items = snapshot["stale_in_progress"]["items"]
+    if stale_in_progress_items:
         print("  stale in_progress items:")
-        for item in stale_in_progress[:limit]:
+        for ref in stale_in_progress_items:
+            item_id = ref["plan_item_id"]
+            item = store.get_plan_item(item_id)
+            if item is None:
+                continue
             refs = _queue_item_refs(repo, item)
             item_label = _queue_item_label(item, include_plan_path=False)
-            print(f"    id={item.plan_item_id} {item_label}: {item.text}{refs}")
-        if len(stale_in_progress) > limit:
-            print(f"    ... and {len(stale_in_progress) - limit} more")
+            print(f"    id={item_id} {item_label}: {item.text}{refs}")
+        if snapshot["stale_in_progress"]["count"] > limit:
+            print(
+                f"    ... and {snapshot['stale_in_progress']['count'] - limit} more"
+            )
 
     problem_summary = _format_problem_summary(
-        all_items,
+        store.list_plan_items(plan_path=plan_path),
         limit=limit if limit else None,
     )
     if problem_summary:
         print(problem_summary)
 
+    agent_profile = snapshot["agent_profile"]
     print("Agent profile:")
-    print(f"  name: {agent.name}")
-    print(f"  type: {_agent_config_value(agent_config, 'type')}")
-    print(f"  profile: {_agent_config_value(agent_config, 'profile')}")
-    print(f"  mode: {mode}")
-    print(f"  command: {_agent_config_value(agent_config, 'command')}")
-    print(f"  available: {'yes' if agent_available else 'no'}")
-    print(f"preflight_result: {'pass' if preflight_ok else 'risk_or_unavailable'}")
-    print(f"next_action: {next_action}")
+    print(f"  name: {agent_profile['name']}")
+    print(f"  type: {agent_profile['type']}")
+    print(f"  profile: {agent_profile['profile']}")
+    print(f"  mode: {agent_profile['mode']}")
+    print(f"  command: {agent_profile['command']}")
+    print(f"  available: {'yes' if agent_profile['available'] else 'no'}")
+    print(f"preflight_result: {snapshot['preflight_result']}")
+    print(f"next_action: {snapshot['next_action']}")
 
-    if args.fail_on_risk and not preflight_ok:
+    if args.fail_on_risk and snapshot["preflight_result"] != "pass":
         return 2
 
     return 0
@@ -2479,6 +2516,7 @@ def _build_batch_summary(
     report_paths: list[Path],
     worktree_paths: list[Path],
     mode: str,
+    preflight_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a machine-readable summary for a batch dry-run or execution."""
     all_items = store.list_plan_items(plan_path=plan_path)
@@ -2513,6 +2551,8 @@ def _build_batch_summary(
             "text": first_non_done.text,
             "source": f"{first_non_done.plan_path}:{first_non_done.line_number}",
         }
+    if preflight_snapshot is not None:
+        summary["preflight_snapshot"] = preflight_snapshot
     return summary
 
 
@@ -2568,6 +2608,7 @@ def _emit_batch_summary(
     worktree_paths: list[Path],
     mode: str,
     summary_json: Path | None = None,
+    preflight_snapshot: dict[str, Any] | None = None,
 ) -> bool:
     """Print and optionally persist a batch summary.
 
@@ -2581,6 +2622,7 @@ def _emit_batch_summary(
         report_paths,
         worktree_paths,
         mode,
+        preflight_snapshot=preflight_snapshot,
     )
     _print_batch_summary(summary)
     if summary_json is not None:
@@ -2612,10 +2654,16 @@ def _run_autopilot_queue_batch(
         print("--max-items must be at least 1")
         return 1
 
+    preflight_snapshot = _queue_preflight_snapshot(repo, plan_path, store)
+
     if getattr(args, "rotate_worktrees", None):
         if not args.execute:
-            return _dry_run_rotated_batch(args, repo, plan_path, store)
-        return _run_rotated_autopilot_queue_batch(args, repo, plan_path, store)
+            return _dry_run_rotated_batch(
+                args, repo, plan_path, store, preflight_snapshot=preflight_snapshot
+            )
+        return _run_rotated_autopilot_queue_batch(
+            args, repo, plan_path, store, preflight_snapshot=preflight_snapshot
+        )
 
     fixed_worktree: Path | None = None
     if getattr(args, "worktree", None):
@@ -2639,6 +2687,7 @@ def _run_autopilot_queue_batch(
             [fixed_worktree] if fixed_worktree else [],
             mode="dry-run",
             summary_json=Path(args.summary_json) if args.summary_json else None,
+            preflight_snapshot=preflight_snapshot,
         ):
             return 1
         return 0
@@ -2700,6 +2749,7 @@ def _run_autopilot_queue_batch(
                 [fixed_worktree] if fixed_worktree else [],
                 mode="execute",
                 summary_json=Path(args.summary_json) if args.summary_json else None,
+                preflight_snapshot=preflight_snapshot,
             ):
                 return 1
             return 1
@@ -2713,6 +2763,7 @@ def _run_autopilot_queue_batch(
         [fixed_worktree] if fixed_worktree else [],
         mode="execute",
         summary_json=Path(args.summary_json) if args.summary_json else None,
+        preflight_snapshot=preflight_snapshot,
     ):
         return 1
     return 0
@@ -2723,6 +2774,8 @@ def _run_rotated_autopilot_queue_batch(
     repo: Path,
     plan_path: Path,
     store: StateStore,
+    *,
+    preflight_snapshot: dict[str, Any] | None = None,
 ) -> int:
     """Execute a serial batch with one selected worktree per queue item."""
     base_dir = _resolve_rotated_worktree_base(repo, args.rotate_worktrees)
@@ -2804,6 +2857,7 @@ def _run_rotated_autopilot_queue_batch(
                 selected,
                 mode="execute",
                 summary_json=Path(args.summary_json) if args.summary_json else None,
+                preflight_snapshot=preflight_snapshot,
             ):
                 return 1
             return 1
@@ -2817,6 +2871,7 @@ def _run_rotated_autopilot_queue_batch(
         selected,
         mode="execute",
         summary_json=Path(args.summary_json) if args.summary_json else None,
+        preflight_snapshot=preflight_snapshot,
     ):
         return 1
     return 0
@@ -2827,6 +2882,8 @@ def _dry_run_rotated_batch(
     repo: Path,
     plan_path: Path,
     store: StateStore,
+    *,
+    preflight_snapshot: dict[str, Any] | None = None,
 ) -> int:
     """Dry-run a batch with per-task worktree rotation."""
     base_dir = _resolve_rotated_worktree_base(repo, args.rotate_worktrees)
@@ -2872,6 +2929,7 @@ def _dry_run_rotated_batch(
         selected,
         mode="dry-run",
         summary_json=Path(args.summary_json) if args.summary_json else None,
+        preflight_snapshot=preflight_snapshot,
     ):
         return 1
     return 0

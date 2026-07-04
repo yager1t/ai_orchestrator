@@ -54,7 +54,9 @@
   dry-run and `--execute` flows that writes the same final batch summary as a
   machine-readable JSON artifact with selected/processed counts, per-status
   counts, the first non-done queue item, report paths, and selected worktree
-  paths, while preserving existing stdout output and exit-code semantics.
+  paths, plus a read-only `preflight_snapshot` captured before batch selection
+  with queue readiness, selected agent availability, `preflight_result`, and
+  `next_action`, while preserving existing stdout output and exit-code semantics.
 
 - Documented the empty-backlog operator handoff for seeding exactly one
   bounded P2 item before running `queue run-batch`; no CLI behavior changed.

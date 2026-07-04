@@ -3719,6 +3719,12 @@ def test_autopilot_queue_run_batch_summary_json_dry_run(
         "text": "First task",
         "source": f"{plan}:1",
     }
+    assert summary["preflight_snapshot"]["plan"] == str(plan)
+    assert summary["preflight_snapshot"]["total"] == 2
+    assert summary["preflight_snapshot"]["created_readiness"] == {"ready": 2, "stale": 0}
+    assert summary["preflight_snapshot"]["agent_profile"]["name"] == "mock"
+    assert summary["preflight_snapshot"]["preflight_result"] == "pass"
+    assert summary["preflight_snapshot"]["next_action"] == "run_batch"
 
 
 def test_autopilot_queue_run_batch_summary_json_execute(
@@ -3805,6 +3811,12 @@ def test_autopilot_queue_run_batch_summary_json_execute(
         str(report_dir / "batch-task-2.md"),
     ]
     assert summary["selected_worktree_paths"] == []
+    assert summary["preflight_snapshot"]["plan"] == str(plan)
+    assert summary["preflight_snapshot"]["total"] == 3
+    assert summary["preflight_snapshot"]["created_readiness"] == {"ready": 3, "stale": 0}
+    assert summary["preflight_snapshot"]["agent_profile"]["name"] == "mock"
+    assert summary["preflight_snapshot"]["preflight_result"] == "pass"
+    assert summary["preflight_snapshot"]["next_action"] == "run_batch"
 
 
 def test_autopilot_queue_run_batch_summary_json_rotated_worktrees(
@@ -3903,6 +3915,12 @@ def test_autopilot_queue_run_batch_summary_json_rotated_worktrees(
         str(report_dir / "rotated-task-1.md"),
         str(report_dir / "rotated-task-2.md"),
     ]
+    assert summary["preflight_snapshot"]["plan"] == str(plan)
+    assert summary["preflight_snapshot"]["total"] == 2
+    assert summary["preflight_snapshot"]["created_readiness"] == {"ready": 2, "stale": 0}
+    assert summary["preflight_snapshot"]["agent_profile"]["name"] == "mock"
+    assert summary["preflight_snapshot"]["preflight_result"] == "pass"
+    assert summary["preflight_snapshot"]["next_action"] == "run_batch"
 
 
 def test_autopilot_queue_run_batch_summary_json_dry_run_rotated_worktrees(
@@ -3973,6 +3991,12 @@ def test_autopilot_queue_run_batch_summary_json_dry_run_rotated_worktrees(
         str(wt2.resolve()),
     ]
     assert summary["report_paths"] == []
+    assert summary["preflight_snapshot"]["plan"] == str(plan)
+    assert summary["preflight_snapshot"]["total"] == 2
+    assert summary["preflight_snapshot"]["created_readiness"] == {"ready": 2, "stale": 0}
+    assert summary["preflight_snapshot"]["agent_profile"]["name"] == "mock"
+    assert summary["preflight_snapshot"]["preflight_result"] == "pass"
+    assert summary["preflight_snapshot"]["next_action"] == "run_batch"
 
 
 def test_autopilot_queue_run_batch_summary_json_preserves_nonzero_exit_code(
@@ -4048,6 +4072,94 @@ def test_autopilot_queue_run_batch_summary_json_preserves_nonzero_exit_code(
         "text": "First task",
         "source": f"{plan}:1",
     }
+    assert summary["preflight_snapshot"]["plan"] == str(plan)
+    assert summary["preflight_snapshot"]["total"] == 2
+    assert summary["preflight_snapshot"]["created_readiness"] == {"ready": 2, "stale": 0}
+    assert summary["preflight_snapshot"]["agent_profile"]["name"] == "mock"
+    assert summary["preflight_snapshot"]["preflight_result"] == "pass"
+    assert summary["preflight_snapshot"]["next_action"] == "run_batch"
+
+
+def test_autopilot_queue_run_batch_preflight_snapshot_reflects_pre_execution_risk(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] Ready task",
+                "- [ ] Blocked task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(
+        items["Blocked task"].plan_item_id,
+        "blocked",
+        blocked_reason="needs review",
+    )
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id="done-task-1"
+        )
+        return SupervisorResult(
+            status="done",
+            summary="Done",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    summary_path = tmp_path / "batch-summary.json"
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "1",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "=== Batch summary ===" in output
+    assert summary_path.exists()
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert summary["mode"] == "execute"
+    assert summary["processed_count"] == 1
+    assert summary["status_counts"] == {"done": 1}
+    assert summary["preflight_snapshot"]["total"] == 2
+    assert summary["preflight_snapshot"]["created_readiness"] == {"ready": 1, "stale": 0}
+    assert summary["preflight_snapshot"]["blocked_in_progress_risk"] == {
+        "blocked": 1,
+        "in_progress": 0,
+    }
+    assert summary["preflight_snapshot"]["preflight_result"] == "risk_or_unavailable"
+    assert summary["preflight_snapshot"]["next_action"] == "review_blocked"
 
 
 def test_autopilot_queue_status_summarizes_counts_and_recent_items(
@@ -5066,6 +5178,59 @@ def test_autopilot_queue_preflight_shows_readiness_and_agent_profile(
     assert "available: yes" in output
     assert "preflight_result: risk_or_unavailable" in output
     assert "next_action: recover_in_progress" in output
+
+
+def test_autopilot_queue_preflight_counts_all_stale_in_progress_with_limit(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] Started task one",
+                "- [ ] Started task two",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    write_config(
+        tmp_path,
+        default_agent="generic",
+        include_generic_agent=True,
+        generic_command="python",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    for item in store.list_plan_items(plan_path=plan):
+        store.update_plan_item_status(item.plan_item_id, "in_progress")
+    plan.write_text("# Roadmap\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "preflight",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--limit",
+            "1",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "stale in_progress: 2" in output
+    assert "stale in_progress items:" in output
+    assert "Started task one" in output
+    assert "Started task two" not in output
+    assert "... and 1 more" in output
 
 
 def test_autopilot_queue_preflight_preserves_queue_state(
