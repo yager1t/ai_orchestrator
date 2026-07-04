@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Show the persisted queue item id in `ai-orch autopilot queue list` and
-  `queue status` output so operators can copy the id for `queue show`,
-  `queue requeue`, or `queue skip` directly from history views, without
-  changing queue state.
+No open P2 items.
 
 ## P3 / Deferred
 

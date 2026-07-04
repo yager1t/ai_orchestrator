@@ -2327,6 +2327,33 @@ def test_autopilot_queue_list_shows_report_path_for_completed_item(
     assert f"report={report_path}" in output
 
 
+def test_autopilot_queue_list_and_status_show_persisted_item_id(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("# Roadmap\n\n- [ ] Trackable task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+
+    main(
+        ["autopilot", "queue", "list", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    list_output = capsys.readouterr().out
+    assert f"id={item.plan_item_id}" in list_output
+    assert item.line_number != item.plan_item_id
+    assert f"id={item.line_number} " not in list_output
+
+    main(
+        ["autopilot", "queue", "status", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    status_output = capsys.readouterr().out
+    assert f"id={item.plan_item_id}" in status_output
+    assert f"id={item.line_number} " not in status_output
+
+
 def test_autopilot_queue_run_next_defaults_to_dry_run(capsys, tmp_path: Path) -> None:
     plan = tmp_path / "ROADMAP.md"
     plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
