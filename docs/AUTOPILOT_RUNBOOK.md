@@ -90,6 +90,11 @@ belongs to the same plan you were reviewing:
 python -m ai_orchestrator autopilot queue show --repo . --plan docs/BACKLOG.md <plan_item_id>
 ```
 
+`queue show --plan`, `queue requeue --plan`, and `queue skip --plan` all share
+the same plan ownership guard: when `--plan` is supplied, the command rejects the
+item before displaying or changing it if the persisted queue item does not belong
+to that plan. This does not change CLI behavior when `--plan` is omitted.
+
 Reconcile stale `created` queue items after a plan or backlog item is completed,
 removed, or rewritten. The command is a dry run unless `--apply` is present:
 
