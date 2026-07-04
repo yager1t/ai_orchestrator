@@ -13,11 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only `ai-orch autopilot queue preflight` command for a selected
-  plan that combines queue readiness with the selected agent profile summary
-  (`name`, `type`, `mode`, configured command, and availability), supports an
-  opt-in non-zero exit when readiness risk or agent unavailability is present,
-  and never executes queue items or changes queue state.
+No open P2 items.
 
 ## P3 / Deferred
 

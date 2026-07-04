@@ -140,6 +140,21 @@ blocked, or in-progress queue items; without that flag, readiness remains
 informational. Add `--json` when scripts or reports need the same readiness
 counts, stale refs, and problem summary as a machine-readable object.
 
+Before starting `queue run-batch`, use the read-only preflight command when you
+want queue readiness and the selected agent profile in one view:
+
+```bash
+python -m ai_orchestrator autopilot queue preflight --repo . --plan docs/BACKLOG.md
+python -m ai_orchestrator autopilot queue preflight --repo . --plan docs/BACKLOG.md --fail-on-risk
+python -m ai_orchestrator autopilot queue preflight --repo . --plan docs/BACKLOG.md --json
+```
+
+The preflight command reports the selected agent profile (`name`, `type`,
+`mode`, configured command, and availability) next to the queue readiness
+summary. It does not execute queue items or change queue state. Add
+`--fail-on-risk` when a scripted gate should fail on readiness risk or an
+unavailable selected agent.
+
 Completed queue items show `report=...` when their Markdown task report exists.
 Each history row also includes the persisted queue item id as `id=...`. Copy that
 id into `queue show`, `queue requeue`, or `queue skip`; the id is stable across

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added read-only `ai-orch autopilot queue preflight` command for a selected plan
+  that combines queue readiness counts, stale items, and problem summary with the
+  selected agent profile summary (`name`, `type`, `mode`, configured command, and
+  availability), supports an opt-in `--fail-on-risk` non-zero exit when readiness
+  risk or agent unavailability is present, and never executes queue items or
+  changes queue state.
+
 - Added read-only `--json` output option to `ai-orch autopilot queue readiness`
   for a selected plan or `--all-plans`, reporting total counts, created readiness,
   blocked/in-progress risk, stale created item refs, stale in-progress item refs,
