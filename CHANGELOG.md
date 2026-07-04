@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Show persisted queue item id in `ai-orch autopilot queue run-next` dry-run
+  output so operators can immediately inspect the selected item with
+  `queue show <plan_item_id>` before running `--execute`.
 - Show persisted queue item ids in `ai-orch autopilot queue run-batch` dry-run
   output so operators can immediately inspect the selected item with
   `queue show <plan_item_id>` before executing.

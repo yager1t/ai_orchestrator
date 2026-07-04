@@ -2332,6 +2332,9 @@ def test_autopilot_queue_run_next_defaults_to_dry_run(capsys, tmp_path: Path) ->
     plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
 
     main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    plan_item_id = store.list_plan_items(plan_path=plan)[0].plan_item_id
+
     exit_code = main(
         ["autopilot", "queue", "run-next", "--repo", str(tmp_path), "--plan", str(plan)]
     )
@@ -2340,10 +2343,10 @@ def test_autopilot_queue_run_next_defaults_to_dry_run(capsys, tmp_path: Path) ->
     assert exit_code == 0
     assert "Autopilot selected:" in output
     assert "Task: Add approval CLI" in output
+    assert f"Queue item: {plan_item_id}" in output
     assert "Dry run: add --execute" in output
-
-    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
-    item = store.list_plan_items(plan_path=plan)[0]
+    item = store.get_plan_item(plan_item_id)
+    assert item is not None
     assert item.status == "created"
     assert item.task_id is None
 

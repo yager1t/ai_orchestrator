@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Show the persisted queue item id in `ai-orch autopilot queue run-next`
-  dry-run output so operators can immediately inspect the selected item with
-  `queue show <plan_item_id>` before running `--execute`, without changing
-  execution behavior.
+No open P2 items.
 
 ## P3 / Deferred
 
