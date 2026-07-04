@@ -1895,6 +1895,7 @@ def _run_autopilot_queue_batch(
             print(f"No queued plan items ready in {plan_path}")
             return 0
         for item in items:
+            print(f"Queue item: {item.plan_item_id}")
             task = plan_item_to_task(item)
             _run_autopilot_task(task, repo, plan_path, args, store)
         print(f"Dry run: would process {len(items)} item(s). Add --execute to run.")
@@ -2066,6 +2067,7 @@ def _dry_run_rotated_batch(
 
     for item, worktree in zip(items, selected):
         task = plan_item_to_task(item)
+        print(f"Queue item: {item.plan_item_id}")
         print("Autopilot selected:")
         _print_autopilot_task(task)
         print(f"Worktree: {worktree}")
