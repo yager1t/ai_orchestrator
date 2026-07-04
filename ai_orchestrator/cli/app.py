@@ -1562,6 +1562,29 @@ def _run_autopilot_queue_recover_in_progress(
     return 0
 
 
+def _validate_queue_item_plan(
+    repo: Path,
+    plan_item_id: int,
+    requested_plan: str | None,
+    item_plan_path: str,
+) -> int | None:
+    """Validate that a queue item belongs to the requested plan.
+
+    Returns an exit code when the plan is missing or the item does not belong
+    to it; otherwise returns ``None``.
+    """
+    if requested_plan is None:
+        return None
+    plan_path = _resolve_plan_path(repo, Path(requested_plan))
+    if not plan_path.exists():
+        print(f"Plan not found: {plan_path}")
+        return 1
+    if Path(item_plan_path) != plan_path:
+        print(f"Queue item {plan_item_id} does not belong to plan {plan_path}")
+        return 1
+    return None
+
+
 def _run_autopilot_queue_show(
     args: argparse.Namespace,
     repo: Path,
@@ -1581,17 +1604,11 @@ def _run_autopilot_queue_show(
         print(f"Queue item not found: {args.plan_item_id}")
         return 1
 
-    requested_plan = getattr(args, "plan", None)
-    if requested_plan is not None:
-        plan_path = _resolve_plan_path(repo, Path(requested_plan))
-        if not plan_path.exists():
-            print(f"Plan not found: {plan_path}")
-            return 1
-        if Path(item.plan_path) != plan_path:
-            print(
-                f"Queue item {args.plan_item_id} does not belong to plan {plan_path}"
-            )
-            return 1
+    validation_error = _validate_queue_item_plan(
+        repo, args.plan_item_id, getattr(args, "plan", None), item.plan_path
+    )
+    if validation_error is not None:
+        return validation_error
 
     report_path = _task_report_path(repo, item.task_id)
     print(f"Queue item: {item.plan_item_id}")
@@ -1627,17 +1644,11 @@ def _run_autopilot_queue_requeue(
         )
         return 1
 
-    requested_plan = getattr(args, "plan", None)
-    if requested_plan is not None:
-        plan_path = _resolve_plan_path(repo, Path(requested_plan))
-        if not plan_path.exists():
-            print(f"Plan not found: {plan_path}")
-            return 1
-        if Path(item.plan_path) != plan_path:
-            print(
-                f"Queue item {args.plan_item_id} does not belong to plan {plan_path}"
-            )
-            return 1
+    validation_error = _validate_queue_item_plan(
+        repo, args.plan_item_id, getattr(args, "plan", None), item.plan_path
+    )
+    if validation_error is not None:
+        return validation_error
 
     print(f"Requeue queue item {item.plan_item_id}")
     print(f"  source: {item.plan_path}:{item.line_number}")
@@ -1688,17 +1699,11 @@ def _run_autopilot_queue_skip(
         )
         return 1
 
-    requested_plan = getattr(args, "plan", None)
-    if requested_plan is not None:
-        plan_path = _resolve_plan_path(repo, Path(requested_plan))
-        if not plan_path.exists():
-            print(f"Plan not found: {plan_path}")
-            return 1
-        if Path(item.plan_path) != plan_path:
-            print(
-                f"Queue item {args.plan_item_id} does not belong to plan {plan_path}"
-            )
-            return 1
+    validation_error = _validate_queue_item_plan(
+        repo, args.plan_item_id, getattr(args, "plan", None), item.plan_path
+    )
+    if validation_error is not None:
+        return validation_error
 
     print(f"Skip queue item {item.plan_item_id}")
     print(f"  source: {item.plan_path}:{item.line_number}")
