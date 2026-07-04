@@ -13,7 +13,10 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add a read-only cleanup candidate report to
+  `ai-orch autopilot worktree-overview` that labels shown worktrees as
+  candidate, needs_review, or do_not_remove for operator review, without
+  deleting or pruning anything.
 
 ## P3 / Deferred
 
