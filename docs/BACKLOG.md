@@ -13,11 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only `ai-orch autopilot queue readiness` command for a selected
-  plan or `--all-plans` that summarizes queue counts, created readiness,
-  blocked/in-progress risk, stale created items, and stale in-progress items in
-  one operator preflight view, without executing queue items or changing queue
-  state.
+No open P2 items.
 
 ## P3 / Deferred
 
