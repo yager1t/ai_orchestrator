@@ -13,7 +13,11 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add an operator-facing final summary to `ai-orch autopilot queue run-batch`
+  dry-run and `--execute` output that reports selected/processed item counts,
+  per-status counts, the first non-done queue item when present, report paths,
+  and selected worktree paths, without changing execution behavior or exit-code
+  semantics.
 
 ## P3 / Deferred
 
