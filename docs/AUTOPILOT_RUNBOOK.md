@@ -185,9 +185,11 @@ the table on worktrees with uncommitted or untracked changes, or use
 `--branch-filter TEXT` to focus on worktrees whose branch name contains TEXT.
 Use `--unlinked-only` to show worktrees that do not share the review repo's git
 common directory. Use `--merged-only` to show worktrees whose branch is already
-merged into the review repo HEAD according to strict ancestry. This command
-never creates, deletes, prunes, or checks out worktrees; cleanup remains a
-separate manual operator decision.
+merged into the review repo HEAD according to strict ancestry. Use
+`--cleanup-status STATUS` to show only worktrees labeled `candidate`,
+`needs_review`, or `do_not_remove` for cleanup review. This command never
+creates, deletes, prunes, or checks out worktrees; cleanup remains a separate
+manual operator decision.
 
 ### 3.1 Manual worktree cleanup checklist
 

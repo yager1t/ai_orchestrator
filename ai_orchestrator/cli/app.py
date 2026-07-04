@@ -23,6 +23,7 @@ from ai_orchestrator.autopilot import (
     sync_plan_items,
 )
 from ai_orchestrator.autopilot.worktree_overview import (
+    CLEANUP_STATUSES,
     format_worktree_overview,
     format_worktree_summary,
     gather_worktree_overviews,
@@ -246,6 +247,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--merged-only",
         action="store_true",
         help="Show only worktrees whose branch is merged into the review repo HEAD",
+    )
+    autopilot_worktree_overview.add_argument(
+        "--cleanup-status",
+        dest="cleanup_status",
+        metavar="STATUS",
+        choices=CLEANUP_STATUSES,
+        help="Show only worktrees with the given cleanup status",
     )
 
     autopilot_queue = autopilot_sub.add_parser(
@@ -1241,6 +1249,11 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
         overviews = [overview for overview in overviews if overview.linked is False]
     if args.merged_only:
         overviews = [overview for overview in overviews if overview.merged is True]
+    cleanup_status = getattr(args, "cleanup_status", None)
+    if cleanup_status:
+        overviews = [
+            overview for overview in overviews if overview.cleanup_status == cleanup_status
+        ]
     if not overviews:
         if branch_filter:
             print(format_worktree_summary(overviews, total_count))
@@ -1257,6 +1270,12 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
         elif args.merged_only:
             print(format_worktree_summary(overviews, total_count))
             print(f"No merged git worktrees found under {base_dir}")
+        elif cleanup_status:
+            print(format_worktree_summary(overviews, total_count))
+            print(
+                f"No git worktrees matching cleanup status '{cleanup_status}' "
+                f"found under {base_dir}"
+            )
         return 0
     print(
         format_worktree_overview(

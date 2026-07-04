@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only `--cleanup-status STATUS` filter to
-  `ai-orch autopilot worktree-overview` so operators can focus cleanup review
-  on `candidate`, `needs_review`, or `do_not_remove` worktrees without deleting
-  or pruning anything.
+No open P2 items.
 
 ## P3 / Deferred
 

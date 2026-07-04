@@ -631,3 +631,114 @@ def test_cli_worktree_overview_unlinked_summary_count(capsys, tmp_path: Path) ->
 
     assert exit_code == 0
     assert "Summary: total=1 shown=1 dirty=0 unlinked=1" in output
+
+
+def test_cli_worktree_overview_cleanup_status_candidate(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _wt1, wt2 = _create_worktrees(repo, base)
+    (wt2 / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(wt2, "add", "feature.txt")
+    _git(wt2, "commit", "-m", "feature change")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--cleanup-status",
+        "candidate",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "wt-main" in output
+    assert "wt-feature" not in output
+    assert "Summary: total=2 shown=1 dirty=0 unlinked=0" in output
+
+
+def test_cli_worktree_overview_cleanup_status_needs_review(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _wt1, wt2 = _create_worktrees(repo, base)
+    (wt2 / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(wt2, "add", "feature.txt")
+    _git(wt2, "commit", "-m", "feature change")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--cleanup-status",
+        "needs_review",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "wt-feature" in output
+    assert "wt-main" not in output
+    assert "Summary: total=2 shown=1 dirty=0 unlinked=0" in output
+
+
+def test_cli_worktree_overview_cleanup_status_do_not_remove(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, _wt2 = _create_worktrees(repo, base)
+    (wt1 / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--cleanup-status",
+        "do_not_remove",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "wt-main" in output
+    assert "wt-feature" not in output
+    assert "Summary: total=2 shown=1 dirty=1 unlinked=0" in output
+
+
+def test_cli_worktree_overview_cleanup_status_empty(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt = base / "wt-main"
+    _git(repo, "worktree", "add", "-b", "wt1", str(wt), "main")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--cleanup-status",
+        "needs_review",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=1 shown=0 dirty=0 unlinked=0" in output
+    assert "No git worktrees matching cleanup status 'needs_review'" in output
