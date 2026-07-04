@@ -113,6 +113,7 @@ a dry run unless `--apply` is present, and it never executes the item:
 ```bash
 python -m ai_orchestrator autopilot queue list --repo . --all-plans --status blocked
 python -m ai_orchestrator autopilot queue requeue --repo . <plan_item_id>
+python -m ai_orchestrator autopilot queue requeue --repo . --plan docs/BACKLOG.md <plan_item_id>
 python -m ai_orchestrator autopilot queue requeue --repo . --apply <plan_item_id>
 ```
 
