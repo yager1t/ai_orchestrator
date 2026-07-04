@@ -13,7 +13,11 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Extend the `ai-orch autopilot queue run-batch --summary-json PATH` artifact
+  with a read-only `preflight_snapshot` object captured before batch selection,
+  including queue readiness counts, selected agent profile availability,
+  `preflight_result`, and `next_action`, while preserving existing stdout output,
+  queue state transitions, and exit-code semantics.
 
 ## P3 / Deferred
 
