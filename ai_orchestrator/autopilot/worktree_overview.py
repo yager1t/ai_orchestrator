@@ -177,12 +177,25 @@ def gather_worktree_overviews(
 def format_worktree_summary(
     overviews: list[WorktreeOverview],
     total_count: int,
+    filtered_count: int | None = None,
 ) -> str:
-    """Render a one-line read-only summary for an overview result set."""
+    """Render a one-line read-only summary for an overview result set.
+
+    *total_count* is the number of worktrees discovered before any filters.
+    *filtered_count*, when provided, is the number of worktrees remaining after
+    filters but before any row limit is applied. *shown* is the number of rows
+    actually rendered (``len(overviews)``).
+    """
     shown = len(overviews)
     dirty = sum(1 for overview in overviews if overview.dirty)
     unlinked = sum(1 for overview in overviews if overview.linked is False)
-    return f"Summary: total={total_count} shown={shown} dirty={dirty} unlinked={unlinked}"
+    if filtered_count is None:
+        filtered_count = shown
+    return (
+        f"Summary: "
+        f"total={total_count} filtered={filtered_count} shown={shown} "
+        f"dirty={dirty} unlinked={unlinked}"
+    )
 
 
 def format_cleanup_summary(overviews: list[WorktreeOverview]) -> str:
@@ -221,12 +234,14 @@ def format_worktree_overview(
     base_dir: Path,
     repo: Path | None = None,
     total_count: int | None = None,
+    filtered_count: int | None = None,
 ) -> str:
     """Render *overviews* as a plain-text table for operator review.
 
     When *total_count* is provided, read-only summary lines are included before
-    the table showing the total discovered count, the number shown after any
-    filters, the dirty and unlinked counts, and cleanup candidate counts.
+    the table showing the total discovered count, the number remaining after any
+    filters (*filtered_count*), the number shown after any row limit, the dirty
+    and unlinked counts, and cleanup candidate counts.
     """
     if not overviews:
         return f"No git worktrees found under {base_dir}"
@@ -237,7 +252,7 @@ def format_worktree_overview(
         "",
     ]
     if total_count is not None:
-        lines.append(format_worktree_summary(overviews, total_count))
+        lines.append(format_worktree_summary(overviews, total_count, filtered_count))
         lines.append(format_cleanup_summary(overviews))
         lines.append("")
     header = (

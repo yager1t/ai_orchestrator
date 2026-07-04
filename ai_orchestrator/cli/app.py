@@ -256,6 +256,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=CLEANUP_STATUSES,
         help="Show only worktrees with the given cleanup status",
     )
+    autopilot_worktree_overview.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Show at most the first N filtered rows; 0 means all rows (default: 0)",
+    )
 
     autopilot_queue = autopilot_sub.add_parser(
         "queue",
@@ -1315,24 +1322,30 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
         overviews = [
             overview for overview in overviews if overview.cleanup_status == cleanup_status
         ]
+
+    filtered_count = len(overviews)
+    limit = getattr(args, "limit", 0)
+    if limit > 0:
+        overviews = overviews[:limit]
+
     if not overviews:
         if branch_filter:
-            print(format_worktree_summary(overviews, total_count))
+            print(format_worktree_summary(overviews, total_count, filtered_count))
             print(
                 f"No git worktrees matching branch filter '{branch_filter}' "
                 f"found under {base_dir}"
             )
         elif args.dirty_only:
-            print(format_worktree_summary(overviews, total_count))
+            print(format_worktree_summary(overviews, total_count, filtered_count))
             print(f"No dirty git worktrees found under {base_dir}")
         elif args.unlinked_only:
-            print(format_worktree_summary(overviews, total_count))
+            print(format_worktree_summary(overviews, total_count, filtered_count))
             print(f"No unlinked git worktrees found under {base_dir}")
         elif args.merged_only:
-            print(format_worktree_summary(overviews, total_count))
+            print(format_worktree_summary(overviews, total_count, filtered_count))
             print(f"No merged git worktrees found under {base_dir}")
         elif cleanup_status:
-            print(format_worktree_summary(overviews, total_count))
+            print(format_worktree_summary(overviews, total_count, filtered_count))
             print(
                 f"No git worktrees matching cleanup status '{cleanup_status}' "
                 f"found under {base_dir}"
@@ -1344,6 +1357,7 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
             base_dir,
             repo=repo_for_link,
             total_count=total_count,
+            filtered_count=filtered_count,
         )
     )
     return 0

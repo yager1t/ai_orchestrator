@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only `--limit N` option to `ai-orch autopilot worktree-overview`
-  so large worktree directories can show only the first N filtered rows while
-  the summary clearly reports total discovered rows, filtered rows, and shown
-  rows, without creating, deleting, pruning, or checking out worktrees.
+No open P2 items.
 
 ## P3 / Deferred
 

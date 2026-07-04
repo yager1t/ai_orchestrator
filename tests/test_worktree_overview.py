@@ -4,8 +4,10 @@ import subprocess
 from pathlib import Path
 
 from ai_orchestrator.autopilot.worktree_overview import (
+    WorktreeOverview,
     format_cleanup_summary,
     format_worktree_overview,
+    format_worktree_summary,
     gather_worktree_overviews,
     inspect_worktree,
 )
@@ -200,8 +202,6 @@ def test_format_worktree_overview_includes_cleanup_summary(tmp_path: Path) -> No
 
 
 def test_format_cleanup_summary_counts_by_status() -> None:
-    from ai_orchestrator.autopilot.worktree_overview import WorktreeOverview
-
     overviews = [
         WorktreeOverview(
             path=Path("/a"),
@@ -385,7 +385,7 @@ def test_cli_worktree_overview_unlinked_only(capsys, tmp_path: Path) -> None:
     assert exit_code == 0
     assert "wt-unlinked" in output
     assert "wt-linked" not in output
-    assert "Summary: total=2 shown=1 dirty=0 unlinked=1" in output
+    assert "Summary: total=2 filtered=1 shown=1 dirty=0 unlinked=1" in output
 
 
 def test_cli_worktree_overview_unlinked_only_empty(capsys, tmp_path: Path) -> None:
@@ -409,7 +409,7 @@ def test_cli_worktree_overview_unlinked_only_empty(capsys, tmp_path: Path) -> No
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Summary: total=1 shown=0 dirty=0 unlinked=0" in output
+    assert "Summary: total=1 filtered=0 shown=0 dirty=0 unlinked=0" in output
     assert "No unlinked git worktrees found under" in output
 
 
@@ -438,7 +438,7 @@ def test_cli_worktree_overview_merged_only(capsys, tmp_path: Path) -> None:
     assert exit_code == 0
     assert "wt-main" in output
     assert "wt-feature" not in output
-    assert "Summary: total=2 shown=1 dirty=0 unlinked=0" in output
+    assert "Summary: total=2 filtered=1 shown=1 dirty=0 unlinked=0" in output
 
 
 def test_cli_worktree_overview_merged_only_empty(capsys, tmp_path: Path) -> None:
@@ -465,7 +465,7 @@ def test_cli_worktree_overview_merged_only_empty(capsys, tmp_path: Path) -> None
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Summary: total=1 shown=0 dirty=0 unlinked=0" in output
+    assert "Summary: total=1 filtered=0 shown=0 dirty=0 unlinked=0" in output
     assert "No merged git worktrees found under" in output
 
 
@@ -515,7 +515,7 @@ def test_cli_worktree_overview_branch_filter_empty(capsys, tmp_path: Path) -> No
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Summary: total=2 shown=0 dirty=0 unlinked=0" in output
+    assert "Summary: total=2 filtered=0 shown=0 dirty=0 unlinked=0" in output
     assert "No git worktrees matching branch filter 'nonexistent'" in output
 
 
@@ -539,7 +539,7 @@ def test_cli_worktree_overview_dirty_only_empty(capsys, tmp_path: Path) -> None:
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Summary: total=2 shown=0 dirty=0 unlinked=0" in output
+    assert "Summary: total=2 filtered=0 shown=0 dirty=0 unlinked=0" in output
     assert "No dirty git worktrees found under" in output
 
 
@@ -555,7 +555,7 @@ def test_format_worktree_overview_summary_line(tmp_path: Path) -> None:
     overviews = gather_worktree_overviews(base, repo=repo)
     output = format_worktree_overview(overviews, base, repo=repo, total_count=len(overviews))
 
-    assert "Summary: total=2 shown=2 dirty=1 unlinked=0" in output
+    assert "Summary: total=2 filtered=2 shown=2 dirty=1 unlinked=0" in output
 
 
 def test_cli_worktree_overview_includes_summary_line(capsys, tmp_path: Path) -> None:
@@ -578,7 +578,7 @@ def test_cli_worktree_overview_includes_summary_line(capsys, tmp_path: Path) -> 
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Summary: total=2 shown=2 dirty=1 unlinked=0" in output
+    assert "Summary: total=2 filtered=2 shown=2 dirty=1 unlinked=0" in output
 
 
 def test_cli_worktree_overview_summary_reflects_filters(capsys, tmp_path: Path) -> None:
@@ -602,7 +602,7 @@ def test_cli_worktree_overview_summary_reflects_filters(capsys, tmp_path: Path) 
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Summary: total=2 shown=1 dirty=1 unlinked=0" in output
+    assert "Summary: total=2 filtered=1 shown=1 dirty=1 unlinked=0" in output
     assert "wt-feature" not in output
 
 
@@ -630,7 +630,7 @@ def test_cli_worktree_overview_unlinked_summary_count(capsys, tmp_path: Path) ->
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Summary: total=1 shown=1 dirty=0 unlinked=1" in output
+    assert "Summary: total=1 filtered=1 shown=1 dirty=0 unlinked=1" in output
 
 
 def test_cli_worktree_overview_cleanup_status_candidate(capsys, tmp_path: Path) -> None:
@@ -659,7 +659,7 @@ def test_cli_worktree_overview_cleanup_status_candidate(capsys, tmp_path: Path) 
     assert exit_code == 0
     assert "wt-main" in output
     assert "wt-feature" not in output
-    assert "Summary: total=2 shown=1 dirty=0 unlinked=0" in output
+    assert "Summary: total=2 filtered=1 shown=1 dirty=0 unlinked=0" in output
 
 
 def test_cli_worktree_overview_cleanup_status_needs_review(capsys, tmp_path: Path) -> None:
@@ -688,7 +688,7 @@ def test_cli_worktree_overview_cleanup_status_needs_review(capsys, tmp_path: Pat
     assert exit_code == 0
     assert "wt-feature" in output
     assert "wt-main" not in output
-    assert "Summary: total=2 shown=1 dirty=0 unlinked=0" in output
+    assert "Summary: total=2 filtered=1 shown=1 dirty=0 unlinked=0" in output
 
 
 def test_cli_worktree_overview_cleanup_status_do_not_remove(capsys, tmp_path: Path) -> None:
@@ -715,7 +715,160 @@ def test_cli_worktree_overview_cleanup_status_do_not_remove(capsys, tmp_path: Pa
     assert exit_code == 0
     assert "wt-main" in output
     assert "wt-feature" not in output
-    assert "Summary: total=2 shown=1 dirty=1 unlinked=0" in output
+    assert "Summary: total=2 filtered=1 shown=1 dirty=1 unlinked=0" in output
+
+
+def test_cli_worktree_overview_limit_shows_first_n_rows(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--limit",
+        "1",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=2 filtered=2 shown=1 dirty=0 unlinked=0" in output
+    shown_rows = [line for line in output.splitlines() if line.startswith("/") or line.startswith("...")]
+    assert len(shown_rows) == 1
+
+
+def test_cli_worktree_overview_limit_zero_means_unlimited(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--limit",
+        "0",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=2 filtered=2 shown=2 dirty=0 unlinked=0" in output
+    shown_rows = [line for line in output.splitlines() if line.startswith("/") or line.startswith("...")]
+    assert len(shown_rows) == 2
+
+
+def test_cli_worktree_overview_limit_with_filter(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, wt2 = _create_worktrees(repo, base)
+    (wt1 / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--dirty-only",
+        "--limit",
+        "1",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=2 filtered=1 shown=1 dirty=1 unlinked=0" in output
+    assert "wt-main" in output
+    assert "wt-feature" not in output
+
+
+def test_cli_worktree_overview_limit_exceeds_filtered_rows(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--limit",
+        "10",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=2 filtered=2 shown=2 dirty=0 unlinked=0" in output
+    shown_rows = [line for line in output.splitlines() if line.startswith("/") or line.startswith("...")]
+    assert len(shown_rows) == 2
+
+
+def test_cli_worktree_overview_limit_empty_after_filter(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--dirty-only",
+        "--limit",
+        "1",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Summary: total=2 filtered=0 shown=0 dirty=0 unlinked=0" in output
+    assert "No dirty git worktrees found under" in output
+
+
+def test_format_worktree_summary_reports_filtered_count() -> None:
+    overviews = [
+        WorktreeOverview(
+            path=Path("/a"),
+            branch="a",
+            linked=True,
+            merged=True,
+            merge_in_progress=False,
+            dirty=False,
+            dirty_count=0,
+            untracked_count=0,
+            last_modified=None,
+            cleanup_status="candidate",
+        ),
+    ]
+    summary = format_worktree_summary(overviews, total_count=5, filtered_count=3)
+    assert "total=5" in summary
+    assert "filtered=3" in summary
+    assert "shown=1" in summary
 
 
 def test_cli_worktree_overview_cleanup_status_empty(capsys, tmp_path: Path) -> None:
@@ -740,5 +893,5 @@ def test_cli_worktree_overview_cleanup_status_empty(capsys, tmp_path: Path) -> N
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "Summary: total=1 shown=0 dirty=0 unlinked=0" in output
+    assert "Summary: total=1 filtered=0 shown=0 dirty=0 unlinked=0" in output
     assert "No git worktrees matching cleanup status 'needs_review'" in output
