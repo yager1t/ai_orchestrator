@@ -2845,6 +2845,8 @@ def test_autopilot_queue_run_batch_defaults_to_dry_run(
 
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert f"Queue item: {items['First task'].plan_item_id}" in output
+    assert f"Queue item: {items['Second task'].plan_item_id}" in output
     assert items["First task"].status == "created"
     assert items["Second task"].status == "created"
 
@@ -3174,6 +3176,8 @@ def test_autopilot_queue_run_batch_rotate_worktrees_dry_run_selects_worktrees(
 
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert f"Queue item: {items['First task'].plan_item_id}" in output
+    assert f"Queue item: {items['Second task'].plan_item_id}" in output
     assert items["First task"].status == "created"
     assert items["Second task"].status == "created"
 

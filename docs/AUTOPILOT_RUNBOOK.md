@@ -120,6 +120,10 @@ Preview the next queued batch without starting work:
 python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 3
 ```
 
+Dry-run batch output includes each selected persisted queue item id. Use that
+id with `queue show <plan_item_id>` when you want to inspect the exact queued
+item before adding `--execute`.
+
 Preview per-task worktree rotation from a pre-created worktree pool:
 
 ```bash
