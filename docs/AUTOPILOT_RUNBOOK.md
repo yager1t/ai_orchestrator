@@ -176,10 +176,12 @@ python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-
 
 The overview reports each detected git worktree's branch, whether it is linked
 to the review repo, whether that branch is already merged into the review repo
-HEAD, whether a merge is in progress, dirty and untracked counts, and last
-modified time. A summary line shows total discovered worktrees, shown rows,
-dirty rows, and unlinked rows after filters. Add `--dirty-only` to focus the
-table on worktrees with uncommitted or untracked changes, or use
+HEAD, whether a merge is in progress, dirty and untracked counts, last modified
+time, and a read-only cleanup label (`candidate`, `needs_review`, or
+`do_not_remove`). A summary line shows total discovered worktrees, shown rows,
+dirty rows, and unlinked rows after filters, plus a cleanup summary line with
+candidate, needs_review, and do_not_remove counts. Add `--dirty-only` to focus
+the table on worktrees with uncommitted or untracked changes, or use
 `--branch-filter TEXT` to focus on worktrees whose branch name contains TEXT.
 Use `--unlinked-only` to show worktrees that do not share the review repo's git
 common directory. Use `--merged-only` to show worktrees whose branch is already

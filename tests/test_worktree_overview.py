@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from ai_orchestrator.autopilot.worktree_overview import (
+    format_cleanup_summary,
     format_worktree_overview,
     gather_worktree_overviews,
     inspect_worktree,
@@ -92,6 +93,78 @@ def test_gather_worktree_overviews_reports_branches_and_dirty_state(tmp_path: Pa
     assert feature_overview.merge_in_progress is False
 
 
+def test_inspect_worktree_cleanup_status_for_candidate(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, _wt2 = _create_worktrees(repo, base)
+
+    overview = inspect_worktree(wt1, repo=repo)
+    assert overview is not None
+    assert overview.cleanup_status == "candidate"
+
+
+def test_inspect_worktree_cleanup_status_for_needs_review(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _wt1, wt2 = _create_worktrees(repo, base)
+    (wt2 / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(wt2, "add", "feature.txt")
+    _git(wt2, "commit", "-m", "feature change")
+
+    overview = inspect_worktree(wt2, repo=repo)
+    assert overview is not None
+    assert overview.cleanup_status == "needs_review"
+
+
+def test_inspect_worktree_cleanup_status_for_do_not_remove(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, _wt2 = _create_worktrees(repo, base)
+    (wt1 / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    overview = inspect_worktree(wt1, repo=repo)
+    assert overview is not None
+    assert overview.cleanup_status == "do_not_remove"
+
+
+def test_inspect_worktree_cleanup_status_for_merge_in_progress(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, _wt2 = _create_worktrees(repo, base)
+    (wt1 / "file.txt").write_text("wt1 change\n", encoding="utf-8")
+    _git(wt1, "add", "file.txt")
+    _git(wt1, "commit", "-m", "wt1 change")
+    (repo / "file.txt").write_text("main update\n", encoding="utf-8")
+    _git(repo, "add", "file.txt")
+    _git(repo, "commit", "-m", "main update")
+
+    result = subprocess.run(
+        ["git", "merge", "--no-commit", "main"],
+        cwd=wt1,
+        capture_output=True,
+        text=True,
+    )
+    # A merge conflict is expected; we only need MERGE_HEAD to exist.
+    assert result.returncode != 0 or (wt1 / ".git" / "MERGE_HEAD").exists()
+
+    overview = inspect_worktree(wt1, repo=repo)
+    assert overview is not None
+    assert overview.merge_in_progress is True
+    assert overview.cleanup_status == "do_not_remove"
+
+
 def test_gather_worktree_overviews_unlinked_repo_reports_linked_false(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -108,6 +181,66 @@ def test_gather_worktree_overviews_unlinked_repo_reports_linked_false(tmp_path: 
     overviews = gather_worktree_overviews(base, repo=repo)
     assert len(overviews) == 1
     assert overviews[0].linked is False
+
+
+def test_format_worktree_overview_includes_cleanup_summary(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    wt1, wt2 = _create_worktrees(repo, base)
+    (wt1 / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    overviews = gather_worktree_overviews(base, repo=repo)
+    output = format_worktree_overview(overviews, base, repo=repo, total_count=len(overviews))
+
+    assert "Cleanup summary:" in output
+    assert "candidate=1 needs_review=0 do_not_remove=1" in output
+
+
+def test_format_cleanup_summary_counts_by_status() -> None:
+    from ai_orchestrator.autopilot.worktree_overview import WorktreeOverview
+
+    overviews = [
+        WorktreeOverview(
+            path=Path("/a"),
+            branch="a",
+            linked=True,
+            merged=True,
+            merge_in_progress=False,
+            dirty=False,
+            dirty_count=0,
+            untracked_count=0,
+            last_modified=None,
+            cleanup_status="candidate",
+        ),
+        WorktreeOverview(
+            path=Path("/b"),
+            branch="b",
+            linked=True,
+            merged=False,
+            merge_in_progress=False,
+            dirty=False,
+            dirty_count=0,
+            untracked_count=0,
+            last_modified=None,
+            cleanup_status="needs_review",
+        ),
+        WorktreeOverview(
+            path=Path("/c"),
+            branch="c",
+            linked=False,
+            merged=None,
+            merge_in_progress=False,
+            dirty=True,
+            dirty_count=1,
+            untracked_count=0,
+            last_modified=None,
+            cleanup_status="do_not_remove",
+        ),
+    ]
+    assert format_cleanup_summary(overviews) == "Cleanup summary: candidate=1 needs_review=1 do_not_remove=1"
 
 
 def test_format_worktree_overview_table(tmp_path: Path) -> None:
@@ -153,6 +286,9 @@ def test_format_worktree_overview_includes_review_hint(tmp_path: Path) -> None:
     assert "git log --oneline HEAD..<branch>" in output
     assert "git diff --stat HEAD...<branch>" in output
     assert "never deletes, prunes, or modifies" in output
+    assert "candidate" in output
+    assert "needs_review" in output
+    assert "do_not_remove" in output
 
 
 def test_cli_worktree_overview(capsys, tmp_path: Path) -> None:
@@ -177,6 +313,7 @@ def test_cli_worktree_overview(capsys, tmp_path: Path) -> None:
     assert "Worktree overview" in output
     assert "wt-main" in output
     assert "wt-feature" in output
+    assert "Cleanup summary:" in output
 
 
 def test_cli_worktree_overview_missing_base_dir(capsys, tmp_path: Path) -> None:

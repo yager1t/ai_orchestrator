@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a read-only cleanup candidate report to `ai-orch autopilot worktree-overview`
+  that labels each shown worktree as `candidate`, `needs_review`, or
+  `do_not_remove` for operator review, and prints cleanup counts in the summary,
+  without deleting or pruning anything.
 - Documented a manual worktree cleanup checklist with review gates before an
   operator removes old worktrees; no cleanup automation was added.
 - Added `ai-orch autopilot worktree-overview --merged-only` to show only git
