@@ -360,6 +360,11 @@ def build_parser() -> argparse.ArgumentParser:
             "blocked items, or in-progress items are present"
         ),
     )
+    autopilot_queue_readiness.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of the default text summary",
+    )
     autopilot_queue_reconcile = autopilot_queue_sub.add_parser(
         "reconcile",
         help="Find stale created queue items whose source plan task is no longer open",
@@ -1569,7 +1574,16 @@ def _run_autopilot_queue_readiness(
     else:
         plan_path = _resolve_plan_path(repo, Path(args.plan))
         if not plan_path.exists():
-            print(f"Plan not found: {plan_path}")
+            if args.json:
+                print(
+                    json.dumps(
+                        {"error": f"Plan not found: {plan_path}"},
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                )
+            else:
+                print(f"Plan not found: {plan_path}")
             return 1
         plan_label = str(plan_path)
         all_items = store.list_plan_items(plan_path=plan_path)
@@ -1584,6 +1598,45 @@ def _run_autopilot_queue_readiness(
     created_ready = max(0, created_total - len(stale_created))
     blocked_total = status_counts.get("blocked", 0)
     in_progress_total = status_counts.get("in_progress", 0)
+
+    limit = max(0, args.limit)
+
+    if args.json:
+        result = {
+            "plan": plan_label,
+            "total": len(all_items),
+            "by_status": dict(sorted(status_counts.items())),
+            "created_readiness": {
+                "ready": created_ready,
+                "stale": len(stale_created),
+            },
+            "blocked_in_progress_risk": {
+                "blocked": blocked_total,
+                "in_progress": in_progress_total,
+            },
+            "stale_created": {
+                "count": len(stale_created),
+                "items": [
+                    _queue_item_readiness_ref(repo, item)
+                    for item in stale_created[:limit]
+                ],
+            },
+            "stale_in_progress": {
+                "count": len(stale_in_progress),
+                "items": [
+                    _queue_item_readiness_ref(repo, item)
+                    for item in stale_in_progress[:limit]
+                ],
+            },
+            "problem_summary": _problem_summary_data(
+                all_items,
+                limit=limit if limit else None,
+            ),
+        }
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        if args.fail_on_risk and (stale_created or blocked_total or in_progress_total):
+            return 2
+        return 0
 
     print(f"Queue readiness for {plan_label}")
     print(f"  total: {len(all_items)}")
@@ -1604,7 +1657,6 @@ def _run_autopilot_queue_readiness(
     print("  stale created:", len(stale_created))
     print("  stale in_progress:", len(stale_in_progress))
 
-    limit = max(0, args.limit)
     if stale_created:
         print("  stale created items:")
         for item in stale_created[:limit]:
@@ -1634,6 +1686,66 @@ def _run_autopilot_queue_readiness(
         return 2
 
     return 0
+
+
+def _queue_item_readiness_ref(repo: Path, item: StoredPlanItem) -> dict[str, object]:
+    """Return a machine-readable reference for a queue item."""
+    report_path = _task_report_path(repo, item.task_id)
+    return {
+        "plan_item_id": item.plan_item_id,
+        "plan_path": item.plan_path,
+        "line_number": item.line_number,
+        "text": item.text,
+        "status": item.status,
+        "task_id": item.task_id,
+        "selected_worktree_path": item.selected_worktree_path,
+        "blocked_reason": item.blocked_reason,
+        "report_path": str(report_path) if report_path else None,
+    }
+
+
+def _problem_summary_data(
+    items: list[StoredPlanItem],
+    *,
+    limit: int | None = None,
+) -> list[dict[str, object]] | None:
+    """Return a structured summary of blocked and in-progress items by reason.
+
+    Mirrors ``_format_problem_summary`` but returns a JSON-serializable list
+    instead of a human-readable string. Returns ``None`` when no affected
+    items exist.
+    """
+    affected = [item for item in items if item.status in {"blocked", "in_progress"}]
+    if not affected:
+        return None
+
+    groups: dict[tuple[str, str], list[StoredPlanItem]] = {}
+    for item in affected:
+        reason = item.blocked_reason if item.blocked_reason else "(no reason)"
+        groups.setdefault((item.status, reason), []).append(item)
+
+    status_order = {status: index for index, status in enumerate(_QUEUE_STATUSES)}
+    result: list[dict[str, object]] = []
+    for (status, reason), group in sorted(
+        groups.items(),
+        key=lambda kv: (status_order.get(kv[0][0], 99), kv[0][1].lower()),
+    ):
+        latest = sorted(
+            group,
+            key=lambda item: (item.updated_at, item.plan_item_id),
+            reverse=True,
+        )
+        if limit:
+            latest = latest[:limit]
+        result.append(
+            {
+                "status": status,
+                "reason": reason,
+                "count": len(group),
+                "latest_ids": [item.plan_item_id for item in latest],
+            }
+        )
+    return result
 
 
 def _run_autopilot_queue_reconcile(

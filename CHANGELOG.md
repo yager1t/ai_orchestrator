@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added read-only `--json` output option to `ai-orch autopilot queue readiness`
+  for a selected plan or `--all-plans`, reporting total counts, created readiness,
+  blocked/in-progress risk, stale created item refs, stale in-progress item refs,
+  and a structured problem summary in a machine-readable object while preserving
+  the default text output and existing `--fail-on-risk` exit-code behavior.
+
 - Added opt-in `--fail-on-risk` flag to `ai-orch autopilot queue readiness`
   that keeps the command read-only but returns a non-zero exit code when stale
   created items, blocked items, or in-progress items are present, while
