@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Show persisted queue item id in `ai-orch autopilot queue list` and `queue status`
+  output so operators can copy the id for `queue show`, `queue requeue`, or
+  `queue skip` directly from history views, without changing queue state.
 - Show persisted queue item id in `ai-orch autopilot queue run-next` dry-run
   output so operators can immediately inspect the selected item with
   `queue show <plan_item_id>` before running `--execute`.

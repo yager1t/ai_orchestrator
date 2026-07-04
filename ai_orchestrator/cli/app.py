@@ -1738,7 +1738,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         for item in items:
             refs = _queue_item_refs(repo, item)
             item_label = _queue_item_label(item, include_plan_path=include_plan_path)
-            print(f"  [{item.status}] {item_label}: {item.text}{refs}")
+            print(
+                f"  id={item.plan_item_id} [{item.status}] {item_label}: {item.text}{refs}"
+            )
         return 0
 
     if args.autopilot_queue_command == "status":
@@ -1791,7 +1793,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             for item in recent:
                 refs = _queue_item_refs(repo, item)
                 item_label = _queue_item_label(item, include_plan_path=include_plan_path)
-                print(f"    {item_label}: {item.text}{refs}")
+                print(
+                    f"    id={item.plan_item_id} {item_label}: {item.text}{refs}"
+                )
         return 0
 
     if args.autopilot_queue_command == "reconcile":
