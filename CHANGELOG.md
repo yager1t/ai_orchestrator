@@ -50,6 +50,12 @@
   first active non-done queue item, selected worktrees, and report paths,
   without changing execution behavior or exit-code semantics.
 
+- Added opt-in `--summary-json PATH` option to `ai-orch autopilot queue run-batch`
+  dry-run and `--execute` flows that writes the same final batch summary as a
+  machine-readable JSON artifact with selected/processed counts, per-status
+  counts, the first non-done queue item, report paths, and selected worktree
+  paths, while preserving existing stdout output and exit-code semantics.
+
 - Documented the empty-backlog operator handoff for seeding exactly one
   bounded P2 item before running `queue run-batch`; no CLI behavior changed.
 

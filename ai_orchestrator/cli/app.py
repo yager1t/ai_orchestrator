@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from ai_orchestrator import __version__
 from ai_orchestrator.agents.base import AgentAdapter
@@ -502,6 +504,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="Maximum number of queue items to process (default: 1)",
+    )
+    autopilot_queue_run_batch.add_argument(
+        "--summary-json",
+        dest="summary_json",
+        metavar="PATH",
+        help=(
+            "Write the final batch summary as a machine-readable JSON artifact "
+            "to PATH without changing stdout or exit-code semantics"
+        ),
     )
     autopilot_queue_recover = autopilot_queue_sub.add_parser(
         "recover-in-progress",
@@ -2461,26 +2472,20 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
     return 1
 
 
-def _print_batch_summary(
+def _build_batch_summary(
     store: StateStore,
     plan_path: Path,
     item_ids: list[int],
     report_paths: list[Path],
     worktree_paths: list[Path],
     mode: str,
-) -> None:
-    """Print an operator-facing summary for a batch dry-run or execution."""
-    label = "Selected" if mode == "dry-run" else "Processed"
-
-    if not item_ids:
-        print("=== Batch summary ===")
-        print(f"{label}: 0 item(s)")
-        print("Status counts: (none)")
-        return
-
+) -> dict[str, Any]:
+    """Return a machine-readable summary for a batch dry-run or execution."""
     all_items = store.list_plan_items(plan_path=plan_path)
     item_by_id = {item.plan_item_id: item for item in all_items}
-    selected_items = [item_by_id[item_id] for item_id in item_ids if item_id in item_by_id]
+    selected_items = [
+        item_by_id[item_id] for item_id in item_ids if item_id in item_by_id
+    ]
 
     status_counts: dict[str, int] = {}
     for item in selected_items:
@@ -2491,28 +2496,103 @@ def _print_batch_summary(
         None,
     )
 
+    count_key = "selected_count" if mode == "dry-run" else "processed_count"
+    summary: dict[str, object] = {
+        "mode": mode,
+        "plan_path": str(plan_path),
+        count_key: len(selected_items),
+        "status_counts": dict(sorted(status_counts.items())),
+        "first_non_done_item": None,
+        "report_paths": [str(path) for path in report_paths],
+        "selected_worktree_paths": [str(path) for path in worktree_paths],
+    }
+    if first_non_done is not None:
+        summary["first_non_done_item"] = {
+            "plan_item_id": first_non_done.plan_item_id,
+            "status": first_non_done.status,
+            "text": first_non_done.text,
+            "source": f"{first_non_done.plan_path}:{first_non_done.line_number}",
+        }
+    return summary
+
+
+def _print_batch_summary(summary: dict[str, Any]) -> None:
+    """Print an operator-facing summary for a batch dry-run or execution."""
+    mode = summary["mode"]
+    label = "Selected" if mode == "dry-run" else "Processed"
+    count_key = "selected_count" if mode == "dry-run" else "processed_count"
+    item_count = summary[count_key]
+
     print("=== Batch summary ===")
-    print(f"{label}: {len(selected_items)} item(s)")
+    print(f"{label}: {item_count} item(s)")
+    status_counts = summary["status_counts"]
     print(
         "Status counts: "
         + (
-            ", ".join(f"{status}={count}" for status, count in sorted(status_counts.items()))
+            ", ".join(f"{status}={count}" for status, count in status_counts.items())
             or "(none)"
         )
     )
+    first_non_done = summary.get("first_non_done_item")
     if first_non_done is not None:
         print(
-            f"First non-done queue item: {first_non_done.plan_item_id} "
-            f"(status={first_non_done.status})"
+            f"First non-done queue item: {first_non_done['plan_item_id']} "
+            f"(status={first_non_done['status']})"
         )
+    worktree_paths = summary["selected_worktree_paths"]
     if worktree_paths:
         print("Selected worktrees:")
         for path in worktree_paths:
             print(f"  {path}")
+    report_paths = summary["report_paths"]
     if report_paths:
         print("Reports:")
         for path in report_paths:
             print(f"  {path}")
+
+
+def _write_batch_summary_json(path: Path, summary: dict[str, Any]) -> None:
+    """Persist a batch summary as formatted JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
+
+
+def _emit_batch_summary(
+    store: StateStore,
+    plan_path: Path,
+    item_ids: list[int],
+    report_paths: list[Path],
+    worktree_paths: list[Path],
+    mode: str,
+    summary_json: Path | None = None,
+) -> bool:
+    """Print and optionally persist a batch summary.
+
+    Returns ``True`` when the summary is printed (and written, when requested)
+    successfully, or ``False`` when the JSON artifact cannot be written.
+    """
+    summary = _build_batch_summary(
+        store,
+        plan_path,
+        item_ids,
+        report_paths,
+        worktree_paths,
+        mode,
+    )
+    _print_batch_summary(summary)
+    if summary_json is not None:
+        try:
+            _write_batch_summary_json(summary_json, summary)
+        except OSError as exc:
+            print(
+                f"Failed to write batch summary JSON to {summary_json}: {exc}",
+                file=sys.stderr,
+            )
+            return False
+    return True
 
 
 def _run_autopilot_queue_batch(
@@ -2551,14 +2631,16 @@ def _run_autopilot_queue_batch(
             task = plan_item_to_task(item)
             _run_autopilot_task(task, repo, plan_path, args, store)
         print(f"Dry run: would process {len(items)} item(s). Add --execute to run.")
-        _print_batch_summary(
+        if not _emit_batch_summary(
             store,
             plan_path,
             [item.plan_item_id for item in items],
             [],
             [fixed_worktree] if fixed_worktree else [],
             mode="dry-run",
-        )
+            summary_json=Path(args.summary_json) if args.summary_json else None,
+        ):
+            return 1
         return 0
 
     processed_ids: list[int] = []
@@ -2610,25 +2692,29 @@ def _run_autopilot_queue_batch(
                 report_paths.append(report_path)
         if item_status != "done":
             print(f"Batch stopped after {len(processed_ids)} item(s): status={item_status}")
-            _print_batch_summary(
+            if not _emit_batch_summary(
                 store,
                 plan_path,
                 processed_ids,
                 report_paths,
                 [fixed_worktree] if fixed_worktree else [],
                 mode="execute",
-            )
+                summary_json=Path(args.summary_json) if args.summary_json else None,
+            ):
+                return 1
             return 1
 
     print(f"Batch complete: processed {len(processed_ids)} item(s)")
-    _print_batch_summary(
+    if not _emit_batch_summary(
         store,
         plan_path,
         processed_ids,
         report_paths,
         [fixed_worktree] if fixed_worktree else [],
         mode="execute",
-    )
+        summary_json=Path(args.summary_json) if args.summary_json else None,
+    ):
+        return 1
     return 0
 
 
@@ -2710,25 +2796,29 @@ def _run_rotated_autopilot_queue_batch(
                 report_paths.append(report_path)
         if item_status != "done":
             print(f"Batch stopped after {len(processed_ids)} item(s): status={item_status}")
-            _print_batch_summary(
+            if not _emit_batch_summary(
                 store,
                 plan_path,
                 processed_ids,
                 report_paths,
                 selected,
                 mode="execute",
-            )
+                summary_json=Path(args.summary_json) if args.summary_json else None,
+            ):
+                return 1
             return 1
 
     print(f"Batch complete: processed {len(processed_ids)} item(s)")
-    _print_batch_summary(
+    if not _emit_batch_summary(
         store,
         plan_path,
         processed_ids,
         report_paths,
         selected,
         mode="execute",
-    )
+        summary_json=Path(args.summary_json) if args.summary_json else None,
+    ):
+        return 1
     return 0
 
 
@@ -2774,14 +2864,16 @@ def _dry_run_rotated_batch(
         f"Dry run: would process {len(items)} item(s) using rotated worktrees. "
         "Add --execute to start."
     )
-    _print_batch_summary(
+    if not _emit_batch_summary(
         store,
         plan_path,
         [item.plan_item_id for item in items],
         [],
         selected,
         mode="dry-run",
-    )
+        summary_json=Path(args.summary_json) if args.summary_json else None,
+    ):
+        return 1
     return 0
 
 
