@@ -1718,6 +1718,33 @@ def _run_autopilot_queue_readiness(
     return 0
 
 
+def _next_action_for_preflight(
+    *,
+    agent_available: bool,
+    created_ready: int,
+    stale_created_count: int,
+    in_progress_count: int,
+    blocked_count: int,
+) -> str:
+    """Return a read-only operator hint for the next queue action.
+
+    The hint is ordered by precedence: fix the selected agent first, then
+    reconcile stale created items, recover in-progress items, review blocked
+    items, run the batch when everything is ready, or report nothing to do.
+    """
+    if not agent_available:
+        return "fix_agent"
+    if stale_created_count:
+        return "reconcile_stale_created"
+    if in_progress_count:
+        return "recover_in_progress"
+    if blocked_count:
+        return "review_blocked"
+    if created_ready:
+        return "run_batch"
+    return "none"
+
+
 def _run_autopilot_queue_preflight(
     args: argparse.Namespace,
     repo: Path,
@@ -1767,6 +1794,13 @@ def _run_autopilot_queue_preflight(
     mode = "mock" if agent.name == "mock" else "real"
 
     preflight_ok = not has_readiness_risk and agent_available
+    next_action = _next_action_for_preflight(
+        agent_available=agent_available,
+        created_ready=created_ready,
+        stale_created_count=len(stale_created),
+        in_progress_count=in_progress_total,
+        blocked_count=blocked_total,
+    )
 
     limit = max(0, args.limit)
 
@@ -1810,6 +1844,7 @@ def _run_autopilot_queue_preflight(
                 "available": agent_available,
             },
             "preflight_result": "pass" if preflight_ok else "risk_or_unavailable",
+            "next_action": next_action,
         }
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
         if args.fail_on_risk and not preflight_ok:
@@ -1867,6 +1902,7 @@ def _run_autopilot_queue_preflight(
     print(f"  command: {_agent_config_value(agent_config, 'command')}")
     print(f"  available: {'yes' if agent_available else 'no'}")
     print(f"preflight_result: {'pass' if preflight_ok else 'risk_or_unavailable'}")
+    print(f"next_action: {next_action}")
 
     if args.fail_on_risk and not preflight_ok:
         return 2
