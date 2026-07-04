@@ -11,6 +11,11 @@
   read-only compatibility form that validates the selected item belongs to the
   requested plan, so operators can reuse the same `--plan` habit from queue
   history commands without changing queue state.
+- Allow `ai-orch autopilot queue skip --plan PLAN <plan_item_id>` as a
+  guarded compatibility form that validates the selected created or blocked
+  item belongs to the requested plan before dry-run or `--apply`, so operators
+  can reuse the same `--plan` habit from queue history commands without
+  changing queue state unless `--apply` is present.
 - Show persisted queue item id in `ai-orch autopilot queue list` and `queue status`
   output so operators can copy the id for `queue show`, `queue requeue`, or
   `queue skip` directly from history views, without changing queue state.

@@ -123,6 +123,7 @@ reason, is a dry run unless `--apply` is present, and never deletes the item:
 ```bash
 python -m ai_orchestrator autopilot queue list --repo . --all-plans --status created --status blocked
 python -m ai_orchestrator autopilot queue skip --repo . --reason "operator reviewed: out of scope" <plan_item_id>
+python -m ai_orchestrator autopilot queue skip --repo . --reason "operator reviewed: out of scope" --plan docs/BACKLOG.md <plan_item_id>
 python -m ai_orchestrator autopilot queue skip --repo . --reason "operator reviewed: out of scope" --apply <plan_item_id>
 ```
 

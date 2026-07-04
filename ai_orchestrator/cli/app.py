@@ -506,6 +506,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     autopilot_queue_skip.add_argument("--repo", default=".")
     autopilot_queue_skip.add_argument(
+        "--plan",
+        help=(
+            "Optional plan path for compatibility with queue history commands. "
+            "When given, the item is skipped only if it belongs to this plan."
+        ),
+    )
+    autopilot_queue_skip.add_argument(
         "--reason",
         required=True,
         help="Reason the item is being skipped (required)",
@@ -1666,6 +1673,9 @@ def _run_autopilot_queue_skip(
     Dry-run by default. When ``args.apply`` is set, the persisted item is
     updated to ``skipped`` and the operator-supplied reason is recorded. The
     item is never executed or deleted by this command.
+
+    When ``--plan`` is provided, the command validates that the selected item
+    belongs to the requested plan before skipping it.
     """
     item = store.get_plan_item(args.plan_item_id)
     if item is None:
@@ -1677,6 +1687,18 @@ def _run_autopilot_queue_skip(
             f"Queue item {args.plan_item_id} cannot be skipped (status={item.status})"
         )
         return 1
+
+    requested_plan = getattr(args, "plan", None)
+    if requested_plan is not None:
+        plan_path = _resolve_plan_path(repo, Path(requested_plan))
+        if not plan_path.exists():
+            print(f"Plan not found: {plan_path}")
+            return 1
+        if Path(item.plan_path) != plan_path:
+            print(
+                f"Queue item {args.plan_item_id} does not belong to plan {plan_path}"
+            )
+            return 1
 
     print(f"Skip queue item {item.plan_item_id}")
     print(f"  source: {item.plan_path}:{item.line_number}")
