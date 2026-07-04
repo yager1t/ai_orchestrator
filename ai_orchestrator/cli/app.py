@@ -352,6 +352,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Maximum stale and at-risk items to list (default: 5)",
     )
+    autopilot_queue_readiness.add_argument(
+        "--fail-on-risk",
+        action="store_true",
+        help=(
+            "Return a non-zero exit code when stale created items, "
+            "blocked items, or in-progress items are present"
+        ),
+    )
     autopilot_queue_reconcile = autopilot_queue_sub.add_parser(
         "reconcile",
         help="Find stale created queue items whose source plan task is no longer open",
@@ -1621,6 +1629,9 @@ def _run_autopilot_queue_readiness(
     )
     if problem_summary:
         print(problem_summary)
+
+    if args.fail_on_risk and (stale_created or blocked_total or in_progress_total):
+        return 2
 
     return 0
 

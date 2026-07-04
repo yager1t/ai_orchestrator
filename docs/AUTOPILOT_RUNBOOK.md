@@ -127,12 +127,16 @@ recover queue items, use the read-only readiness summary:
 ```bash
 python -m ai_orchestrator autopilot queue readiness --repo . --plan docs/BACKLOG.md
 python -m ai_orchestrator autopilot queue readiness --repo . --all-plans --limit 10
+python -m ai_orchestrator autopilot queue readiness --repo . --plan docs/BACKLOG.md --fail-on-risk
 ```
 
 The readiness view summarizes total queue counts, created items that are still
 ready versus stale, blocked/in-progress risk, stale created items whose source
 plan task is no longer open, and in-progress items that may need recovery. It
-does not execute queue items or change queue state.
+does not execute queue items or change queue state. Add `--fail-on-risk` when a
+scripted preflight should return a non-zero exit code for stale created,
+blocked, or in-progress queue items; without that flag, readiness remains
+informational.
 
 Completed queue items show `report=...` when their Markdown task report exists.
 Each history row also includes the persisted queue item id as `id=...`. Copy that

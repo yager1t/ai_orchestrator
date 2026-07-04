@@ -13,11 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add an opt-in `--fail-on-risk` flag to `ai-orch autopilot queue readiness`
-  that keeps the command read-only but returns a non-zero exit code when stale
-  created items, blocked items, or in-progress items are present, while
-  preserving the default exit-code behavior and output for operators who only
-  want an informational preflight.
+No open P2 items.
 
 ## P3 / Deferred
 
