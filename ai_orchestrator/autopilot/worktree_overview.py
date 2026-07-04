@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +20,24 @@ class WorktreeOverview:
     dirty_count: int
     untracked_count: int
     last_modified: datetime | None
+    cleanup_status: str
+
+
+def _cleanup_status(overview: WorktreeOverview) -> str:
+    """Classify a worktree for operator cleanup review.
+
+    - ``do_not_remove`` when the worktree has uncommitted/untracked changes or
+      an active merge, because deletion could lose work.
+    - ``candidate`` when the worktree is linked to the review repo, its branch
+      is merged into HEAD, and it is clean with no merge in progress.
+    - ``needs_review`` for everything else (e.g. not merged, unlinked, or
+      branch status uncertain).
+    """
+    if overview.dirty or overview.merge_in_progress:
+        return "do_not_remove"
+    if overview.linked is True and overview.merged is True:
+        return "candidate"
+    return "needs_review"
 
 
 def _git_output(cwd: Path, args: list[str]) -> str | None:
@@ -116,7 +134,7 @@ def inspect_worktree(path: Path, repo: Path | None = None) -> WorktreeOverview |
     dirty, dirty_count, untracked_count = _status_counts(path)
     branch = _linked_branch(path)
 
-    return WorktreeOverview(
+    overview = WorktreeOverview(
         path=path.resolve(),
         branch=branch,
         linked=linked,
@@ -126,7 +144,9 @@ def inspect_worktree(path: Path, repo: Path | None = None) -> WorktreeOverview |
         dirty_count=dirty_count,
         untracked_count=untracked_count,
         last_modified=_last_modified(path),
+        cleanup_status="needs_review",
     )
+    return replace(overview, cleanup_status=_cleanup_status(overview))
 
 
 def gather_worktree_overviews(
@@ -162,11 +182,30 @@ def format_worktree_summary(
     return f"Summary: total={total_count} shown={shown} dirty={dirty} unlinked={unlinked}"
 
 
+def format_cleanup_summary(overviews: list[WorktreeOverview]) -> str:
+    """Render a one-line cleanup candidate summary for operator review."""
+    candidate = sum(1 for overview in overviews if overview.cleanup_status == "candidate")
+    needs_review = sum(
+        1 for overview in overviews if overview.cleanup_status == "needs_review"
+    )
+    do_not_remove = sum(
+        1 for overview in overviews if overview.cleanup_status == "do_not_remove"
+    )
+    return (
+        f"Cleanup summary: "
+        f"candidate={candidate} needs_review={needs_review} do_not_remove={do_not_remove}"
+    )
+
+
 _REVIEW_HINT = """
 Review hint:
   The 'merged' column uses strict ancestry (git merge-base --is-ancestor <branch> HEAD).
   After a squash merge, the branch commits are usually not ancestors of HEAD, so
   'merged' can stay 'no' even when the changes are already present in the main history.
+  The 'cleanup' column is a read-only heuristic only:
+    candidate     = linked, merged, clean, and no merge in progress
+    needs_review  = not merged, unlinked, or status uncertain
+    do_not_remove = dirty or merge in progress (review manually first)
   Before cleanup, confirm the branch state with:
     git log --oneline HEAD..<branch>
     git diff --stat HEAD...<branch>
@@ -182,9 +221,9 @@ def format_worktree_overview(
 ) -> str:
     """Render *overviews* as a plain-text table for operator review.
 
-    When *total_count* is provided, a read-only summary line is included before
+    When *total_count* is provided, read-only summary lines are included before
     the table showing the total discovered count, the number shown after any
-    filters, and the dirty and unlinked counts within the shown set.
+    filters, the dirty and unlinked counts, and cleanup candidate counts.
     """
     if not overviews:
         return f"No git worktrees found under {base_dir}"
@@ -196,11 +235,14 @@ def format_worktree_overview(
     ]
     if total_count is not None:
         lines.append(format_worktree_summary(overviews, total_count))
+        lines.append(format_cleanup_summary(overviews))
         lines.append("")
-    lines.append(
-        f"{'path':<50} {'branch':<20} {'linked':<7} {'merged':<7} {'merge':<6} {'dirty':<6} {'changes':<8} {'untracked':<10} {'last_modified'}"
+    header = (
+        f"{'path':<50} {'branch':<20} {'linked':<7} {'merged':<7} {'merge':<6} "
+        f"{'dirty':<6} {'changes':<8} {'untracked':<10} {'cleanup':<14} {'last_modified'}"
     )
-    lines.append("-" * 133)
+    lines.append(header)
+    lines.append("-" * len(header))
     for overview in overviews:
         linked = (
             "yes"
@@ -224,7 +266,8 @@ def format_worktree_overview(
             path_str = "..." + path_str[-45:]
         lines.append(
             f"{path_str:<50} {overview.branch:<20} {linked:<7} {merged:<7} {merge:<6} "
-            f"{dirty_display:<6} {overview.dirty_count:<8} {overview.untracked_count:<10} {last_modified}"
+            f"{dirty_display:<6} {overview.dirty_count:<8} {overview.untracked_count:<10} "
+            f"{overview.cleanup_status:<14} {last_modified}"
         )
     lines.append("")
     lines.append(_REVIEW_HINT)
