@@ -13,7 +13,10 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Show the selected persisted queue item id at the start of
+  `ai-orch autopilot queue run-next --execute` and `queue run-batch --execute`
+  output so real-agent logs can be tied back to `queue show <plan_item_id>`,
+  without changing execution behavior.
 
 ## P3 / Deferred
 
