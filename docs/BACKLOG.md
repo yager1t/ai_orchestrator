@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Persist and display the selected worktree path for
-  `ai-orch autopilot queue run-batch --worktree PATH` runs so `queue show`,
-  queue history views, and task reports identify the fixed execution worktree,
-  matching rotated worktree reporting without changing execution behavior.
+No open P2 items.
 
 ## P3 / Deferred
 

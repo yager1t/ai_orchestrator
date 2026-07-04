@@ -1885,6 +1885,10 @@ def _run_autopilot_queue_batch(
             return _dry_run_rotated_batch(args, repo, plan_path, store)
         return _run_rotated_autopilot_queue_batch(args, repo, plan_path, store)
 
+    fixed_worktree: Path | None = None
+    if getattr(args, "worktree", None):
+        fixed_worktree = _autopilot_execution_repo(repo, args.worktree)
+
     if not args.execute:
         items = next_plan_items(store, plan_path, limit=max_items)
         if not items:
@@ -1904,8 +1908,15 @@ def _run_autopilot_queue_batch(
             break
         task = plan_item_to_task(next_item)
 
-        def _mark_in_progress() -> None:
-            store.update_plan_item_status(next_item.plan_item_id, "in_progress")
+        def _mark_in_progress(
+            plan_item_id: int = next_item.plan_item_id,
+            selected_worktree: Path | None = fixed_worktree,
+        ) -> None:
+            store.update_plan_item_status(
+                plan_item_id,
+                "in_progress",
+                selected_worktree_path=selected_worktree,
+            )
 
         result = _run_autopilot_task(
             task,
@@ -1924,6 +1935,7 @@ def _run_autopilot_queue_batch(
             next_item.plan_item_id,
             item_status,
             task_id=result.task_id,
+            selected_worktree_path=fixed_worktree,
             blocked_reason=blocked_reason,
         )
         print(f"Queue item {next_item.plan_item_id}: status={item_status}")

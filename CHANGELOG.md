@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Persist selected fixed worktree paths for `ai-orch autopilot queue run-batch
+  --worktree PATH` runs so queue details, queue history views, and task reports
+  identify the execution worktree.
 - Added `ai-orch autopilot worktree-overview --cleanup-status STATUS` to show
   only git worktrees labeled `candidate`, `needs_review`, or `do_not_remove`,
   helping operators focus cleanup review without deleting or pruning anything.
