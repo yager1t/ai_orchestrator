@@ -4681,6 +4681,7 @@ def test_autopilot_queue_preflight_shows_readiness_and_agent_profile(
     assert "command: python" in output
     assert "available: yes" in output
     assert "preflight_result: risk_or_unavailable" in output
+    assert "next_action: recover_in_progress" in output
 
 
 def test_autopilot_queue_preflight_preserves_queue_state(
@@ -4733,6 +4734,7 @@ def test_autopilot_queue_preflight_fail_on_risk_exits_nonzero_for_readiness_risk
     assert exit_code == 2
     assert "created readiness: ready=0 stale=1" in output
     assert "preflight_result: risk_or_unavailable" in output
+    assert "next_action: reconcile_stale_created" in output
 
 
 def test_autopilot_queue_preflight_fail_on_risk_exits_nonzero_for_unavailable_agent(
@@ -4769,6 +4771,7 @@ def test_autopilot_queue_preflight_fail_on_risk_exits_nonzero_for_unavailable_ag
     assert "Agent profile:" in output
     assert "available: no" in output
     assert "preflight_result: risk_or_unavailable" in output
+    assert "next_action: fix_agent" in output
 
 
 def test_autopilot_queue_preflight_json_outputs_combined_object(
@@ -4812,6 +4815,49 @@ def test_autopilot_queue_preflight_json_outputs_combined_object(
     assert result["agent_profile"]["command"] == "python"
     assert result["agent_profile"]["available"] is True
     assert result["preflight_result"] == "pass"
+    assert result["next_action"] == "run_batch"
+
+
+def test_autopilot_queue_preflight_next_action_review_blocked(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] Ready task",
+                "- [ ] Blocked task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    write_config(
+        tmp_path,
+        default_agent="generic",
+        include_generic_agent=True,
+        generic_command="python",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(
+        items["Blocked task"].plan_item_id,
+        "blocked",
+        blocked_reason="needs review",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        ["autopilot", "queue", "preflight", "--repo", str(tmp_path), "--plan", str(plan)]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "next_action: review_blocked" in output
 
 
 def test_autopilot_queue_preflight_handles_missing_plan(

@@ -13,11 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only `next_action` hint to `ai-orch autopilot queue preflight`
-  text and JSON output that tells the operator whether to run the batch,
-  reconcile stale created items, recover in-progress items, review blocked
-  items, or fix the selected agent, without executing queue items, changing
-  queue state, or changing existing `--fail-on-risk` exit-code semantics.
+No open P2 items.
 
 ## P3 / Deferred
 
