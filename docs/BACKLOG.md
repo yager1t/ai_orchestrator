@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Document in `docs/AUTOPILOT_RUNBOOK.md` that `ai-orch autopilot queue list`
-  and `queue status` history rows include the persisted `id=...` value and
-  that operators can copy it into `queue show`, `queue requeue`, or
-  `queue skip`, without changing CLI behavior.
+No open P2 items.
 
 ## P3 / Deferred
 
