@@ -933,6 +933,45 @@ def _filter_queue_items(
     return [item for item in items if item.status in allowed]
 
 
+def _format_problem_summary(
+    items: list[StoredPlanItem],
+    *,
+    limit: int | None = None,
+) -> str | None:
+    """Return a read-only summary of blocked and in-progress items by reason.
+
+    Groups items whose status is ``blocked`` or ``in_progress`` by their
+    blocked reason (``(no reason)`` when none is recorded) and shows the
+    count plus the latest affected queue item ids, ordered by most recent
+    update.  Returns ``None`` when there are no affected items.
+    """
+    affected = [item for item in items if item.status in {"blocked", "in_progress"}]
+    if not affected:
+        return None
+
+    groups: dict[tuple[str, str], list[StoredPlanItem]] = {}
+    for item in affected:
+        reason = item.blocked_reason if item.blocked_reason else "(no reason)"
+        groups.setdefault((item.status, reason), []).append(item)
+
+    lines = ["Problem summary:"]
+    status_order = {status: index for index, status in enumerate(_QUEUE_STATUSES)}
+    for (status, reason), group in sorted(
+        groups.items(),
+        key=lambda kv: (status_order.get(kv[0][0], 99), kv[0][1].lower()),
+    ):
+        latest = sorted(
+            group,
+            key=lambda item: (item.updated_at, item.plan_item_id),
+            reverse=True,
+        )
+        if limit:
+            latest = latest[:limit]
+        ids = ", ".join(str(item.plan_item_id) for item in latest)
+        lines.append(f"  {status} ({reason}): count={len(group)} latest=[{ids}]")
+    return "\n".join(lines)
+
+
 def _format_metrics_summary(summary: StoredMetricsSummary) -> str:
     verification_failed_count = summary.verification_count - summary.verification_passed_count
     return "\n".join(
@@ -1804,6 +1843,12 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
                 f"{status}={count}" for status, count in sorted(status_counts.items())
             )
             print("  by status:", summary)
+        problem_summary = _format_problem_summary(
+            matched_items,
+            limit=limit if limit else None,
+        )
+        if problem_summary:
+            print(problem_summary)
         for item in items:
             refs = _queue_item_refs(repo, item)
             item_label = _queue_item_label(item, include_plan_path=include_plan_path)
@@ -1825,11 +1870,11 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             plan_label = str(plan_path)
             items = store.list_plan_items(plan_path=plan_path)
         statuses = tuple(args.status or [])
+        filtered_items = _filter_queue_items(items, statuses)
         print(f"Queue status for {plan_label}")
         print(f"  total: {len(items)}")
         if statuses:
-            filtered_count = len(_filter_queue_items(items, statuses))
-            print(f"  filtered: {filtered_count} status={','.join(statuses)}")
+            print(f"  filtered: {len(filtered_items)} status={','.join(statuses)}")
         status_counts = {}
         for item in items:
             status_counts[item.status] = status_counts.get(item.status, 0) + 1
@@ -1840,6 +1885,13 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             print("  by status:", summary)
         else:
             print("  No plan items found.")
+
+        problem_summary = _format_problem_summary(
+            filtered_items,
+            limit=max(0, args.limit) if args.limit else None,
+        )
+        if problem_summary:
+            print(problem_summary)
 
         limit = max(0, args.limit)
         for status, label in (
