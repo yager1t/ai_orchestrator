@@ -13,7 +13,10 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Allow `ai-orch autopilot queue skip --plan PLAN <plan_item_id>` as a guarded
+  compatibility form that validates the selected created or blocked item belongs
+  to the requested plan before dry-run or `--apply`, without changing queue
+  state unless `--apply` is present.
 
 ## P3 / Deferred
 
