@@ -2880,6 +2880,64 @@ def test_autopilot_queue_run_batch_defaults_to_dry_run(
     assert f"Queue item: {items['Second task'].plan_item_id}" in output
     assert items["First task"].status == "created"
     assert items["Second task"].status == "created"
+    assert "=== Batch summary ===" in output
+    assert "Selected: 2 item(s)" in output
+    assert "Status counts: created=2" in output
+    assert (
+        f"First non-done queue item: {items['First task'].plan_item_id} (status=created)"
+        in output
+    )
+
+
+def test_autopilot_queue_run_batch_summary_ignores_terminal_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] Old skipped task",
+                "- [ ] Ready task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    skipped_item = items["Old skipped task"]
+    ready_item = items["Ready task"]
+    store.update_plan_item_status(skipped_item.plan_item_id, "skipped")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-items",
+            "1",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Queue item: {ready_item.plan_item_id}" in output
+    assert "Status counts: created=1" in output
+    assert (
+        f"First non-done queue item: {ready_item.plan_item_id} (status=created)"
+        in output
+    )
+    assert (
+        f"First non-done queue item: {skipped_item.plan_item_id} (status=skipped)"
+        not in output
+    )
 
 
 def test_autopilot_queue_run_batch_executes_up_to_max_items(
@@ -2959,6 +3017,14 @@ def test_autopilot_queue_run_batch_executes_up_to_max_items(
     report_dir = tmp_path / ".ai-orch" / "reports"
     assert (report_dir / "batch-task-1.md").exists()
     assert (report_dir / "batch-task-2.md").exists()
+    assert "=== Batch summary ===" in output
+    assert "Processed: 2 item(s)" in output
+    assert "Status counts: done=2" in output
+    assert (
+        f"First non-done queue item: {items['Third task'].plan_item_id} (status=created)"
+        in output
+    )
+    assert f"Reports:\n  {report_dir / 'batch-task-1.md'}\n  {report_dir / 'batch-task-2.md'}" in output
 
 
 def test_autopilot_queue_run_batch_stops_on_blocked_result(
@@ -3036,6 +3102,14 @@ def test_autopilot_queue_run_batch_stops_on_blocked_result(
     report_dir = tmp_path / ".ai-orch" / "reports"
     assert (report_dir / "batch-task-1.md").exists()
     assert (report_dir / "batch-task-2.md").exists()
+    assert "=== Batch summary ===" in output
+    assert "Processed: 2 item(s)" in output
+    assert "Status counts: blocked=1, done=1" in output
+    assert (
+        f"First non-done queue item: {items['Second task'].plan_item_id} (status=blocked)"
+        in output
+    )
+    assert f"Reports:\n  {report_dir / 'batch-task-1.md'}\n  {report_dir / 'batch-task-2.md'}" in output
     assert not (report_dir / "batch-task-3.md").exists()
 
 
@@ -3214,6 +3288,12 @@ def test_autopilot_queue_run_batch_rotate_worktrees_dry_run_selects_worktrees(
     assert f"Queue item: {items['Second task'].plan_item_id}" in output
     assert items["First task"].status == "created"
     assert items["Second task"].status == "created"
+    assert "=== Batch summary ===" in output
+    assert "Selected: 2 item(s)" in output
+    assert "Status counts: created=2" in output
+    assert "Selected worktrees:" in output
+    assert f"  {wt1.resolve()}" in output
+    assert f"  {wt2.resolve()}" in output
 
 
 def test_autopilot_queue_run_batch_rotate_worktrees_blocks_when_too_few_worktrees(
@@ -3435,6 +3515,13 @@ def test_autopilot_queue_run_batch_rotate_worktrees_executes_in_selected_worktre
     assert f"- Queue worktree: `{wt2.resolve()}`" in second_report.read_text(
         encoding="utf-8"
     )
+    assert "=== Batch summary ===" in output
+    assert "Processed: 2 item(s)" in output
+    assert "Status counts: done=2" in output
+    assert "Selected worktrees:" in output
+    assert f"  {wt1.resolve()}" in output
+    assert f"  {wt2.resolve()}" in output
+    assert f"Reports:\n  {first_report}\n  {second_report}" in output
 
 
 def test_autopilot_queue_run_batch_fixed_worktree_persists_and_reports(
@@ -3522,6 +3609,12 @@ def test_autopilot_queue_run_batch_fixed_worktree_persists_and_reports(
     assert f"- Queue worktree: `{worktree.resolve()}`" in report_path.read_text(
         encoding="utf-8"
     )
+    assert "=== Batch summary ===" in output
+    assert "Processed: 1 item(s)" in output
+    assert "Status counts: done=1" in output
+    assert "Selected worktrees:" in output
+    assert f"  {worktree.resolve()}" in output
+    assert f"Reports:\n  {report_path}" in output
 
     capsys.readouterr()
     exit_code = main(
