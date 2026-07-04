@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added read-only `ai-orch autopilot worktree-overview --limit N` output so
+  large worktree directories can show only the first N filtered rows while the
+  summary reports total discovered, filtered, and shown row counts, without
+  creating, deleting, pruning, or checking out worktrees.
+
 - Added a read-only problem summary to `ai-orch autopilot queue status` and
   `ai-orch autopilot queue list` output that groups `blocked` and `in_progress`
   items by reason, shows the count and latest affected queue item ids for each
