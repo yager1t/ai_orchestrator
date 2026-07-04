@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added read-only `ai-orch autopilot queue readiness` command for a selected plan
+  or `--all-plans` that summarizes queue counts, created readiness
+  (ready vs stale), blocked/in-progress risk, stale created items whose source
+  plan task is no longer open, and stale in-progress items in one operator
+  preflight view, without executing queue items or changing queue state.
+
 - Show existing queue item refs (`task=`, `worktree=`, `report=`, and
   `reason=` when available) in stale-row output from `ai-orch autopilot queue
   reconcile` and `queue recover-in-progress`, without changing dry-run/apply

@@ -333,6 +333,25 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Number of recent items to show per status (default: 5)",
     )
+    autopilot_queue_readiness = autopilot_queue_sub.add_parser(
+        "readiness",
+        help="Read-only preflight summary of queue counts, risk, and stale items",
+    )
+    autopilot_queue_readiness.add_argument("--repo", default=".")
+    autopilot_queue_readiness.add_argument(
+        "--plan", default="docs/POST_MVP_ROADMAP.md"
+    )
+    autopilot_queue_readiness.add_argument(
+        "--all-plans",
+        action="store_true",
+        help="Summarize readiness for every persisted plan path",
+    )
+    autopilot_queue_readiness.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Maximum stale and at-risk items to list (default: 5)",
+    )
     autopilot_queue_reconcile = autopilot_queue_sub.add_parser(
         "reconcile",
         help="Find stale created queue items whose source plan task is no longer open",
@@ -1524,6 +1543,88 @@ def _stale_created_queue_items(
     return stale_items
 
 
+def _run_autopilot_queue_readiness(
+    args: argparse.Namespace,
+    repo: Path,
+    store: StateStore,
+) -> int:
+    """Render a read-only preflight readiness summary for the queue.
+
+    Combines overall counts, created readiness, blocked/in-progress risk,
+    stale created items (source plan task no longer open), and stale
+    in-progress items without mutating stored state.
+    """
+    include_plan_path = bool(args.all_plans)
+    if include_plan_path:
+        plan_label = "all persisted plans"
+        all_items = store.list_plan_items()
+    else:
+        plan_path = _resolve_plan_path(repo, Path(args.plan))
+        if not plan_path.exists():
+            print(f"Plan not found: {plan_path}")
+            return 1
+        plan_label = str(plan_path)
+        all_items = store.list_plan_items(plan_path=plan_path)
+
+    status_counts: dict[str, int] = {}
+    for item in all_items:
+        status_counts[item.status] = status_counts.get(item.status, 0) + 1
+
+    stale_created = _stale_created_queue_items(repo, all_items)
+    stale_in_progress = [item for item in all_items if item.status == "in_progress"]
+    created_total = status_counts.get("created", 0)
+    created_ready = max(0, created_total - len(stale_created))
+    blocked_total = status_counts.get("blocked", 0)
+    in_progress_total = status_counts.get("in_progress", 0)
+
+    print(f"Queue readiness for {plan_label}")
+    print(f"  total: {len(all_items)}")
+    if status_counts:
+        summary = ", ".join(
+            f"{status}={count}" for status, count in sorted(status_counts.items())
+        )
+        print("  by status:", summary)
+    else:
+        print("  No plan items found.")
+        return 0
+
+    print("  created readiness:", f"ready={created_ready} stale={len(stale_created)}")
+    print(
+        "  blocked/in_progress risk:",
+        f"blocked={blocked_total} in_progress={in_progress_total}",
+    )
+    print("  stale created:", len(stale_created))
+    print("  stale in_progress:", len(stale_in_progress))
+
+    limit = max(0, args.limit)
+    if stale_created:
+        print("  stale created items:")
+        for item in stale_created[:limit]:
+            refs = _queue_item_refs(repo, item)
+            item_label = _queue_item_label(item, include_plan_path=include_plan_path)
+            print(f"    id={item.plan_item_id} {item_label}: {item.text}{refs}")
+        if len(stale_created) > limit:
+            print(f"    ... and {len(stale_created) - limit} more")
+
+    if stale_in_progress:
+        print("  stale in_progress items:")
+        for item in stale_in_progress[:limit]:
+            refs = _queue_item_refs(repo, item)
+            item_label = _queue_item_label(item, include_plan_path=include_plan_path)
+            print(f"    id={item.plan_item_id} {item_label}: {item.text}{refs}")
+        if len(stale_in_progress) > limit:
+            print(f"    ... and {len(stale_in_progress) - limit} more")
+
+    problem_summary = _format_problem_summary(
+        all_items,
+        limit=limit if limit else None,
+    )
+    if problem_summary:
+        print(problem_summary)
+
+    return 0
+
+
 def _run_autopilot_queue_reconcile(
     args: argparse.Namespace,
     repo: Path,
@@ -1937,6 +2038,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
                     f"    id={item.plan_item_id} {item_label}: {item.text}{refs}"
                 )
         return 0
+
+    if args.autopilot_queue_command == "readiness":
+        return _run_autopilot_queue_readiness(args, repo, store)
 
     if args.autopilot_queue_command == "reconcile":
         return _run_autopilot_queue_reconcile(args, repo, store)

@@ -121,6 +121,19 @@ Inspect the persisted queue without starting work:
 python -m ai_orchestrator autopilot queue status --repo . --plan docs/BACKLOG.md
 ```
 
+For a single preflight view before choosing whether to execute, reconcile, or
+recover queue items, use the read-only readiness summary:
+
+```bash
+python -m ai_orchestrator autopilot queue readiness --repo . --plan docs/BACKLOG.md
+python -m ai_orchestrator autopilot queue readiness --repo . --all-plans --limit 10
+```
+
+The readiness view summarizes total queue counts, created items that are still
+ready versus stale, blocked/in-progress risk, stale created items whose source
+plan task is no longer open, and in-progress items that may need recovery. It
+does not execute queue items or change queue state.
+
 Completed queue items show `report=...` when their Markdown task report exists.
 Each history row also includes the persisted queue item id as `id=...`. Copy that
 id into `queue show`, `queue requeue`, or `queue skip`; the id is stable across
