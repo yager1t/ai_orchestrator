@@ -560,6 +560,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--reason",
         help="Reason for blocking stale in_progress items (required with --apply)",
     )
+    autopilot_queue_recover.add_argument(
+        "--older-than-hours",
+        type=int,
+        metavar="N",
+        help=(
+            "Only recover in_progress items whose last status update is older "
+            "than N hours"
+        ),
+    )
 
     autopilot_queue_show = autopilot_queue_sub.add_parser(
         "show",
@@ -2133,6 +2142,17 @@ def _run_autopilot_queue_recover_in_progress(
         print("--reason is required when --apply is set")
         return 1
 
+    if args.older_than_hours is not None:
+        if args.older_than_hours < 1:
+            print("--older-than-hours must be at least 1")
+            return 1
+        cutoff = datetime.now(UTC) - timedelta(hours=args.older_than_hours)
+        items = [
+            item
+            for item in items
+            if _plan_item_updated_before(item, cutoff)
+        ]
+
     print(f"Queue recover for {plan_label}")
     print(f"  stale_in_progress: {len(items)}")
     if not items:
@@ -2161,6 +2181,13 @@ def _run_autopilot_queue_recover_in_progress(
         item_label = _queue_item_label(item, include_plan_path=include_plan_path)
         print(f"  [stale_in_progress] {item_label}: {item.text}{refs}")
     return 0
+
+
+def _plan_item_updated_before(item: StoredPlanItem, cutoff: datetime) -> bool:
+    updated_at = datetime.fromisoformat(item.updated_at)
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return updated_at < cutoff
 
 
 def _validate_queue_item_plan(

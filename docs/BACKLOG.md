@@ -13,11 +13,6 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only `--older-than-hours N` filter to `ai-orch autopilot queue
-  recover-in-progress` so operators can dry-run or apply recovery only for
-  interrupted in-progress items older than the selected threshold, while
-  preserving the existing default scope, reason handling, queue state
-  transitions, and dry-run-by-default behavior.
 - Add a read-only `--older-than-days N` filter to `ai-orch autopilot
   worktree-overview` so operators can focus cleanup review on old worktrees
   based on the same last-modified signal shown in the table/JSON output,
