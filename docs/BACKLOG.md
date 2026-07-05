@@ -13,11 +13,6 @@ No open P1 items.
 
 ## P2
 
-- Add an opt-in `--item-id PLAN_ITEM_ID` selector to `ai-orch autopilot queue
-  run-batch` dry-run and `--execute` flows so operators can target one reviewed
-  `created` queue item from `queue show`, while preserving the default
-  oldest-created selection, fixed/rotated worktree validation, report
-  generation, queue state transitions, and stop-on-first-non-done semantics.
 - Add an opt-in Markdown `--batch-report PATH` artifact to `ai-orch autopilot
   queue run-batch` dry-run and `--execute` flows that records the same final
   batch summary, selected item refs, preflight snapshot, reports, and first

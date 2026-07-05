@@ -464,6 +464,16 @@ def build_parser() -> argparse.ArgumentParser:
     autopilot_queue_run_batch.add_argument("--repo", default=".")
     autopilot_queue_run_batch.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
     autopilot_queue_run_batch.add_argument(
+        "--item-id",
+        dest="item_id",
+        type=int,
+        metavar="PLAN_ITEM_ID",
+        help=(
+            "Process one selected created queue item id from queue show instead "
+            "of the default oldest ready item selection"
+        ),
+    )
+    autopilot_queue_run_batch.add_argument(
         "--execute",
         action="store_true",
         help=(
@@ -2742,7 +2752,9 @@ def _run_autopilot_queue_batch(
         fixed_worktree = _autopilot_execution_repo(repo, args.worktree)
 
     if not args.execute:
-        items = next_plan_items(store, plan_path, limit=max_items)
+        items = _select_batch_plan_items(args, store, plan_path, limit=max_items)
+        if items is None:
+            return 1
         if not items:
             print(f"No queued plan items ready in {plan_path}")
             return 0
@@ -2766,8 +2778,17 @@ def _run_autopilot_queue_batch(
 
     processed_ids: list[int] = []
     report_paths: list[Path] = []
-    for _ in range(max_items):
-        next_item = next_plan_item(store, plan_path)
+    selected_items = _select_batch_plan_items(args, store, plan_path, limit=max_items)
+    if selected_items is None:
+        return 1
+    if not selected_items:
+        print(f"No more queued plan items ready in {plan_path}")
+    for selected_item in selected_items:
+        next_item = (
+            selected_item
+            if getattr(args, "item_id", None) is not None
+            else next_plan_item(store, plan_path)
+        )
         if next_item is None:
             print(f"No more queued plan items ready in {plan_path}")
             break
@@ -2859,7 +2880,9 @@ def _run_rotated_autopilot_queue_batch(
         return 1
 
     max_items = max(0, args.max_items)
-    items = next_plan_items(store, plan_path, limit=max_items)
+    items = _select_batch_plan_items(args, store, plan_path, limit=max_items)
+    if items is None:
+        return 1
     if not items:
         print(f"No queued plan items ready in {plan_path}")
         return 0
@@ -2967,7 +2990,9 @@ def _dry_run_rotated_batch(
         return 1
 
     max_items = max(0, args.max_items)
-    items = next_plan_items(store, plan_path, limit=max_items)
+    items = _select_batch_plan_items(args, store, plan_path, limit=max_items)
+    if items is None:
+        return 1
     if not items:
         print(f"No queued plan items ready in {plan_path}")
         return 0
@@ -3005,6 +3030,36 @@ def _dry_run_rotated_batch(
     ):
         return 1
     return 0
+
+
+def _select_batch_plan_items(
+    args: argparse.Namespace,
+    store: StateStore,
+    plan_path: Path,
+    *,
+    limit: int,
+) -> list[StoredPlanItem] | None:
+    """Return the queue items selected for this batch run.
+
+    Without ``--item-id`` this preserves the existing default queue selection.
+    With ``--item-id`` the batch is narrowed to exactly one created item from
+    the selected plan.
+    """
+    item_id = getattr(args, "item_id", None)
+    if item_id is None:
+        return next_plan_items(store, plan_path, limit=limit)
+
+    item = store.get_plan_item(item_id)
+    if item is None:
+        print(f"Queue item not found: {item_id}")
+        return None
+    if Path(item.plan_path) != plan_path:
+        print(f"Queue item {item_id} does not belong to plan {plan_path}")
+        return None
+    if item.status != "created":
+        print(f"Queue item {item_id} is not ready (status={item.status})")
+        return None
+    return [item]
 
 
 def _args_with_worktree(args: argparse.Namespace, worktree: Path) -> argparse.Namespace:
