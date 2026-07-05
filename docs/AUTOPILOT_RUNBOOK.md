@@ -211,8 +211,14 @@ command is a dry run unless `--apply` is present:
 
 ```bash
 python -m ai_orchestrator autopilot queue recover-in-progress --repo . --all-plans
+python -m ai_orchestrator autopilot queue recover-in-progress --repo . --all-plans --older-than-hours 24
 python -m ai_orchestrator autopilot queue recover-in-progress --repo . --all-plans --apply --reason "batch run timed out before supervisor report"
 ```
+
+Use `--older-than-hours N` to limit the dry-run or `--apply` recovery to
+`in_progress` queue items whose last status update is older than the selected
+threshold. The command remains dry-run-by-default, and `--reason` is still
+required with `--apply`.
 
 Stale rows from `queue reconcile` and `queue recover-in-progress` include
 available refs such as `task=`, `worktree=`, `report=`, and `reason=` so

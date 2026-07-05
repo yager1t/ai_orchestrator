@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added read-only `--older-than-hours N` filtering to `ai-orch autopilot queue
+  recover-in-progress` so operators can dry-run or apply recovery only for
+  interrupted `in_progress` queue items older than the selected threshold.
+
 - Added opt-in `--batch-report PATH` to `ai-orch autopilot queue run-batch`
   dry-run and `--execute` flows so operators can persist the final batch
   summary, selected item refs, report paths, first non-done item context, and

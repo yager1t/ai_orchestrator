@@ -6114,6 +6114,98 @@ def test_autopilot_queue_recover_in_progress_apply_blocks_with_reason(
     assert "reason=batch run timed out" in output
 
 
+def test_autopilot_queue_recover_in_progress_older_than_hours_dry_run_filters_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Old task\n- [ ] Current task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    for item in items.values():
+        store.update_plan_item_status(item.plan_item_id, "in_progress")
+    old_updated_at = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE plan_items SET updated_at = ? WHERE plan_item_id = ?",
+            (old_updated_at, items["Old task"].plan_item_id),
+        )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--older-than-hours",
+            "24",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+
+    assert exit_code == 0
+    assert "stale_in_progress: 1" in output
+    assert "Old task" in output
+    assert "Current task" not in output
+    assert loaded["Old task"].status == "in_progress"
+    assert loaded["Current task"].status == "in_progress"
+
+
+def test_autopilot_queue_recover_in_progress_older_than_hours_apply_blocks_only_old_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Old task\n- [ ] Current task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    for item in items.values():
+        store.update_plan_item_status(item.plan_item_id, "in_progress")
+    old_updated_at = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE plan_items SET updated_at = ? WHERE plan_item_id = ?",
+            (old_updated_at, items["Old task"].plan_item_id),
+        )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--older-than-hours",
+            "24",
+            "--apply",
+            "--reason",
+            "interrupted",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+
+    assert exit_code == 0
+    assert "stale_in_progress: 1" in output
+    assert "blocked: 1" in output
+    assert loaded["Old task"].status == "blocked"
+    assert loaded["Old task"].blocked_reason == "interrupted"
+    assert loaded["Current task"].status == "in_progress"
+    assert loaded["Current task"].blocked_reason is None
+
+
 def test_autopilot_queue_recover_in_progress_apply_requires_reason(
     capsys,
     tmp_path: Path,
@@ -6146,6 +6238,35 @@ def test_autopilot_queue_recover_in_progress_apply_requires_reason(
     assert "--reason is required when --apply is set" in output
     assert loaded is not None
     assert loaded.status == "in_progress"
+
+
+def test_autopilot_queue_recover_in_progress_older_than_hours_must_be_positive(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Orphan task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--older-than-hours",
+            "0",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "--older-than-hours must be at least 1" in output
 
 
 def test_autopilot_queue_recover_in_progress_all_plans_blocks_only_in_progress(
