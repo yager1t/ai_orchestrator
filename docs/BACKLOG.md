@@ -13,11 +13,6 @@ No open P1 items.
 
 ## P2
 
-- Add an opt-in Markdown `--batch-report PATH` artifact to `ai-orch autopilot
-  queue run-batch` dry-run and `--execute` flows that records the same final
-  batch summary, selected item refs, preflight snapshot, reports, and first
-  non-done item context already available in text/JSON output, while preserving
-  stdout, JSON summary, queue state transitions, and exit-code semantics.
 - Add a read-only `--older-than-hours N` filter to `ai-orch autopilot queue
   recover-in-progress` so operators can dry-run or apply recovery only for
   interrupted in-progress items older than the selected threshold, while

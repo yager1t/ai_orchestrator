@@ -531,6 +531,15 @@ def build_parser() -> argparse.ArgumentParser:
             "to PATH without changing stdout or exit-code semantics"
         ),
     )
+    autopilot_queue_run_batch.add_argument(
+        "--batch-report",
+        dest="batch_report",
+        metavar="PATH",
+        help=(
+            "Write the final batch summary as an operator-facing Markdown "
+            "artifact to PATH without changing stdout or exit-code semantics"
+        ),
+    )
     autopilot_queue_recover = autopilot_queue_sub.add_parser(
         "recover-in-progress",
         help="Find stale in_progress queue items and optionally mark them blocked",
@@ -2682,6 +2691,89 @@ def _write_batch_summary_json(path: Path, summary: dict[str, Any]) -> None:
     )
 
 
+def _write_batch_report_markdown(path: Path, summary: dict[str, Any]) -> None:
+    """Persist a batch summary as an operator-facing Markdown artifact."""
+    mode = summary["mode"]
+    label = "Selected" if mode == "dry-run" else "Processed"
+    count_key = "selected_count" if mode == "dry-run" else "processed_count"
+
+    lines = [
+        "# Autopilot Batch Report",
+        "",
+        "## Summary",
+        "",
+        f"- Mode: `{mode}`",
+        f"- Plan: `{summary['plan_path']}`",
+        f"- {label}: {summary[count_key]} item(s)",
+        "- Status counts: "
+        + (
+            ", ".join(
+                f"`{status}`={count}"
+                for status, count in summary["status_counts"].items()
+            )
+            or "(none)"
+        ),
+        "",
+    ]
+
+    first_non_done = summary.get("first_non_done_item")
+    lines.extend(["## First Non-Done Item", ""])
+    if first_non_done is None:
+        lines.extend(["None.", ""])
+    else:
+        lines.extend(
+            [
+                f"- Queue item: `{first_non_done['plan_item_id']}`",
+                f"- Status: `{first_non_done['status']}`",
+                f"- Source: `{first_non_done['source']}`",
+                f"- Text: {first_non_done['text']}",
+                "",
+            ]
+        )
+
+    lines.extend(["## Reports", ""])
+    report_paths = summary["report_paths"]
+    if report_paths:
+        lines.extend(f"- `{path}`" for path in report_paths)
+    else:
+        lines.append("None.")
+    lines.append("")
+
+    lines.extend(["## Selected Worktrees", ""])
+    worktree_paths = summary["selected_worktree_paths"]
+    if worktree_paths:
+        lines.extend(f"- `{path}`" for path in worktree_paths)
+    else:
+        lines.append("None.")
+    lines.append("")
+
+    lines.extend(["## Selected Item Refs", "", "```json"])
+    lines.append(
+        json.dumps(
+            summary["selected_item_refs"],
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        )
+    )
+    lines.extend(["```", ""])
+
+    if "preflight_snapshot" in summary:
+        lines.extend(["## Preflight Snapshot", "", "```json"])
+        lines.append(
+            json.dumps(
+                summary["preflight_snapshot"],
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+        lines.extend(["```", ""])
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _emit_batch_summary(
     store: StateStore,
     plan_path: Path,
@@ -2690,12 +2782,13 @@ def _emit_batch_summary(
     worktree_paths: list[Path],
     mode: str,
     summary_json: Path | None = None,
+    batch_report: Path | None = None,
     preflight_snapshot: dict[str, Any] | None = None,
 ) -> bool:
     """Print and optionally persist a batch summary.
 
     Returns ``True`` when the summary is printed (and written, when requested)
-    successfully, or ``False`` when the JSON artifact cannot be written.
+    successfully, or ``False`` when a requested artifact cannot be written.
     """
     summary = _build_batch_summary(
         store,
@@ -2713,6 +2806,15 @@ def _emit_batch_summary(
         except OSError as exc:
             print(
                 f"Failed to write batch summary JSON to {summary_json}: {exc}",
+                file=sys.stderr,
+            )
+            return False
+    if batch_report is not None:
+        try:
+            _write_batch_report_markdown(batch_report, summary)
+        except OSError as exc:
+            print(
+                f"Failed to write batch report Markdown to {batch_report}: {exc}",
                 file=sys.stderr,
             )
             return False
@@ -2771,6 +2873,7 @@ def _run_autopilot_queue_batch(
             [fixed_worktree] if fixed_worktree else [],
             mode="dry-run",
             summary_json=Path(args.summary_json) if args.summary_json else None,
+            batch_report=Path(args.batch_report) if args.batch_report else None,
             preflight_snapshot=preflight_snapshot,
         ):
             return 1
@@ -2842,6 +2945,7 @@ def _run_autopilot_queue_batch(
                 [fixed_worktree] if fixed_worktree else [],
                 mode="execute",
                 summary_json=Path(args.summary_json) if args.summary_json else None,
+                batch_report=Path(args.batch_report) if args.batch_report else None,
                 preflight_snapshot=preflight_snapshot,
             ):
                 return 1
@@ -2856,6 +2960,7 @@ def _run_autopilot_queue_batch(
         [fixed_worktree] if fixed_worktree else [],
         mode="execute",
         summary_json=Path(args.summary_json) if args.summary_json else None,
+        batch_report=Path(args.batch_report) if args.batch_report else None,
         preflight_snapshot=preflight_snapshot,
     ):
         return 1
@@ -2952,6 +3057,7 @@ def _run_rotated_autopilot_queue_batch(
                 selected,
                 mode="execute",
                 summary_json=Path(args.summary_json) if args.summary_json else None,
+                batch_report=Path(args.batch_report) if args.batch_report else None,
                 preflight_snapshot=preflight_snapshot,
             ):
                 return 1
@@ -2966,6 +3072,7 @@ def _run_rotated_autopilot_queue_batch(
         selected,
         mode="execute",
         summary_json=Path(args.summary_json) if args.summary_json else None,
+        batch_report=Path(args.batch_report) if args.batch_report else None,
         preflight_snapshot=preflight_snapshot,
     ):
         return 1
@@ -3026,6 +3133,7 @@ def _dry_run_rotated_batch(
         selected,
         mode="dry-run",
         summary_json=Path(args.summary_json) if args.summary_json else None,
+        batch_report=Path(args.batch_report) if args.batch_report else None,
         preflight_snapshot=preflight_snapshot,
     ):
         return 1

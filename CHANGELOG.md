@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added opt-in `--batch-report PATH` to `ai-orch autopilot queue run-batch`
+  dry-run and `--execute` flows so operators can persist the final batch
+  summary, selected item refs, report paths, first non-done item context, and
+  preflight snapshot as Markdown while preserving stdout, JSON artifact output,
+  queue state transitions, and exit-code semantics.
+
 - Added opt-in `--item-id PLAN_ITEM_ID` to `ai-orch autopilot queue run-batch`
   dry-run and `--execute` flows so operators can target one reviewed `created`
   queue item while preserving the default batch selection when omitted.

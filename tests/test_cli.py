@@ -3934,6 +3934,62 @@ def test_autopilot_queue_run_batch_summary_json_dry_run(
     assert summary["preflight_snapshot"]["next_action"] == "run_batch"
 
 
+def test_autopilot_queue_run_batch_batch_report_dry_run(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    report_path = tmp_path / "batch-report.md"
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-items",
+            "2",
+            "--batch-report",
+            str(report_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "=== Batch summary ===" in output
+    assert str(report_path) not in output
+    assert report_path.exists()
+
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    report = report_path.read_text(encoding="utf-8")
+
+    assert "# Autopilot Batch Report" in report
+    assert "- Mode: `dry-run`" in report
+    assert "- Selected: 2 item(s)" in report
+    assert "## First Non-Done Item" in report
+    assert f"- Queue item: `{items['First task'].plan_item_id}`" in report
+    assert f"- Source: `{plan}:1`" in report
+    assert "## Reports\n\nNone." in report
+    assert '"text": "First task"' in report
+    assert '"text": "Second task"' in report
+    assert "## Preflight Snapshot" in report
+    assert '"next_action": "run_batch"' in report
+
+
 def test_autopilot_queue_run_batch_summary_json_execute(
     capsys,
     monkeypatch,
@@ -4369,6 +4425,82 @@ def test_autopilot_queue_run_batch_summary_json_preserves_nonzero_exit_code(
     assert summary["preflight_snapshot"]["agent_profile"]["name"] == "mock"
     assert summary["preflight_snapshot"]["preflight_result"] == "pass"
     assert summary["preflight_snapshot"]["next_action"] == "run_batch"
+
+
+def test_autopilot_queue_run_batch_batch_report_preserves_nonzero_exit_code(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id="blocked-task-1"
+        )
+        return SupervisorResult(
+            status="blocked",
+            summary="Blocked by policy",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    report_path = tmp_path / "batch-report.md"
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "2",
+            "--batch-report",
+            str(report_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Batch stopped after 1 item(s): status=blocked" in output
+    assert str(report_path) not in output
+    assert report_path.exists()
+
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    report = report_path.read_text(encoding="utf-8")
+    task_report_path = tmp_path / ".ai-orch" / "reports" / "blocked-task-1.md"
+
+    assert "- Mode: `execute`" in report
+    assert "- Processed: 1 item(s)" in report
+    assert "- Status counts: `blocked`=1" in report
+    assert f"- Queue item: `{items['First task'].plan_item_id}`" in report
+    assert f"- `{task_report_path}`" in report
+    assert '"status": "blocked"' in report
+    assert '"task_id": "blocked-task-1"' in report
+    assert '"next_action": "run_batch"' in report
 
 
 def test_autopilot_queue_run_batch_preflight_snapshot_reflects_pre_execution_risk(
