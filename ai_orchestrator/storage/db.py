@@ -995,6 +995,41 @@ class StateStore:
         )
         return self.get_plan_item(plan_item_id)
 
+    def update_created_plan_item_source_ref(
+        self,
+        plan_item_id: int,
+        line_number: int,
+        section: str,
+    ) -> StoredPlanItem | None:
+        """Refresh the source reference for a ``created`` queue item.
+
+        The item id, status, task text, task metadata, and worktree metadata are
+        preserved. Returns ``None`` when the item does not exist or is no longer
+        in ``created`` status.
+        """
+        self.initialize()
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE plan_items
+                SET line_number = ?,
+                    section = ?,
+                    updated_at = ?
+                WHERE plan_item_id = ? AND status = 'created'
+                """,
+                (line_number, section, now, plan_item_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+
+        logger.debug(
+            "state plan item source ref updated plan_item_id=%s line_number=%s",
+            plan_item_id,
+            line_number,
+        )
+        return self.get_plan_item(plan_item_id)
+
     def requeue_plan_item(self, plan_item_id: int) -> StoredPlanItem | None:
         """Move a blocked queue item back to ``created`` and clear stale metadata.
 

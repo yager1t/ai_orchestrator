@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added dry-run-by-default `ai-orch autopilot queue refresh-created-refs` for
+  unchanged backlog items whose line numbers shifted after completed bullets
+  were removed, preserving existing `created` queue item ids, status, task text,
+  metadata, and execution semantics before a later `sync-backlog`.
+
 - Added read-only `--older-than-days N` filtering to `ai-orch autopilot
   worktree-overview` so cleanup review can focus on worktrees whose displayed
   `last_modified` timestamp is at least the selected age.

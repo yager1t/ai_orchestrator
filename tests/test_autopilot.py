@@ -6,6 +6,7 @@ from ai_orchestrator.autopilot import (
     next_plan_item,
     next_task,
     plan_item_status_from_supervisor,
+    refresh_created_backlog_item_refs,
     sync_backlog_items,
     sync_plan_items,
 )
@@ -246,6 +247,100 @@ def test_sync_backlog_items_records_changed_line_as_new_item(tmp_path: Path) -> 
     assert items[0].status == "skipped"
     assert items[1].text == "Replacement backlog task"
     assert items[1].status == "created"
+
+
+def test_refresh_created_backlog_item_refs_updates_shifted_created_item(
+    tmp_path: Path,
+) -> None:
+    backlog = tmp_path / "BACKLOG.md"
+    backlog.write_text(
+        "\n".join(
+            [
+                "# Backlog",
+                "",
+                "## P2",
+                "",
+                "- Completed task",
+                "- Keep created task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / "state.db")
+    sync_backlog_items(backlog, store)
+    completed, created = store.list_plan_items(plan_path=backlog)
+    store.update_plan_item_status(completed.plan_item_id, "done")
+
+    backlog.write_text(
+        "\n".join(["# Backlog", "", "## P2", "", "- Keep created task"]),
+        encoding="utf-8",
+    )
+
+    refreshes = refresh_created_backlog_item_refs(backlog, store)
+    dry_run_item = store.get_plan_item(created.plan_item_id)
+
+    assert len(refreshes) == 1
+    assert refreshes[0].item.plan_item_id == created.plan_item_id
+    assert refreshes[0].item.line_number == 6
+    assert refreshes[0].line_number == 5
+    assert dry_run_item is not None
+    assert dry_run_item.line_number == 6
+
+    refresh_created_backlog_item_refs(backlog, store, apply=True)
+    updated = store.get_plan_item(created.plan_item_id)
+    new_items, existing_items = sync_backlog_items(backlog, store)
+
+    assert updated is not None
+    assert updated.plan_item_id == created.plan_item_id
+    assert updated.status == "created"
+    assert updated.text == "Keep created task"
+    assert updated.line_number == 5
+    assert len(new_items) == 0
+    assert len(existing_items) == 1
+
+
+def test_refresh_created_backlog_item_refs_skips_ambiguous_matches(
+    tmp_path: Path,
+) -> None:
+    backlog = tmp_path / "BACKLOG.md"
+    backlog.write_text(
+        "\n".join(
+            [
+                "# Backlog",
+                "",
+                "## P2",
+                "",
+                "- Completed task",
+                "- Duplicate task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / "state.db")
+    sync_backlog_items(backlog, store)
+    completed, created = store.list_plan_items(plan_path=backlog)
+    store.update_plan_item_status(completed.plan_item_id, "done")
+
+    backlog.write_text(
+        "\n".join(
+            [
+                "# Backlog",
+                "",
+                "## P2",
+                "",
+                "- Duplicate task",
+                "- Duplicate task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    refreshes = refresh_created_backlog_item_refs(backlog, store, apply=True)
+    unchanged = store.get_plan_item(created.plan_item_id)
+
+    assert refreshes == []
+    assert unchanged is not None
+    assert unchanged.line_number == 6
 
 
 def test_next_plan_item_selects_first_created_item(tmp_path: Path) -> None:
