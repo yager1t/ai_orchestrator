@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added read-only `--json` output to `ai-orch autopilot queue
+  refresh-created-refs` dry-run and `--apply` flows with matched/updated
+  counts, priorities, backlog path, apply mode, and old/new source refs.
+
 - Added dry-run-by-default `ai-orch autopilot queue refresh-created-refs` for
   unchanged backlog items whose line numbers shifted after completed bullets
   were removed, preserving existing `created` queue item ids, status, task text,

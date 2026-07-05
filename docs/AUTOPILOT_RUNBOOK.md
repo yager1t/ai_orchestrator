@@ -212,8 +212,13 @@ unless `--apply` is present:
 
 ```bash
 python -m ai_orchestrator autopilot queue refresh-created-refs --repo . --backlog docs/BACKLOG.md
+python -m ai_orchestrator autopilot queue refresh-created-refs --repo . --backlog docs/BACKLOG.md --json
 python -m ai_orchestrator autopilot queue refresh-created-refs --repo . --backlog docs/BACKLOG.md --apply
 ```
+
+Add `--json` when scripts need matched and updated counts, selected priorities,
+the backlog path, apply mode, and per-item old/new source refs without parsing
+the default text output.
 
 Recover interrupted or timed-out batch runs by reviewing `in_progress` queue
 items and, when appropriate, marking them blocked with an operator reason. The
