@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added read-only `--json` output option to `ai-orch autopilot
+  worktree-overview`, reporting the shown worktree rows, cleanup labels,
+  filtered count, and summary counts as a machine-readable object while
+  preserving existing text output, filters, exit-code behavior, and the
+  no-create/no-delete/no-prune safety contract.
+
 - Added read-only `ai-orch autopilot queue preflight` command for a selected plan
   that combines queue readiness counts, stale items, and problem summary with the
   selected agent profile summary (`name`, `type`, `mode`, configured command, and
