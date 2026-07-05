@@ -13,7 +13,11 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add a guarded queue maintenance path that refreshes `created` backlog queue
+  item source refs when the backlog text is unchanged but line numbers shifted
+  after completed items were removed, so operators can avoid duplicate
+  `created` ids from `sync-backlog` while preserving dry-run-by-default
+  behavior, item status, task text, queue history, and execution semantics.
 
 ## P3 / Deferred
 
