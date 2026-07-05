@@ -4813,6 +4813,73 @@ def test_autopilot_queue_readiness_reports_stale_created_items(
     assert item.status == "created"
 
 
+def test_autopilot_queue_readiness_keeps_open_backlog_bullets_ready(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    backlog = tmp_path / "BACKLOG.md"
+    backlog.write_text(
+        "\n".join(
+            [
+                "# Backlog",
+                "",
+                "## P2",
+                "",
+                "- Keep synced backlog bullets ready during preflight.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync-backlog",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+        ]
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "readiness",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(backlog),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "created readiness: ready=1 stale=0" in output
+    assert "stale created: 0" in output
+    assert "stale created items:" not in output
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "preflight",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(backlog),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "created readiness: ready=1 stale=0" in output
+    assert "stale created: 0" in output
+    assert "next_action: run_batch" in output
+
+
 def test_autopilot_queue_readiness_all_plans_aggregates_across_sources(
     capsys,
     tmp_path: Path,

@@ -15,6 +15,7 @@ from ai_orchestrator.agents.base import AgentAdapter
 from ai_orchestrator.agents.factory import build_agent, build_agent_candidates
 from ai_orchestrator.autopilot import (
     AutopilotTask,
+    load_backlog_tasks,
     load_plan_tasks,
     next_plan_item,
     next_plan_items,
@@ -1596,6 +1597,12 @@ def _resolve_stored_plan_path(repo: Path, stored_plan_path: Path | str) -> Path:
     return repo / plan_path
 
 
+def _load_open_queue_tasks(source_path: Path) -> list[AutopilotTask]:
+    if source_path.name.lower() == "backlog.md":
+        return load_backlog_tasks(source_path)
+    return load_plan_tasks(source_path)
+
+
 def _stale_created_queue_items(
     repo: Path,
     items: list[StoredPlanItem],
@@ -1610,7 +1617,7 @@ def _stale_created_queue_items(
             source_path = _resolve_stored_plan_path(repo, item.plan_path)
             if source_path.exists():
                 open_task_keys_by_plan[plan_key] = {
-                    (task.line_number, task.text) for task in load_plan_tasks(source_path)
+                    (task.line_number, task.text) for task in _load_open_queue_tasks(source_path)
                 }
             else:
                 open_task_keys_by_plan[plan_key] = set()
