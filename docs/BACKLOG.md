@@ -13,7 +13,12 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Extend the `ai-orch autopilot queue run-batch --summary-json PATH` artifact
+  with explicit `selected_item_refs` entries for the selected or processed
+  queue items, including queue item id, status, source plan path, line number,
+  task text, selected worktree path, task id, and report path when available,
+  while preserving existing stdout output, queue state transitions, and
+  exit-code semantics.
 
 ## P3 / Deferred
 
