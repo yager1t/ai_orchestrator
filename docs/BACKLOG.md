@@ -13,7 +13,12 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add a read-only `--json` output option to
+  `ai-orch autopilot worktree-overview` that reports the same discovered
+  worktree rows, cleanup labels, filter counts, and summary counts as the text
+  view in a machine-readable object, while preserving existing text output,
+  filters, exit-code behavior, and the no-create/no-delete/no-prune safety
+  contract.
 
 ## P3 / Deferred
 
