@@ -13,7 +13,11 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add read-only `--json` output to `ai-orch autopilot queue refresh-created-refs`
+  dry-run and `--apply` flows so scripts can inspect matched/updated counts,
+  priorities, backlog path, apply mode, and per-item old/new source refs without
+  parsing text output, while preserving stdout defaults, dry-run-by-default
+  behavior, queue state transitions, and exit-code semantics.
 
 ## P3 / Deferred
 
