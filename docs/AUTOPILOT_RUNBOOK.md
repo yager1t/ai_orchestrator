@@ -347,6 +347,7 @@ Review old worktrees before any cleanup with the read-only overview command:
 
 ```bash
 python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-orch-worktrees
+python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-orch-worktrees --older-than-days 14
 python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-orch-worktrees --json
 ```
 
@@ -357,7 +358,9 @@ time, and a read-only cleanup label (`candidate`, `needs_review`, or
 `do_not_remove`). A summary line shows total discovered worktrees, filtered
 rows, shown rows, dirty rows, and unlinked rows after filters and any display
 limit, plus a cleanup summary line with candidate, needs_review, and
-do_not_remove counts. Add `--dirty-only` to focus the table on worktrees with
+do_not_remove counts. Add `--older-than-days N` to focus the same read-only
+table or JSON output on worktrees whose displayed `last_modified` timestamp is
+at least the selected age. Add `--dirty-only` to focus the table on worktrees with
 uncommitted or untracked changes, use `--branch-filter TEXT` to focus on
 worktrees whose branch name contains TEXT, or use `--limit N` to show only the
 first N filtered rows.

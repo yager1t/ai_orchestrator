@@ -13,10 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add a read-only `--older-than-days N` filter to `ai-orch autopilot
-  worktree-overview` so operators can focus cleanup review on old worktrees
-  based on the same last-modified signal shown in the table/JSON output,
-  without creating, deleting, pruning, checking out, or changing worktrees.
+No open P2 items.
 
 ## P3 / Deferred
 

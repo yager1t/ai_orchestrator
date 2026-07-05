@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ai_orchestrator.autopilot.worktree_overview import (
@@ -824,6 +826,95 @@ def test_cli_worktree_overview_limit_exceeds_filtered_rows(capsys, tmp_path: Pat
     assert "Summary: total=2 filtered=2 shown=2 dirty=0 unlinked=0" in output
     shown_rows = [line for line in output.splitlines() if line.startswith("/") or line.startswith("...")]
     assert len(shown_rows) == 2
+
+
+def test_cli_worktree_overview_older_than_days_filters_last_modified(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    old_wt, recent_wt = _create_worktrees(repo, base)
+    old_mtime = (datetime.now(timezone.utc) - timedelta(days=3)).timestamp()
+    recent_mtime = datetime.now(timezone.utc).timestamp()
+    os.utime(old_wt, (old_mtime, old_mtime))
+    os.utime(recent_wt, (recent_mtime, recent_mtime))
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--older-than-days",
+        "2",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "wt-main" in output
+    assert "wt-feature" not in output
+    assert "Summary: total=2 filtered=1 shown=1 dirty=0 unlinked=0" in output
+
+
+def test_cli_worktree_overview_older_than_days_json_reports_filtered_counts(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    old_wt, recent_wt = _create_worktrees(repo, base)
+    old_mtime = (datetime.now(timezone.utc) - timedelta(days=5)).timestamp()
+    recent_mtime = datetime.now(timezone.utc).timestamp()
+    os.utime(old_wt, (old_mtime, old_mtime))
+    os.utime(recent_wt, (recent_mtime, recent_mtime))
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--older-than-days",
+        "4",
+        "--json",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    result = json.loads(output)
+    assert result["summary"]["total"] == 2
+    assert result["summary"]["filtered"] == 1
+    assert result["summary"]["shown"] == 1
+    assert result["worktrees"][0]["path"] == str(old_wt.resolve())
+
+
+def test_cli_worktree_overview_older_than_days_must_be_positive(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(tmp_path),
+        "--base-dir",
+        str(tmp_path),
+        "--older-than-days",
+        "0",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "--older-than-days must be at least 1" in output
 
 
 def test_cli_worktree_overview_limit_empty_after_filter(capsys, tmp_path: Path) -> None:
