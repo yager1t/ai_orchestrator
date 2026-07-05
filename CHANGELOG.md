@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Extended `ai-orch autopilot queue run-batch --summary-json PATH` artifacts
+  with `selected_item_refs` entries for selected or processed queue items,
+  including queue item id, status, source plan location, task text, selected
+  worktree path, task id, and report path when available, while preserving
+  stdout output and exit-code semantics.
+
 - Added read-only `--json` output option to `ai-orch autopilot
   worktree-overview`, reporting the shown worktree rows, cleanup labels,
   filtered count, and summary counts as a machine-readable object while

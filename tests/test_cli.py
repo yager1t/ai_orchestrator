@@ -3713,6 +3713,28 @@ def test_autopilot_queue_run_batch_summary_json_dry_run(
     assert summary["status_counts"] == {"created": 2}
     assert summary["report_paths"] == []
     assert summary["selected_worktree_paths"] == []
+    assert summary["selected_item_refs"] == [
+        {
+            "plan_item_id": items["First task"].plan_item_id,
+            "status": "created",
+            "plan_path": str(plan),
+            "line_number": 1,
+            "text": "First task",
+            "selected_worktree_path": None,
+            "task_id": None,
+            "report_path": None,
+        },
+        {
+            "plan_item_id": items["Second task"].plan_item_id,
+            "status": "created",
+            "plan_path": str(plan),
+            "line_number": 2,
+            "text": "Second task",
+            "selected_worktree_path": None,
+            "task_id": None,
+            "report_path": None,
+        },
+    ]
     assert summary["first_non_done_item"] == {
         "plan_item_id": items["First task"].plan_item_id,
         "status": "created",
@@ -3811,6 +3833,28 @@ def test_autopilot_queue_run_batch_summary_json_execute(
         str(report_dir / "batch-task-2.md"),
     ]
     assert summary["selected_worktree_paths"] == []
+    assert summary["selected_item_refs"] == [
+        {
+            "plan_item_id": items["First task"].plan_item_id,
+            "status": "done",
+            "plan_path": str(plan),
+            "line_number": 1,
+            "text": "First task",
+            "selected_worktree_path": None,
+            "task_id": "batch-task-1",
+            "report_path": str(report_dir / "batch-task-1.md"),
+        },
+        {
+            "plan_item_id": items["Second task"].plan_item_id,
+            "status": "done",
+            "plan_path": str(plan),
+            "line_number": 2,
+            "text": "Second task",
+            "selected_worktree_path": None,
+            "task_id": "batch-task-2",
+            "report_path": str(report_dir / "batch-task-2.md"),
+        },
+    ]
     assert summary["preflight_snapshot"]["plan"] == str(plan)
     assert summary["preflight_snapshot"]["total"] == 3
     assert summary["preflight_snapshot"]["created_readiness"] == {"ready": 3, "stale": 0}
@@ -3903,6 +3947,8 @@ def test_autopilot_queue_run_batch_summary_json_rotated_worktrees(
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     report_dir = tmp_path / ".ai-orch" / "reports"
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
 
     assert summary["mode"] == "execute"
     assert summary["processed_count"] == 2
@@ -3914,6 +3960,28 @@ def test_autopilot_queue_run_batch_summary_json_rotated_worktrees(
     assert summary["report_paths"] == [
         str(report_dir / "rotated-task-1.md"),
         str(report_dir / "rotated-task-2.md"),
+    ]
+    assert summary["selected_item_refs"] == [
+        {
+            "plan_item_id": items["First task"].plan_item_id,
+            "status": "done",
+            "plan_path": str(plan),
+            "line_number": 1,
+            "text": "First task",
+            "selected_worktree_path": str(wt1.resolve()),
+            "task_id": "rotated-task-1",
+            "report_path": str(report_dir / "rotated-task-1.md"),
+        },
+        {
+            "plan_item_id": items["Second task"].plan_item_id,
+            "status": "done",
+            "plan_path": str(plan),
+            "line_number": 2,
+            "text": "Second task",
+            "selected_worktree_path": str(wt2.resolve()),
+            "task_id": "rotated-task-2",
+            "report_path": str(report_dir / "rotated-task-2.md"),
+        },
     ]
     assert summary["preflight_snapshot"]["plan"] == str(plan)
     assert summary["preflight_snapshot"]["total"] == 2
@@ -3982,6 +4050,8 @@ def test_autopilot_queue_run_batch_summary_json_dry_run_rotated_worktrees(
     assert summary_path.exists()
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
 
     assert summary["mode"] == "dry-run"
     assert summary["selected_count"] == 2
@@ -3991,6 +4061,28 @@ def test_autopilot_queue_run_batch_summary_json_dry_run_rotated_worktrees(
         str(wt2.resolve()),
     ]
     assert summary["report_paths"] == []
+    assert summary["selected_item_refs"] == [
+        {
+            "plan_item_id": items["First task"].plan_item_id,
+            "status": "created",
+            "plan_path": str(plan),
+            "line_number": 1,
+            "text": "First task",
+            "selected_worktree_path": str(wt1.resolve()),
+            "task_id": None,
+            "report_path": None,
+        },
+        {
+            "plan_item_id": items["Second task"].plan_item_id,
+            "status": "created",
+            "plan_path": str(plan),
+            "line_number": 2,
+            "text": "Second task",
+            "selected_worktree_path": str(wt2.resolve()),
+            "task_id": None,
+            "report_path": None,
+        },
+    ]
     assert summary["preflight_snapshot"]["plan"] == str(plan)
     assert summary["preflight_snapshot"]["total"] == 2
     assert summary["preflight_snapshot"]["created_readiness"] == {"ready": 2, "stale": 0}
@@ -4072,6 +4164,20 @@ def test_autopilot_queue_run_batch_summary_json_preserves_nonzero_exit_code(
         "text": "First task",
         "source": f"{plan}:1",
     }
+    assert summary["selected_item_refs"] == [
+        {
+            "plan_item_id": items["First task"].plan_item_id,
+            "status": "blocked",
+            "plan_path": str(plan),
+            "line_number": 1,
+            "text": "First task",
+            "selected_worktree_path": None,
+            "task_id": "blocked-task-1",
+            "report_path": str(
+                tmp_path / ".ai-orch" / "reports" / "blocked-task-1.md"
+            ),
+        },
+    ]
     assert summary["preflight_snapshot"]["plan"] == str(plan)
     assert summary["preflight_snapshot"]["total"] == 2
     assert summary["preflight_snapshot"]["created_readiness"] == {"ready": 2, "stale": 0}

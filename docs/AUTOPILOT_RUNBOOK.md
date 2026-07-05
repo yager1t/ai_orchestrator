@@ -268,10 +268,13 @@ python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG
 
 The JSON summary includes the dry-run selected count or execute processed count,
 per-status counts, first non-done queue item, report paths, and selected
-worktree paths. It also includes a read-only `preflight_snapshot` captured
-before batch selection, with queue readiness counts, blocked/in-progress risk,
-the selected agent profile availability, `preflight_result`, and `next_action`
-for operator review.
+worktree paths. It also includes `selected_item_refs` for the selected or
+processed queue items, with item id, status, source plan location, task text,
+selected worktree path, task id, and report path when available. The same
+artifact includes a read-only `preflight_snapshot` captured before batch
+selection, with queue readiness counts, blocked/in-progress risk, the selected
+agent profile availability, `preflight_result`, and `next_action` for operator
+review.
 
 Preview per-task worktree rotation from a pre-created worktree pool:
 
