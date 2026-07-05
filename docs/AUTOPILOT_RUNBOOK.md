@@ -281,6 +281,14 @@ selection, with queue readiness counts, blocked/in-progress risk, the selected
 agent profile availability, `preflight_result`, and `next_action` for operator
 review.
 
+Add `--batch-report PATH` when operators need the same final batch summary as a
+Markdown artifact for run logs or handoff notes:
+
+```bash
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 3 --batch-report .ai-orch/reports/batch-summary.md
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --execute --max-items 3 --worktree ../ai-orch-autopilot --batch-report .ai-orch/reports/batch-summary.md
+```
+
 Preview per-task worktree rotation from a pre-created worktree pool:
 
 ```bash
