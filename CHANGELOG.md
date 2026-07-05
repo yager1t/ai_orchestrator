@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added read-only `--older-than-days N` filtering to `ai-orch autopilot
+  worktree-overview` so cleanup review can focus on worktrees whose displayed
+  `last_modified` timestamp is at least the selected age.
+
 - Added read-only `--older-than-hours N` filtering to `ai-orch autopilot queue
   recover-in-progress` so operators can dry-run or apply recovery only for
   interrupted `in_progress` queue items older than the selected threshold.

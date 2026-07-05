@@ -261,6 +261,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show only worktrees with the given cleanup status",
     )
     autopilot_worktree_overview.add_argument(
+        "--older-than-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Show only worktrees last modified at least N days ago",
+    )
+    autopilot_worktree_overview.add_argument(
         "--limit",
         type=int,
         default=0,
@@ -1400,6 +1407,10 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
     """Render a read-only overview of git worktrees under a base directory."""
     repo = Path(args.repo)
     base_dir = Path(args.base_dir)
+    older_than_days = getattr(args, "older_than_days", None)
+    if older_than_days is not None and older_than_days < 1:
+        print("--older-than-days must be at least 1")
+        return 1
     if not base_dir.is_absolute():
         base_dir = repo / base_dir
     base_dir = base_dir.resolve()
@@ -1429,6 +1440,13 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
     if cleanup_status:
         overviews = [
             overview for overview in overviews if overview.cleanup_status == cleanup_status
+        ]
+    if older_than_days is not None:
+        cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+        overviews = [
+            overview
+            for overview in overviews
+            if overview.last_modified is not None and overview.last_modified <= cutoff
         ]
 
     filtered_count = len(overviews)
@@ -1472,6 +1490,12 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
             print(format_worktree_summary(overviews, total_count, filtered_count))
             print(
                 f"No git worktrees matching cleanup status '{cleanup_status}' "
+                f"found under {base_dir}"
+            )
+        elif older_than_days is not None:
+            print(format_worktree_summary(overviews, total_count, filtered_count))
+            print(
+                f"No git worktrees older than {older_than_days} days "
                 f"found under {base_dir}"
             )
         return 0
