@@ -13,7 +13,25 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add an opt-in `--item-id PLAN_ITEM_ID` selector to `ai-orch autopilot queue
+  run-batch` dry-run and `--execute` flows so operators can target one reviewed
+  `created` queue item from `queue show`, while preserving the default
+  oldest-created selection, fixed/rotated worktree validation, report
+  generation, queue state transitions, and stop-on-first-non-done semantics.
+- Add an opt-in Markdown `--batch-report PATH` artifact to `ai-orch autopilot
+  queue run-batch` dry-run and `--execute` flows that records the same final
+  batch summary, selected item refs, preflight snapshot, reports, and first
+  non-done item context already available in text/JSON output, while preserving
+  stdout, JSON summary, queue state transitions, and exit-code semantics.
+- Add a read-only `--older-than-hours N` filter to `ai-orch autopilot queue
+  recover-in-progress` so operators can dry-run or apply recovery only for
+  interrupted in-progress items older than the selected threshold, while
+  preserving the existing default scope, reason handling, queue state
+  transitions, and dry-run-by-default behavior.
+- Add a read-only `--older-than-days N` filter to `ai-orch autopilot
+  worktree-overview` so operators can focus cleanup review on old worktrees
+  based on the same last-modified signal shown in the table/JSON output,
+  without creating, deleting, pruning, checking out, or changing worktrees.
 
 ## P3 / Deferred
 
