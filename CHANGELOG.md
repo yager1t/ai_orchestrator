@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed `ai-orch autopilot queue readiness` and `queue preflight` so queue items
+  created by `sync-backlog` from bare `BACKLOG.md` priority bullets remain ready
+  while the source backlog bullet is still open, instead of being reported as
+  stale by the plan-task parser.
+
 - Extended `ai-orch autopilot queue run-batch --summary-json PATH` artifacts
   with `selected_item_refs` entries for selected or processed queue items,
   including queue item id, status, source plan location, task text, selected
