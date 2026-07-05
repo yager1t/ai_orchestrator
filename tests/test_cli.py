@@ -2193,6 +2193,113 @@ def test_autopilot_queue_refresh_created_refs_dry_run_and_apply(
     assert len(store.list_plan_items(plan_path=backlog)) == 2
 
 
+def test_autopilot_queue_refresh_created_refs_json_dry_run_and_apply(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    backlog = tmp_path / "BACKLOG.md"
+    backlog.write_text(
+        "\n".join(
+            [
+                "# Backlog",
+                "",
+                "## P2",
+                "",
+                "- Completed task",
+                "- Keep created task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync-backlog",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+        ]
+    )
+    capsys.readouterr()
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    completed, created = store.list_plan_items(plan_path=backlog)
+    store.update_plan_item_status(completed.plan_item_id, "done")
+    backlog.write_text(
+        "\n".join(["# Backlog", "", "## P2", "", "- Keep created task"]),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "refresh-created-refs",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+            "--json",
+        ]
+    )
+    dry_run_payload = json.loads(capsys.readouterr().out)
+    dry_run_item = store.get_plan_item(created.plan_item_id)
+
+    assert exit_code == 0
+    assert dry_run_payload["backlog_path"] == str(backlog)
+    assert dry_run_payload["priorities"] == ["P0", "P1", "P2"]
+    assert dry_run_payload["apply"] is False
+    assert dry_run_payload["dry_run"] is True
+    assert dry_run_payload["matched_count"] == 1
+    assert dry_run_payload["updated_count"] == 0
+    assert dry_run_payload["items"] == [
+        {
+            "plan_item_id": created.plan_item_id,
+            "text": "Keep created task",
+            "old_source_ref": {
+                "path": str(backlog),
+                "section": "P2",
+                "line_number": 6,
+            },
+            "new_source_ref": {
+                "path": str(backlog),
+                "section": "P2",
+                "line_number": 5,
+            },
+        }
+    ]
+    assert dry_run_item is not None
+    assert dry_run_item.line_number == 6
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "refresh-created-refs",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+            "--apply",
+            "--json",
+        ]
+    )
+    apply_payload = json.loads(capsys.readouterr().out)
+    updated_item = store.get_plan_item(created.plan_item_id)
+
+    assert exit_code == 0
+    assert apply_payload["apply"] is True
+    assert apply_payload["dry_run"] is False
+    assert apply_payload["matched_count"] == 1
+    assert apply_payload["updated_count"] == 1
+    assert apply_payload["items"][0]["old_source_ref"]["line_number"] == 6
+    assert apply_payload["items"][0]["new_source_ref"]["line_number"] == 5
+    assert updated_item is not None
+    assert updated_item.status == "created"
+    assert updated_item.line_number == 5
+
+
 def test_autopilot_queue_list_shows_status_without_running_execution(
     capsys,
     tmp_path: Path,

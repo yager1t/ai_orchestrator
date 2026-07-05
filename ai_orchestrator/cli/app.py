@@ -324,6 +324,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Update matching created queue item refs; dry-run by default",
     )
+    autopilot_queue_refresh_refs.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the read-only refresh summary as machine-readable JSON",
+    )
     autopilot_queue_list = autopilot_queue_sub.add_parser(
         "list",
         help="Display persisted queue status without running batch execution",
@@ -2455,6 +2460,41 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             priorities=priorities,
             apply=args.apply,
         )
+        if args.json:
+            updated_count = len(refreshes) if args.apply else 0
+            print(
+                json.dumps(
+                    {
+                        "backlog_path": str(backlog_path),
+                        "priorities": list(priorities),
+                        "apply": bool(args.apply),
+                        "dry_run": not bool(args.apply),
+                        "matched_count": len(refreshes),
+                        "updated_count": updated_count,
+                        "items": [
+                            {
+                                "plan_item_id": refresh.item.plan_item_id,
+                                "text": refresh.item.text,
+                                "old_source_ref": {
+                                    "path": refresh.item.plan_path,
+                                    "section": refresh.item.section,
+                                    "line_number": refresh.item.line_number,
+                                },
+                                "new_source_ref": {
+                                    "path": str(backlog_path),
+                                    "section": refresh.section,
+                                    "line_number": refresh.line_number,
+                                },
+                            }
+                            for refresh in refreshes
+                        ],
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                    default=str,
+                )
+            )
+            return 0
         print(f"Refresh created backlog refs for {backlog_path}")
         print(f"  priorities: {', '.join(priorities)}")
         print(f"  matched: {len(refreshes)}")
