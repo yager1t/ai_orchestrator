@@ -205,6 +205,16 @@ python -m ai_orchestrator autopilot queue reconcile --repo . --all-plans
 python -m ai_orchestrator autopilot queue reconcile --repo . --all-plans --apply
 ```
 
+When completed backlog bullets were removed and the remaining open text is
+unchanged, refresh shifted `created` source refs before running
+`sync-backlog` again. This preserves the existing queue item id and is a dry run
+unless `--apply` is present:
+
+```bash
+python -m ai_orchestrator autopilot queue refresh-created-refs --repo . --backlog docs/BACKLOG.md
+python -m ai_orchestrator autopilot queue refresh-created-refs --repo . --backlog docs/BACKLOG.md --apply
+```
+
 Recover interrupted or timed-out batch runs by reviewing `in_progress` queue
 items and, when appropriate, marking them blocked with an operator reason. The
 command is a dry run unless `--apply` is present:

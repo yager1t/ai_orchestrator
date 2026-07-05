@@ -2094,6 +2094,105 @@ def test_autopilot_queue_sync_backlog_loads_open_priority_items(
     assert "existing: 1" in output
 
 
+def test_autopilot_queue_refresh_created_refs_dry_run_and_apply(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    backlog = tmp_path / "BACKLOG.md"
+    backlog.write_text(
+        "\n".join(
+            [
+                "# Backlog",
+                "",
+                "## P2",
+                "",
+                "- Completed task",
+                "- Keep created task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync-backlog",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+        ]
+    )
+    capsys.readouterr()
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    completed, created = store.list_plan_items(plan_path=backlog)
+    store.update_plan_item_status(completed.plan_item_id, "done")
+    backlog.write_text(
+        "\n".join(["# Backlog", "", "## P2", "", "- Keep created task"]),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "refresh-created-refs",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+        ]
+    )
+    output = capsys.readouterr().out
+    dry_run_item = store.get_plan_item(created.plan_item_id)
+
+    assert exit_code == 0
+    assert "Refresh created backlog refs" in output
+    assert "matched: 1" in output
+    assert "dry_run: use --apply to update matching created refs" in output
+    assert f"id={created.plan_item_id} P2:6->5: Keep created task" in output
+    assert dry_run_item is not None
+    assert dry_run_item.line_number == 6
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "refresh-created-refs",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+            "--apply",
+        ]
+    )
+    output = capsys.readouterr().out
+    updated_item = store.get_plan_item(created.plan_item_id)
+
+    assert exit_code == 0
+    assert "updated: 1" in output
+    assert updated_item is not None
+    assert updated_item.plan_item_id == created.plan_item_id
+    assert updated_item.status == "created"
+    assert updated_item.line_number == 5
+
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync-backlog",
+            "--repo",
+            str(tmp_path),
+            "--backlog",
+            str(backlog),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "new: 0" in output
+    assert len(store.list_plan_items(plan_path=backlog)) == 2
+
+
 def test_autopilot_queue_list_shows_status_without_running_execution(
     capsys,
     tmp_path: Path,

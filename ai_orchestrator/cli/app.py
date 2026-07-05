@@ -22,6 +22,7 @@ from ai_orchestrator.autopilot import (
     next_task,
     plan_item_status_from_supervisor,
     plan_item_to_task,
+    refresh_created_backlog_item_refs,
     sync_backlog_items,
     sync_plan_items,
 )
@@ -302,6 +303,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         choices=["P0", "P1", "P2", "P3 / Deferred"],
         help="Backlog priority section to include; repeat to include multiple sections",
+    )
+    autopilot_queue_refresh_refs = autopilot_queue_sub.add_parser(
+        "refresh-created-refs",
+        help=(
+            "Refresh shifted source refs for unchanged created backlog queue items; "
+            "dry-run by default"
+        ),
+    )
+    autopilot_queue_refresh_refs.add_argument("--repo", default=".")
+    autopilot_queue_refresh_refs.add_argument("--backlog", default="docs/BACKLOG.md")
+    autopilot_queue_refresh_refs.add_argument(
+        "--priority",
+        action="append",
+        choices=["P0", "P1", "P2", "P3 / Deferred"],
+        help="Backlog priority section to include; repeat to include multiple sections",
+    )
+    autopilot_queue_refresh_refs.add_argument(
+        "--apply",
+        action="store_true",
+        help="Update matching created queue item refs; dry-run by default",
     )
     autopilot_queue_list = autopilot_queue_sub.add_parser(
         "list",
@@ -2420,6 +2441,34 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         print(f"  existing: {len(existing_items)}")
         for item in new_items:
             print(f"  + {item.line_number}: {item.text}")
+        return 0
+
+    if args.autopilot_queue_command == "refresh-created-refs":
+        backlog_path = _resolve_plan_path(repo, Path(args.backlog))
+        if not backlog_path.exists():
+            print(f"Backlog not found: {backlog_path}")
+            return 1
+        priorities = tuple(args.priority or ["P0", "P1", "P2"])
+        refreshes = refresh_created_backlog_item_refs(
+            backlog_path,
+            store,
+            priorities=priorities,
+            apply=args.apply,
+        )
+        print(f"Refresh created backlog refs for {backlog_path}")
+        print(f"  priorities: {', '.join(priorities)}")
+        print(f"  matched: {len(refreshes)}")
+        if args.apply:
+            print(f"  updated: {len(refreshes)}")
+        else:
+            print("  dry_run: use --apply to update matching created refs")
+        for refresh in refreshes:
+            item = refresh.item
+            print(
+                "  "
+                f"id={item.plan_item_id} {item.section}:"
+                f"{item.line_number}->{refresh.line_number}: {item.text}"
+            )
         return 0
 
     if args.autopilot_queue_command == "list":

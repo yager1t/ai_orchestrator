@@ -39,6 +39,13 @@ class AutopilotTask:
         )
 
 
+@dataclass(frozen=True)
+class BacklogRefRefresh:
+    item: StoredPlanItem
+    line_number: int
+    section: str
+
+
 def load_plan_tasks(plan_path: Path) -> list[AutopilotTask]:
     text = plan_path.read_text(encoding="utf-8")
     tasks: list[AutopilotTask] = []
@@ -251,6 +258,54 @@ def sync_backlog_items(
             )
         )
     return new_items, list(existing.values())
+
+
+def refresh_created_backlog_item_refs(
+    backlog_path: Path,
+    store: StateStore,
+    priorities: tuple[str, ...] = _BACKLOG_DEFAULT_PRIORITIES,
+    *,
+    apply: bool = False,
+) -> list[BacklogRefRefresh]:
+    """Refresh shifted source refs for unchanged ``created`` backlog items.
+
+    Only unambiguous matches are eligible: exactly one open backlog task and
+    exactly one persisted ``created`` item must share the same section and text,
+    and their line numbers must differ. Dry-run is the default; pass
+    ``apply=True`` to update the existing queue rows in place.
+    """
+    tasks = load_backlog_tasks(backlog_path, priorities=priorities)
+    tasks_by_key: dict[tuple[str, str], list[AutopilotTask]] = {}
+    for task in tasks:
+        tasks_by_key.setdefault((task.section, task.text), []).append(task)
+
+    created_items = store.list_plan_items(plan_path=backlog_path, status="created")
+    items_by_key: dict[tuple[str, str], list[StoredPlanItem]] = {}
+    for item in created_items:
+        items_by_key.setdefault((item.section, item.text), []).append(item)
+
+    refreshes: list[BacklogRefRefresh] = []
+    for key, matching_items in items_by_key.items():
+        matching_tasks = tasks_by_key.get(key, [])
+        if len(matching_items) != 1 or len(matching_tasks) != 1:
+            continue
+        item = matching_items[0]
+        task = matching_tasks[0]
+        if item.line_number == task.line_number:
+            continue
+        refresh = BacklogRefRefresh(
+            item=item,
+            line_number=task.line_number,
+            section=task.section,
+        )
+        refreshes.append(refresh)
+        if apply:
+            store.update_created_plan_item_source_ref(
+                item.plan_item_id,
+                line_number=task.line_number,
+                section=task.section,
+            )
+    return refreshes
 
 
 def _already_started(task: AutopilotTask, existing: list[StoredTask]) -> bool:
