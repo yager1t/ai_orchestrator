@@ -29,6 +29,7 @@ from ai_orchestrator.autopilot.worktree_overview import (
     format_worktree_overview,
     format_worktree_summary,
     gather_worktree_overviews,
+    worktree_overview_data,
 )
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
 from ai_orchestrator.core.supervisor import Supervisor, SupervisorResult
@@ -264,6 +265,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         metavar="N",
         help="Show at most the first N filtered rows; 0 means all rows (default: 0)",
+    )
+    autopilot_worktree_overview.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the read-only worktree overview as machine-readable JSON",
     )
 
     autopilot_queue = autopilot_sub.add_parser(
@@ -1400,6 +1406,22 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
     limit = getattr(args, "limit", 0)
     if limit > 0:
         overviews = overviews[:limit]
+
+    if args.json:
+        print(
+            json.dumps(
+                worktree_overview_data(
+                    overviews,
+                    base_dir,
+                    repo=repo_for_link,
+                    total_count=total_count,
+                    filtered_count=filtered_count,
+                ),
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
 
     if not overviews:
         if branch_filter:

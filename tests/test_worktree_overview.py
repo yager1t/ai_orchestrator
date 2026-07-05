@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from ai_orchestrator.autopilot.worktree_overview import (
     format_worktree_summary,
     gather_worktree_overviews,
     inspect_worktree,
+    worktree_overview_data,
 )
 from ai_orchestrator.cli.app import main
 
@@ -869,6 +871,142 @@ def test_format_worktree_summary_reports_filtered_count() -> None:
     assert "total=5" in summary
     assert "filtered=3" in summary
     assert "shown=1" in summary
+
+
+def test_worktree_overview_data_reports_rows_and_counts() -> None:
+    overviews = [
+        WorktreeOverview(
+            path=Path("/a"),
+            branch="a",
+            linked=True,
+            merged=True,
+            merge_in_progress=False,
+            dirty=False,
+            dirty_count=0,
+            untracked_count=0,
+            last_modified=None,
+            cleanup_status="candidate",
+        ),
+        WorktreeOverview(
+            path=Path("/b"),
+            branch="b",
+            linked=False,
+            merged=None,
+            merge_in_progress=False,
+            dirty=True,
+            dirty_count=2,
+            untracked_count=1,
+            last_modified=None,
+            cleanup_status="do_not_remove",
+        ),
+    ]
+
+    data = worktree_overview_data(
+        overviews,
+        Path("/base"),
+        repo=Path("/repo"),
+        total_count=5,
+        filtered_count=3,
+    )
+
+    assert data["base_dir"] == str(Path("/base"))
+    assert data["repo"] == str(Path("/repo"))
+    assert data["summary"] == {
+        "total": 5,
+        "filtered": 3,
+        "shown": 2,
+        "dirty": 1,
+        "unlinked": 1,
+    }
+    assert data["cleanup_summary"] == {
+        "candidate": 1,
+        "needs_review": 0,
+        "do_not_remove": 1,
+    }
+    rows = data["worktrees"]
+    assert isinstance(rows, list)
+    assert rows[0]["cleanup_status"] == "candidate"
+    assert rows[1]["dirty_count"] == 2
+
+
+def test_cli_worktree_overview_json_reports_limited_rows_and_counts(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--limit",
+        "1",
+        "--json",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    result = json.loads(output)
+    assert result["base_dir"] == str(base.resolve())
+    assert result["repo"] == str(repo.resolve())
+    assert result["summary"]["total"] == 2
+    assert result["summary"]["filtered"] == 2
+    assert result["summary"]["shown"] == 1
+    assert len(result["worktrees"]) == 1
+    assert result["worktrees"][0]["cleanup_status"] in {
+        "candidate",
+        "needs_review",
+        "do_not_remove",
+    }
+
+
+def test_cli_worktree_overview_json_reports_empty_filtered_result(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "autopilot",
+        "worktree-overview",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--branch-filter",
+        "missing",
+        "--json",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    result = json.loads(output)
+    assert result["summary"] == {
+        "total": 2,
+        "filtered": 0,
+        "shown": 0,
+        "dirty": 0,
+        "unlinked": 0,
+    }
+    assert result["cleanup_summary"] == {
+        "candidate": 0,
+        "needs_review": 0,
+        "do_not_remove": 0,
+    }
+    assert result["worktrees"] == []
 
 
 def test_cli_worktree_overview_cleanup_status_empty(capsys, tmp_path: Path) -> None:

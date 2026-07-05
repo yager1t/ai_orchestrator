@@ -325,6 +325,7 @@ Review old worktrees before any cleanup with the read-only overview command:
 
 ```bash
 python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-orch-worktrees
+python -m ai_orchestrator autopilot worktree-overview --repo . --base-dir ../ai-orch-worktrees --json
 ```
 
 The overview reports each detected git worktree's branch, whether it is linked
@@ -344,7 +345,9 @@ merged into the review repo HEAD according to strict ancestry. Use
 `--cleanup-status STATUS` to show only worktrees labeled `candidate`,
 `needs_review`, or `do_not_remove` for cleanup review. This command never
 creates, deletes, prunes, or checks out worktrees; cleanup remains a separate
-manual operator decision.
+manual operator decision. Add `--json` when scripts or reports need the same
+shown worktree rows, cleanup labels, filtered count, and summary counts as a
+machine-readable object without changing the read-only safety contract.
 
 ### 3.1 Manual worktree cleanup checklist
 

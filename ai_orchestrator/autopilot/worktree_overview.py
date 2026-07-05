@@ -213,6 +213,63 @@ def format_cleanup_summary(overviews: list[WorktreeOverview]) -> str:
     )
 
 
+def worktree_overview_data(
+    overviews: list[WorktreeOverview],
+    base_dir: Path,
+    repo: Path | None = None,
+    total_count: int | None = None,
+    filtered_count: int | None = None,
+) -> dict[str, object]:
+    """Return a machine-readable read-only worktree overview."""
+    if total_count is None:
+        total_count = len(overviews)
+    if filtered_count is None:
+        filtered_count = len(overviews)
+
+    cleanup_counts = {
+        "candidate": sum(
+            1 for overview in overviews if overview.cleanup_status == "candidate"
+        ),
+        "needs_review": sum(
+            1 for overview in overviews if overview.cleanup_status == "needs_review"
+        ),
+        "do_not_remove": sum(
+            1 for overview in overviews if overview.cleanup_status == "do_not_remove"
+        ),
+    }
+    return {
+        "base_dir": str(base_dir),
+        "repo": str(repo) if repo is not None else None,
+        "summary": {
+            "total": total_count,
+            "filtered": filtered_count,
+            "shown": len(overviews),
+            "dirty": sum(1 for overview in overviews if overview.dirty),
+            "unlinked": sum(1 for overview in overviews if overview.linked is False),
+        },
+        "cleanup_summary": cleanup_counts,
+        "worktrees": [
+            {
+                "path": str(overview.path),
+                "branch": overview.branch,
+                "linked": overview.linked,
+                "merged": overview.merged,
+                "merge_in_progress": overview.merge_in_progress,
+                "dirty": overview.dirty,
+                "dirty_count": overview.dirty_count,
+                "untracked_count": overview.untracked_count,
+                "cleanup_status": overview.cleanup_status,
+                "last_modified": (
+                    overview.last_modified.isoformat()
+                    if overview.last_modified is not None
+                    else None
+                ),
+            }
+            for overview in overviews
+        ],
+    }
+
+
 _REVIEW_HINT = """
 Review hint:
   The 'merged' column uses strict ancestry (git merge-base --is-ancestor <branch> HEAD).
