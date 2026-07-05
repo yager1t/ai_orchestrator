@@ -2546,6 +2546,10 @@ def _build_batch_summary(
     selected_items = [
         item_by_id[item_id] for item_id in item_ids if item_id in item_by_id
     ]
+    report_path_by_task_id = {
+        path.stem: str(path)
+        for path in report_paths
+    }
 
     status_counts: dict[str, int] = {}
     for item in selected_items:
@@ -2565,6 +2569,11 @@ def _build_batch_summary(
         "first_non_done_item": None,
         "report_paths": [str(path) for path in report_paths],
         "selected_worktree_paths": [str(path) for path in worktree_paths],
+        "selected_item_refs": _build_selected_item_refs(
+            selected_items,
+            worktree_paths,
+            report_path_by_task_id,
+        ),
     }
     if first_non_done is not None:
         summary["first_non_done_item"] = {
@@ -2576,6 +2585,40 @@ def _build_batch_summary(
     if preflight_snapshot is not None:
         summary["preflight_snapshot"] = preflight_snapshot
     return summary
+
+
+def _build_selected_item_refs(
+    items: list[StoredPlanItem],
+    worktree_paths: list[Path],
+    report_path_by_task_id: dict[str, str],
+) -> list[dict[str, object]]:
+    """Return stable machine-readable refs for selected or processed items."""
+    refs: list[dict[str, object]] = []
+    for index, item in enumerate(items):
+        selected_worktree_path = item.selected_worktree_path
+        if selected_worktree_path is None:
+            if len(worktree_paths) == len(items):
+                selected_worktree_path = str(worktree_paths[index])
+            elif len(worktree_paths) == 1:
+                selected_worktree_path = str(worktree_paths[0])
+
+        refs.append(
+            {
+                "plan_item_id": item.plan_item_id,
+                "status": item.status,
+                "plan_path": item.plan_path,
+                "line_number": item.line_number,
+                "text": item.text,
+                "selected_worktree_path": selected_worktree_path,
+                "task_id": item.task_id,
+                "report_path": (
+                    report_path_by_task_id.get(item.task_id)
+                    if item.task_id is not None
+                    else None
+                ),
+            }
+        )
+    return refs
 
 
 def _print_batch_summary(summary: dict[str, Any]) -> None:
