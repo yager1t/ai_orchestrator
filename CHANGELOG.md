@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added opt-in `--item-id PLAN_ITEM_ID` to `ai-orch autopilot queue run-batch`
+  dry-run and `--execute` flows so operators can target one reviewed `created`
+  queue item while preserving the default batch selection when omitted.
+
 - Fixed `ai-orch autopilot queue readiness` and `queue preflight` so queue items
   created by `sync-backlog` from bare `BACKLOG.md` priority bullets remain ready
   while the source backlog bullet is still open, instead of being reported as

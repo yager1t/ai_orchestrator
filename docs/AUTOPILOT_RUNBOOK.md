@@ -258,6 +258,11 @@ Dry-run batch output includes each selected persisted queue item id. Use that
 id with `queue show <plan_item_id>` when you want to inspect the exact queued
 item before adding `--execute`.
 
+After reviewing one item with `queue show`, add `--item-id PLAN_ITEM_ID` to
+target only that `created` queue item in dry-run or `--execute` mode. When
+`--item-id` is omitted, `run-batch` keeps the default oldest ready item
+selection up to `--max-items`.
+
 Add `--summary-json PATH` when scripts or reports need the final batch summary
 as a machine-readable artifact without changing the normal stdout summary:
 

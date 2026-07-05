@@ -2889,6 +2889,191 @@ def test_autopilot_queue_run_batch_defaults_to_dry_run(
     )
 
 
+def test_autopilot_queue_run_batch_dry_run_selects_item_id(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--item-id",
+            str(items["Second task"].plan_item_id),
+            "--max-items",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Queue item: {items['Second task'].plan_item_id}" in output
+    assert f"Queue item: {items['First task'].plan_item_id}" not in output
+    assert "Task: Second task" in output
+    assert "Task: First task" not in output
+    assert "Selected: 1 item(s)" in output
+    assert items["First task"].status == "created"
+    assert items["Second task"].status == "created"
+
+
+def test_autopilot_queue_run_batch_execute_selects_item_id(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] First task",
+                "- [ ] Second task",
+                "- [ ] Third task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    captured_tasks: list[str] = []
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        captured_tasks.append(task)
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id="selected-batch-task"
+        )
+        return SupervisorResult(
+            status="done",
+            summary="Verification passed",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--item-id",
+            str(items["Second task"].plan_item_id),
+            "--max-items",
+            "3",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert len(captured_tasks) == 1
+    assert "Second task" in captured_tasks[0]
+    assert "First task" not in captured_tasks[0]
+    assert f"Queue item: {items['Second task'].plan_item_id}" in output
+    assert f"Queue item: {items['First task'].plan_item_id}" not in output
+    assert "Batch complete: processed 1 item(s)" in output
+
+    refreshed = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    assert refreshed["First task"].status == "created"
+    assert refreshed["Second task"].status == "done"
+    assert refreshed["Second task"].task_id == "selected-batch-task"
+    assert refreshed["Third task"].status == "created"
+
+
+def test_autopilot_queue_run_batch_item_id_requires_created_status(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(item.plan_item_id, "blocked")
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--item-id",
+            str(item.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert f"Queue item {item.plan_item_id} is not ready (status=blocked)" in output
+
+
+def test_autopilot_queue_run_batch_item_id_requires_selected_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan_a = tmp_path / "PLAN_A.md"
+    plan_b = tmp_path / "PLAN_B.md"
+    plan_a.write_text("- [ ] Plan A task\n", encoding="utf-8")
+    plan_b.write_text("- [ ] Plan B task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan_a)])
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan_b)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item_a = store.list_plan_items(plan_path=plan_a)[0]
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan_b),
+            "--item-id",
+            str(item_a.plan_item_id),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert f"Queue item {item_a.plan_item_id} does not belong to plan {plan_b}" in output
+
+
 def test_autopilot_queue_run_batch_summary_ignores_terminal_items(
     capsys,
     tmp_path: Path,
