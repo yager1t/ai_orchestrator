@@ -187,6 +187,7 @@ Use repeated `--status` filters and `--limit` for focused queue history views:
 ```bash
 python -m ai_orchestrator autopilot queue status --repo . --plan docs/BACKLOG.md --status blocked --status done --limit 10
 python -m ai_orchestrator autopilot queue list --repo . --plan docs/BACKLOG.md --status created --limit 5
+python -m ai_orchestrator autopilot queue list --repo . --plan docs/BACKLOG.md --status created --limit 5 --json
 ```
 
 Use `--all-plans` when reviewing all persisted queue sources together. This is
@@ -195,7 +196,12 @@ read-only; execution commands still require a specific `--plan`.
 ```bash
 python -m ai_orchestrator autopilot queue status --repo . --all-plans --status blocked --status done --limit 10
 python -m ai_orchestrator autopilot queue list --repo . --all-plans --status created --limit 20
+python -m ai_orchestrator autopilot queue list --repo . --all-plans --status created --limit 20 --json
 ```
+
+Use `queue list --json` when scripts need the same filtered rows, selected plan
+scope, status counts, limit metadata, and problem summary shown in the operator
+text output without changing queue state.
 
 Show a single queue item before deciding whether to requeue, skip, or continue
 operator review. This is read-only and prints the item status, source, task

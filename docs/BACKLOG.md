@@ -13,11 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add read-only `--json` output to `ai-orch autopilot queue list` for selected
-  plan and `--all-plans` views so scripts can inspect the same filtered queue
-  rows, status counts, limit metadata, selected plan scope, and problem summary
-  already shown in text output, while preserving stdout defaults, status/limit
-  filtering, all-plans behavior, queue state, and exit-code semantics.
+No open P2 items.
 
 ## P3 / Deferred
 
