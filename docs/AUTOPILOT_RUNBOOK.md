@@ -12,6 +12,26 @@ Autopilot is intentionally conservative:
 - it routes approvals through the persisted approval inbox;
 - it does not push, publish, deploy, auto-merge, or delete worktrees.
 
+## Stable queue loop
+
+Use this checklist for the normal one-item autopilot flow:
+
+1. Start from `main` synced to `origin/main` and keep local-only files out of the
+   PR.
+2. Seed exactly one bounded P0/P1/P2 backlog item only when the queue has no
+   open `created` work.
+3. Run `queue sync-backlog`, then inspect `queue readiness --json` and
+   `queue preflight --json`.
+4. Preview `queue run-batch` without `--execute`, using an explicit item id when
+   a specific backlog item was reviewed.
+5. Execute in a clean dedicated worktree only after the dry run selected the
+   expected item, agent, and worktree.
+6. Review the generated report and worktree diff before repair, verification,
+   commit, PR, CI, and merge.
+7. Fast-forward `main`, run `queue sync-backlog` again, and confirm
+   `queue readiness` has no stale, blocked, or in-progress risk before choosing
+   the next bounded item.
+
 ## 1. Preflight
 
 Start from a clean main repo:
