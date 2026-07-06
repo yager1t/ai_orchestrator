@@ -5,7 +5,7 @@ Date: 2026-07-06
 ## Scope
 
 This review covers `ai-orch autopilot queue` operator workflows after the JSON
-output hardening pass through `queue show --json`.
+output hardening pass through the manual mutation commands.
 
 ## Current operator model
 
@@ -28,8 +28,8 @@ The safe daily loop is now coherent:
 
 ## JSON coverage
 
-Machine-readable output already exists for the most important read/recovery
-paths:
+Machine-readable output exists for the most important read, recovery, execution,
+and manual mutation paths:
 
 - `queue readiness --json`
 - `queue preflight --json`
@@ -38,26 +38,22 @@ paths:
 - `queue refresh-created-refs --json`
 - `queue show --json`
 - `queue run-batch --summary-json PATH`
+- `queue requeue --json`
+- `queue skip --json`
 
-The remaining operator-facing consistency gap is the manual state-change pair:
+The manual state-change pair is now covered as opt-in JSON while preserving the
+operator text output by default. Both commands remain guarded,
+dry-run-by-default, support `--apply`, and share the same plan ownership
+validation pattern as `queue show`.
 
-- `queue requeue`
-- `queue skip`
+## Completed order
 
-Both commands are guarded, dry-run-by-default, and support `--apply`. Both also
-share the same plan ownership validation pattern as `queue show`. Scripts can
-currently use them, but must parse text to confirm selected item refs, dry-run
-versus apply mode, resulting status, and preserved or cleared metadata.
+1. Added `--json` to `queue requeue` dry-run and `--apply`.
+2. Added `--json` to `queue skip` dry-run and `--apply`.
+3. Updated runbook/changelog coverage for matching text and JSON behavior.
 
-## Recommended order
-
-1. Add `--json` to `queue requeue` dry-run and `--apply`.
-2. Add `--json` to `queue skip` dry-run and `--apply`.
-3. Do a final runbook/changelog consistency cleanup after the mutation commands
-   have matching text and JSON behavior.
-
-This order keeps the risk small: `requeue` is narrower because it only accepts
-`blocked` items and clears known metadata when applied. `skip` is slightly
+This order kept the risk small: `requeue` was narrower because it only accepts
+`blocked` items and clears known metadata when applied. `skip` was slightly
 broader because it accepts both `created` and `blocked` items and requires an
 operator reason.
 
@@ -71,7 +67,8 @@ operator reason.
 - Do not add automatic execution, deletion, pruning, pushing, or cleanup.
 - Keep each backlog item small enough for one autopilot run and one review pass.
 
-## Next backlog item
+## Final snapshot
 
-Seed `queue requeue --json` first. After it merges and the queue is synced,
-run it through the existing autopilot batch flow.
+No additional backlog item is needed for this review. The queue mutation JSON
+consistency pass is complete, and follow-up work should start from a fresh
+operator need rather than extending this review by default.
