@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Added read-only `--json` output to `ai-orch autopilot queue
+  recover-in-progress` dry-run and `--apply` flows with selected plan scope,
+  older-than-hours filter, stale item refs, blocked counts, and applied reason.
+
+- Added read-only `--json` output to `ai-orch autopilot queue
   refresh-created-refs` dry-run and `--apply` flows with matched/updated
   counts, priorities, backlog path, apply mode, and old/new source refs.
 
