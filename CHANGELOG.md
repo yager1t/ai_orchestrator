@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added read-only `--json` output to `ai-orch autopilot queue requeue`
+  dry-run and `--apply` flows so scripts can inspect the selected blocked item,
+  plan ownership scope, mode, resulting status, and cleared metadata.
+
 - Added read-only `--json` output to `ai-orch autopilot queue show` so scripts
   can inspect selected queue item details without parsing text output.
 

@@ -260,9 +260,14 @@ a dry run unless `--apply` is present, and it never executes the item:
 ```bash
 python -m ai_orchestrator autopilot queue list --repo . --all-plans --status blocked
 python -m ai_orchestrator autopilot queue requeue --repo . <plan_item_id>
+python -m ai_orchestrator autopilot queue requeue --repo . --json <plan_item_id>
 python -m ai_orchestrator autopilot queue requeue --repo . --plan docs/BACKLOG.md <plan_item_id>
 python -m ai_orchestrator autopilot queue requeue --repo . --apply <plan_item_id>
 ```
+
+Use `--json` when scripts need the selected blocked item refs, plan ownership
+scope, dry-run or apply mode, resulting status, and cleared metadata without
+parsing the operator text output.
 
 Skip a `created` or `blocked` item after operator review. The command records a
 reason, is a dry run unless `--apply` is present, and never deletes the item:

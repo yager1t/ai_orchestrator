@@ -13,12 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add read-only `--json` output to `ai-orch autopilot queue requeue` dry-run
-  and `--apply` flows so scripts can inspect the selected blocked item, plan
-  ownership scope, dry-run/apply mode, resulting status, and cleared metadata
-  without parsing text output, while preserving stdout defaults, blocked-status
-  validation, plan ownership validation, queue state transitions, and exit-code
-  semantics.
+No open P2 items.
 
 ## P3 / Deferred
 
