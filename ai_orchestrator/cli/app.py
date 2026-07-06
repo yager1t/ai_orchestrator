@@ -453,6 +453,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Mark stale created queue items as skipped; dry-run by default",
     )
+    autopilot_queue_reconcile.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of the default text summary",
+    )
     autopilot_queue_run_next = autopilot_queue_sub.add_parser(
         "run-next",
         help="Select and execute the next persisted queue item",
@@ -2145,12 +2150,42 @@ def _run_autopilot_queue_reconcile(
     else:
         plan_path = _resolve_plan_path(repo, Path(args.plan))
         if not plan_path.exists():
-            print(f"Plan not found: {plan_path}")
+            if args.json:
+                print(
+                    json.dumps(
+                        {"error": f"Plan not found: {plan_path}"},
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                )
+            else:
+                print(f"Plan not found: {plan_path}")
             return 1
         plan_label = str(plan_path)
         all_items = store.list_plan_items(plan_path=plan_path)
 
     stale_items = _stale_created_queue_items(repo, all_items)
+    skipped_count = 0
+    if args.apply:
+        updated_items: list[StoredPlanItem] = []
+        for item in stale_items:
+            updated = store.update_plan_item_status(item.plan_item_id, "skipped")
+            updated_items.append(updated if updated is not None else item)
+        stale_items = updated_items
+        skipped_count = len(stale_items)
+
+    if args.json:
+        _print_reconcile_json(
+            repo,
+            plan_label=plan_label,
+            include_plan_path=include_plan_path,
+            total=len(all_items),
+            stale_items=stale_items,
+            apply=bool(args.apply),
+            skipped_count=skipped_count,
+        )
+        return 0
+
     print(f"Queue reconcile for {plan_label}")
     print(f"  total: {len(all_items)}")
     print(f"  stale_created: {len(stale_items)}")
@@ -2159,8 +2194,6 @@ def _run_autopilot_queue_reconcile(
         return 0
 
     if args.apply:
-        for item in stale_items:
-            store.update_plan_item_status(item.plan_item_id, "skipped")
         print(f"  skipped: {len(stale_items)}")
     else:
         print("  dry_run: use --apply to mark stale items skipped")
@@ -2170,6 +2203,31 @@ def _run_autopilot_queue_reconcile(
         item_label = _queue_item_label(item, include_plan_path=include_plan_path)
         print(f"  [stale] {item_label}: {item.text}{refs}")
     return 0
+
+
+def _print_reconcile_json(
+    repo: Path,
+    *,
+    plan_label: str,
+    include_plan_path: bool,
+    total: int,
+    stale_items: list[StoredPlanItem],
+    apply: bool,
+    skipped_count: int,
+) -> None:
+    payload = {
+        "plan": plan_label,
+        "all_plans": include_plan_path,
+        "total": total,
+        "apply": apply,
+        "dry_run": not apply,
+        "stale_created": {
+            "count": len(stale_items),
+            "items": [_queue_item_readiness_ref(repo, item) for item in stale_items],
+        },
+        "skipped": {"count": skipped_count},
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
 def _run_autopilot_queue_recover_in_progress(

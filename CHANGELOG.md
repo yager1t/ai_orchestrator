@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added read-only `--json` output to `ai-orch autopilot queue reconcile`
+  dry-run and `--apply` flows with selected plan scope, all-plans mode, total
+  item count, stale created item refs, skipped count, and apply mode.
+
 - Added read-only `--json` output to `ai-orch autopilot queue
   recover-in-progress` dry-run and `--apply` flows with selected plan scope,
   older-than-hours filter, stale item refs, blocked counts, and applied reason.

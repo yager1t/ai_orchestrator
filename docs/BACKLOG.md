@@ -13,11 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add read-only `--json` output to `ai-orch autopilot queue reconcile`
-  dry-run and `--apply` flows so scripts can inspect selected plan scope,
-  all-plans mode, total item count, stale created item refs, skipped counts, and
-  apply mode without parsing text output, while preserving stdout defaults,
-  queue state transitions, dry-run-by-default behavior, and exit-code semantics.
+No open P2 items.
 
 ## P3 / Deferred
 

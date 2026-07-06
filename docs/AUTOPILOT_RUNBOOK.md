@@ -202,8 +202,13 @@ removed, or rewritten. The command is a dry run unless `--apply` is present:
 
 ```bash
 python -m ai_orchestrator autopilot queue reconcile --repo . --all-plans
+python -m ai_orchestrator autopilot queue reconcile --repo . --all-plans --json
 python -m ai_orchestrator autopilot queue reconcile --repo . --all-plans --apply
 ```
+
+Use `--json` when scripts need the selected plan scope, all-plans mode, total
+item count, stale created item refs, skipped count, and apply mode without
+parsing the operator text output.
 
 When completed backlog bullets were removed and the remaining open text is
 unchanged, refresh shifted `created` source refs before running
