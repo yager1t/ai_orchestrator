@@ -633,6 +633,11 @@ def build_parser() -> argparse.ArgumentParser:
             "When given, the item is shown only if it belongs to this plan."
         ),
     )
+    autopilot_queue_show.add_argument(
+        "--json",
+        action="store_true",
+        help="Print selected queue item details as machine-readable JSON",
+    )
 
     autopilot_queue_requeue = autopilot_queue_sub.add_parser(
         "requeue",
@@ -2410,6 +2415,22 @@ def _run_autopilot_queue_show(
         return validation_error
 
     report_path = _task_report_path(repo, item.task_id)
+    if args.json:
+        payload = {
+            "plan_item_id": item.plan_item_id,
+            "status": item.status,
+            "source": f"{item.plan_path}:{item.line_number}",
+            "plan_path": item.plan_path,
+            "line_number": item.line_number,
+            "task": item.text,
+            "task_id": item.task_id,
+            "report_path": str(report_path) if report_path else None,
+            "selected_worktree": item.selected_worktree_path,
+            "reason": item.blocked_reason,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return 0
+
     print(f"Queue item: {item.plan_item_id}")
     print(f"  status: {item.status}")
     print(f"  source: {item.plan_path}:{item.line_number}")
