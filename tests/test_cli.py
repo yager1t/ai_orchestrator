@@ -6225,6 +6225,123 @@ def test_autopilot_queue_reconcile_all_plans_apply_skips_only_stale_created_item
     assert items["Current task"].status == "created"
 
 
+def test_autopilot_queue_reconcile_json_dry_run_reports_scope_and_refs(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Stale task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    task = store.create_task("stale task", repo_path=tmp_path)
+    worktree = tmp_path / "wt"
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "created",
+        task_id=task.task_id,
+        selected_worktree_path=worktree,
+    )
+    plan.write_text("- [x] Stale task\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "reconcile",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert payload["plan"] == str(plan)
+    assert payload["all_plans"] is False
+    assert payload["total"] == 1
+    assert payload["apply"] is False
+    assert payload["dry_run"] is True
+    assert payload["skipped"] == {"count": 0}
+    assert payload["stale_created"]["count"] == 1
+    stale_item = payload["stale_created"]["items"][0]
+    assert stale_item["plan_item_id"] == item.plan_item_id
+    assert stale_item["task_id"] == task.task_id
+    assert stale_item["selected_worktree_path"] == str(worktree)
+    assert loaded is not None
+    assert loaded.status == "created"
+
+
+def test_autopilot_queue_reconcile_json_all_plans_apply_reports_skipped_count(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    stale_plan = tmp_path / "STALE.md"
+    current_plan = tmp_path / "CURRENT.md"
+    stale_plan.write_text("- [ ] Stale task\n", encoding="utf-8")
+    current_plan.write_text("- [ ] Current task\n", encoding="utf-8")
+
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(stale_plan),
+        ]
+    )
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(current_plan),
+        ]
+    )
+    stale_plan.write_text("- [x] Stale task\n", encoding="utf-8")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "reconcile",
+            "--repo",
+            str(tmp_path),
+            "--all-plans",
+            "--apply",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items()}
+
+    assert exit_code == 0
+    assert payload["plan"] == "all persisted plans"
+    assert payload["all_plans"] is True
+    assert payload["total"] == 2
+    assert payload["apply"] is True
+    assert payload["dry_run"] is False
+    assert payload["skipped"] == {"count": 1}
+    assert payload["stale_created"]["count"] == 1
+    stale_item = payload["stale_created"]["items"][0]
+    assert stale_item["plan_path"] == str(stale_plan)
+    assert stale_item["status"] == "skipped"
+    assert items["Stale task"].status == "skipped"
+    assert items["Current task"].status == "created"
+
+
 def test_autopilot_queue_recover_in_progress_dry_run_reports_stale_items(
     capsys,
     tmp_path: Path,
