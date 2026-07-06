@@ -2435,6 +2435,152 @@ def test_autopilot_queue_list_all_plans_filters_across_sources(
     assert "Backlog created task" not in output
 
 
+def test_autopilot_queue_list_json_includes_filtered_rows_and_metadata(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "- [ ] Created task",
+                "- [ ] Blocked task",
+                "- [ ] Done task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(
+        items["Blocked task"].plan_item_id,
+        "blocked",
+        blocked_reason="needs review",
+    )
+    store.update_plan_item_status(items["Done task"].plan_item_id, "done")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "list",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--status",
+            "blocked",
+            "--status",
+            "done",
+            "--limit",
+            "1",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    refreshed = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+
+    assert exit_code == 0
+    assert payload["plan"] == str(plan)
+    assert payload["all_plans"] is False
+    assert payload["total"] == 3
+    assert payload["filtered"] == 2
+    assert payload["status_filter"] == ["blocked", "done"]
+    assert payload["limit"] == 1
+    assert payload["showing"] == 1
+    assert payload["by_status"] == {"blocked": 1, "created": 1, "done": 1}
+    assert payload["items"] == [
+        {
+            "plan_item_id": items["Blocked task"].plan_item_id,
+            "plan_path": str(plan),
+            "line_number": items["Blocked task"].line_number,
+            "text": "Blocked task",
+            "status": "blocked",
+            "task_id": None,
+            "selected_worktree_path": None,
+            "blocked_reason": "needs review",
+            "report_path": None,
+        }
+    ]
+    assert payload["problem_summary"] == [
+        {
+            "status": "blocked",
+            "reason": "needs review",
+            "count": 1,
+            "latest_ids": [items["Blocked task"].plan_item_id],
+        }
+    ]
+    assert refreshed["Blocked task"].status == "blocked"
+    assert refreshed["Done task"].status == "done"
+
+
+def test_autopilot_queue_list_json_all_plans_uses_all_persisted_sources(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    roadmap = tmp_path / "ROADMAP.md"
+    backlog = tmp_path / "BACKLOG.md"
+    roadmap.write_text("- [ ] Roadmap done task\n", encoding="utf-8")
+    backlog.write_text("- [ ] Backlog created task\n", encoding="utf-8")
+
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(roadmap),
+        ]
+    )
+    main(
+        [
+            "autopilot",
+            "queue",
+            "sync",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(backlog),
+        ]
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    roadmap_item = store.list_plan_items(plan_path=roadmap)[0]
+    store.update_plan_item_status(roadmap_item.plan_item_id, "done")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "list",
+            "--repo",
+            str(tmp_path),
+            "--all-plans",
+            "--status",
+            "done",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["plan"] == "all persisted plans"
+    assert payload["all_plans"] is True
+    assert payload["total"] == 2
+    assert payload["filtered"] == 1
+    assert payload["status_filter"] == ["done"]
+    assert payload["by_status"] == {"created": 1, "done": 1}
+    assert payload["items"][0]["plan_path"] == str(roadmap)
+    assert payload["items"][0]["status"] == "done"
+    assert payload["items"][0]["text"] == "Roadmap done task"
+    assert payload["problem_summary"] is None
+
+
 def test_autopilot_queue_sync_works_when_no_unstarted_task_exists(
     capsys,
     tmp_path: Path,

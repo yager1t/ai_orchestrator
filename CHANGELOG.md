@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added read-only `--json` output to `ai-orch autopilot queue list` for selected
+  plan and `--all-plans` views, including filtered queue rows, status counts,
+  limit metadata, selected plan scope, and problem summary.
+
 - Added read-only `--json` output to `ai-orch autopilot queue skip` dry-run and
   `--apply` flows so scripts can inspect the selected created or blocked item,
   plan ownership scope, skip reason, mode, and resulting status.

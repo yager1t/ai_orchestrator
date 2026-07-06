@@ -352,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Limit displayed items after filtering; 0 means all items (default: 0)",
     )
+    autopilot_queue_list.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of the default text summary",
+    )
     autopilot_queue_status = autopilot_queue_sub.add_parser(
         "status",
         help="Summarize persisted queue counts and recent items",
@@ -2744,7 +2749,16 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         else:
             plan_path = _resolve_plan_path(repo, Path(args.plan))
             if not plan_path.exists():
-                print(f"Plan not found: {plan_path}")
+                if args.json:
+                    print(
+                        json.dumps(
+                            {"error": f"Plan not found: {plan_path}"},
+                            indent=2,
+                            ensure_ascii=False,
+                        )
+                    )
+                else:
+                    print(f"Plan not found: {plan_path}")
                 return 1
             plan_label = str(plan_path)
             all_items = store.list_plan_items(plan_path=plan_path)
@@ -2754,6 +2768,27 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         limit = max(0, args.limit)
         if limit:
             items = items[:limit]
+        status_counts: dict[str, int] = {}
+        for item in all_items:
+            status_counts[item.status] = status_counts.get(item.status, 0) + 1
+        if args.json:
+            payload = {
+                "plan": plan_label,
+                "all_plans": include_plan_path,
+                "total": len(all_items),
+                "filtered": len(matched_items),
+                "status_filter": list(statuses),
+                "limit": limit,
+                "showing": len(items),
+                "by_status": dict(sorted(status_counts.items())),
+                "items": [_queue_item_readiness_ref(repo, item) for item in items],
+                "problem_summary": _problem_summary_data(
+                    matched_items,
+                    limit=limit if limit else None,
+                ),
+            }
+            print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+            return 0
         print(f"Queue status for {plan_label}")
         print(f"  total: {len(all_items)}")
         if statuses:
@@ -2761,9 +2796,6 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         if limit:
             print(f"  limit: {limit}")
             print(f"  showing: {len(items)}")
-        status_counts: dict[str, int] = {}
-        for item in all_items:
-            status_counts[item.status] = status_counts.get(item.status, 0) + 1
         if status_counts:
             summary = ", ".join(
                 f"{status}={count}" for status, count in sorted(status_counts.items())
