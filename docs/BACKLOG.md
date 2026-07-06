@@ -13,7 +13,11 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add read-only `--json` output to `ai-orch autopilot queue show` so scripts
+  can inspect a selected queue item's status, source, task text, task id, report
+  path, selected worktree, and blocker/skip reason without parsing text output,
+  while preserving stdout defaults, plan ownership validation, queue state, and
+  exit-code semantics.
 
 ## P3 / Deferred
 
