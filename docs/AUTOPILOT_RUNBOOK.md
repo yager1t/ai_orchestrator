@@ -275,9 +275,14 @@ reason, is a dry run unless `--apply` is present, and never deletes the item:
 ```bash
 python -m ai_orchestrator autopilot queue list --repo . --all-plans --status created --status blocked
 python -m ai_orchestrator autopilot queue skip --repo . --reason "operator reviewed: out of scope" <plan_item_id>
+python -m ai_orchestrator autopilot queue skip --repo . --reason "operator reviewed: out of scope" --json <plan_item_id>
 python -m ai_orchestrator autopilot queue skip --repo . --reason "operator reviewed: out of scope" --plan docs/BACKLOG.md <plan_item_id>
 python -m ai_orchestrator autopilot queue skip --repo . --reason "operator reviewed: out of scope" --apply <plan_item_id>
 ```
+
+Use `--json` when scripts need the selected item refs, plan ownership scope,
+supplied skip reason, dry-run or apply mode, and resulting status without
+parsing the operator text output.
 
 Preview the next queued item without starting work:
 
