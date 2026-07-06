@@ -183,7 +183,12 @@ text, task id, report path, selected worktree, and blocker or skip reason:
 
 ```bash
 python -m ai_orchestrator autopilot queue show --repo . <plan_item_id>
+python -m ai_orchestrator autopilot queue show --repo . --json <plan_item_id>
 ```
+
+Use `--json` when scripts need the selected queue item status, source, task
+text, task id, report path, selected worktree, and blocker or skip reason
+without parsing the operator text output.
 
 Use `--plan PLAN` when you want `queue show` to validate that the selected item
 belongs to the same plan you were reviewing:

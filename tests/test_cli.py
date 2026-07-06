@@ -7048,6 +7048,64 @@ def test_autopilot_queue_show_prints_blocked_reason_and_report_path(
     assert loaded.status == "blocked"
 
 
+def test_autopilot_queue_show_json_prints_item_details_without_changing_state(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Blocked task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    task = store.create_task("Blocked task", repo_path=tmp_path)
+    report_path = tmp_path / ".ai-orch" / "reports" / f"{task.task_id}.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("report", encoding="utf-8")
+    worktree = tmp_path / "worktree"
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "blocked",
+        task_id=task.task_id,
+        selected_worktree_path=worktree,
+        blocked_reason="needs operator review",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "show",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--json",
+            str(item.plan_item_id),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert payload == {
+        "plan_item_id": item.plan_item_id,
+        "status": "blocked",
+        "source": f"{plan}:1",
+        "plan_path": str(plan),
+        "line_number": 1,
+        "task": "Blocked task",
+        "task_id": task.task_id,
+        "report_path": str(report_path),
+        "selected_worktree": str(worktree),
+        "reason": "needs operator review",
+    }
+    assert loaded is not None
+    assert loaded.status == "blocked"
+    assert loaded.blocked_reason == "needs operator review"
+
+
 def test_autopilot_queue_show_reports_missing_item(capsys, tmp_path: Path) -> None:
     plan = tmp_path / "ROADMAP.md"
     plan.write_text("- [ ] Task\n", encoding="utf-8")

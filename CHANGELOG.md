@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added read-only `--json` output to `ai-orch autopilot queue show` so scripts
+  can inspect selected queue item details without parsing text output.
+
 - Added read-only `--json` output to `ai-orch autopilot queue reconcile`
   dry-run and `--apply` flows with selected plan scope, all-plans mode, total
   item count, stale created item refs, skipped count, and apply mode.
