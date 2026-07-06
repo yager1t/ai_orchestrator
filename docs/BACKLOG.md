@@ -13,7 +13,12 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Add read-only `--json` output to `ai-orch autopilot queue recover-in-progress`
+  dry-run and `--apply` flows so scripts can inspect the selected plan scope,
+  older-than-hours filter, stale in-progress item refs, blocked counts, and
+  applied reason without parsing text output, while preserving stdout defaults,
+  reason validation, queue state transitions, dry-run-by-default behavior, and
+  exit-code semantics.
 
 ## P3 / Deferred
 
