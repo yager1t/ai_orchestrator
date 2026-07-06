@@ -13,12 +13,7 @@ No open P1 items.
 
 ## P2
 
-- Add read-only `--json` output to `ai-orch autopilot queue skip` dry-run and
-  `--apply` flows so scripts can inspect the selected created or blocked item,
-  plan ownership scope, supplied skip reason, dry-run/apply mode, and resulting
-  status without parsing text output, while preserving stdout defaults, reason
-  validation, skippable-status validation, plan ownership validation, queue
-  state transitions, and exit-code semantics.
+No open P2 items.
 
 ## P3 / Deferred
 

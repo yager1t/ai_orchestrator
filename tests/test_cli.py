@@ -7624,6 +7624,53 @@ def test_autopilot_queue_skip_dry_run_reports_created_item(
     assert loaded.blocked_reason is None
 
 
+def test_autopilot_queue_skip_dry_run_json_reports_selected_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Created task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--reason",
+            "operator reviewed: out of scope",
+            "--json",
+            str(item.plan_item_id),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert payload["plan_item"]["plan_item_id"] == item.plan_item_id
+    assert payload["plan_item"]["status"] == "created"
+    assert payload["plan_scope"] == {
+        "requested_plan": str(plan),
+        "item_plan": str(plan),
+        "validated": True,
+    }
+    assert payload["skip_reason"] == "operator reviewed: out of scope"
+    assert payload["mode"] == "dry_run"
+    assert payload["applied"] is False
+    assert payload["resulting_status"] == "created"
+    assert loaded is not None
+    assert loaded.status == "created"
+    assert loaded.blocked_reason is None
+
+
 def test_autopilot_queue_skip_apply_skips_created_item(
     capsys,
     tmp_path: Path,
@@ -7658,6 +7705,58 @@ def test_autopilot_queue_skip_apply_skips_created_item(
     assert loaded is not None
     assert loaded.status == "skipped"
     assert loaded.blocked_reason == "operator reviewed: out of scope"
+
+
+def test_autopilot_queue_skip_apply_json_reports_resulting_status(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Blocked task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(
+        item.plan_item_id,
+        "blocked",
+        blocked_reason="needs external dependency",
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "skip",
+            "--repo",
+            str(tmp_path),
+            "--reason",
+            "operator reviewed: defer until next quarter",
+            "--apply",
+            "--json",
+            str(item.plan_item_id),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert payload["plan_item"]["plan_item_id"] == item.plan_item_id
+    assert payload["plan_item"]["status"] == "blocked"
+    assert payload["plan_item"]["blocked_reason"] == "needs external dependency"
+    assert payload["plan_scope"] == {
+        "requested_plan": None,
+        "item_plan": str(plan),
+        "validated": False,
+    }
+    assert payload["skip_reason"] == "operator reviewed: defer until next quarter"
+    assert payload["mode"] == "apply"
+    assert payload["applied"] is True
+    assert payload["resulting_status"] == "skipped"
+    assert loaded is not None
+    assert loaded.status == "skipped"
+    assert loaded.blocked_reason == "operator reviewed: defer until next quarter"
 
 
 def test_autopilot_queue_skip_apply_skips_blocked_item(

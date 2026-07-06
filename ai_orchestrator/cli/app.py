@@ -694,6 +694,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Actually mark the item skipped; without this flag the command is a dry run",
     )
+    autopilot_queue_skip.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the skip dry-run or apply result as machine-readable JSON",
+    )
 
     memory = sub.add_parser("memory", help="Optional code memory provider helpers")
     memory_sub = memory.add_subparsers(dest="memory_command")
@@ -2570,17 +2575,38 @@ def _run_autopilot_queue_skip(
     if validation_error is not None:
         return validation_error
 
-    print(f"Skip queue item {item.plan_item_id}")
-    print(f"  source: {item.plan_path}:{item.line_number}")
-    print(f"  task: {item.text}")
-    print(f"  current_status: {item.status}")
-    print(f"  reason: {args.reason}")
-    if item.blocked_reason and item.status == "blocked":
-        print(f"  blocked_reason: {item.blocked_reason}")
-    if item.task_id:
-        print(f"  task_id: {item.task_id}")
-    if item.selected_worktree_path:
-        print(f"  selected_worktree_path: {item.selected_worktree_path}")
+    plan_scope = {
+        "requested_plan": (
+            str(_resolve_plan_path(repo, Path(args.plan))) if args.plan else None
+        ),
+        "item_plan": item.plan_path,
+        "validated": bool(args.plan),
+    }
+
+    if args.json and not args.apply:
+        payload = {
+            "plan_item": _queue_item_readiness_ref(repo, item),
+            "plan_scope": plan_scope,
+            "skip_reason": args.reason,
+            "mode": "dry_run",
+            "applied": False,
+            "resulting_status": item.status,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return 0
+
+    if not args.json:
+        print(f"Skip queue item {item.plan_item_id}")
+        print(f"  source: {item.plan_path}:{item.line_number}")
+        print(f"  task: {item.text}")
+        print(f"  current_status: {item.status}")
+        print(f"  reason: {args.reason}")
+        if item.blocked_reason and item.status == "blocked":
+            print(f"  blocked_reason: {item.blocked_reason}")
+        if item.task_id:
+            print(f"  task_id: {item.task_id}")
+        if item.selected_worktree_path:
+            print(f"  selected_worktree_path: {item.selected_worktree_path}")
 
     if not args.apply:
         print("  dry_run: use --apply to mark this item skipped")
@@ -2590,6 +2616,18 @@ def _run_autopilot_queue_skip(
     if skipped is None:
         print("  skip failed: item is no longer created or blocked")
         return 1
+
+    if args.json:
+        payload = {
+            "plan_item": _queue_item_readiness_ref(repo, item),
+            "plan_scope": plan_scope,
+            "skip_reason": args.reason,
+            "mode": "apply",
+            "applied": True,
+            "resulting_status": skipped.status,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return 0
 
     print("  status: skipped")
     return 0
