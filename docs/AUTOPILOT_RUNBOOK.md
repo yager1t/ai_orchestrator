@@ -169,9 +169,10 @@ python -m ai_orchestrator autopilot queue preflight --repo . --plan docs/BACKLOG
 python -m ai_orchestrator autopilot queue preflight --repo . --plan docs/BACKLOG.md --json
 ```
 
-The preflight command reports the selected agent profile (`name`, `type`,
-`mode`, configured command, and availability) next to the queue readiness
-summary. It does not execute queue items or change queue state. Add
+The preflight command reports the selected agent profile (`name`, `configured`,
+`type`, `mode`, configured command, and availability) next to the queue readiness
+summary. It treats a selected agent missing from `config.agents` as a
+`fix_agent` risk. It does not execute queue items or change queue state. Add
 `--fail-on-risk` when a scripted gate should fail on readiness risk or an
 unavailable selected agent. The `next_action` hint in text and JSON output is
 read-only and reports one of `run_batch`, `reconcile_stale_created`,

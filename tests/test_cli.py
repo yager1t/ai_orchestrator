@@ -6,7 +6,7 @@ import pytest
 
 from ai_orchestrator import __version__
 from ai_orchestrator.autopilot import load_plan_tasks
-from ai_orchestrator.cli.app import main
+from ai_orchestrator.cli.app import _state_store_for_repo, main
 from ai_orchestrator.core.supervisor import Supervisor, SupervisorResult
 from ai_orchestrator.process.runner import ProcessResult, ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
@@ -36,6 +36,13 @@ def test_log_level_configures_logging(monkeypatch, tmp_path: Path) -> None:
     assert exit_code == 0
     assert calls
     assert calls[0]["level"] == 10
+
+
+def test_state_store_for_repo_reuses_store_for_same_repo(tmp_path: Path) -> None:
+    first = _state_store_for_repo(tmp_path)
+    second = _state_store_for_repo(tmp_path)
+
+    assert second is first
 
 
 def test_autopilot_next_prints_next_plan_item(capsys, tmp_path: Path) -> None:
@@ -1770,6 +1777,24 @@ def test_verify_uses_policy_rules_from_project_config(capsys, tmp_path: Path) ->
 
     assert exit_code == 1
     assert "deploy: needs_approval exit=None" in output
+
+
+def test_verify_policy_denied_does_not_block_ci_exit_code(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    write_config(
+        tmp_path,
+        command_name="blocked",
+        command_run="rm -rf build",
+        deny_patterns=["rm"],
+    )
+
+    exit_code = main(["verify", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "blocked: policy_denied exit=None" in output
 
 
 def test_verify_approves_exact_command_from_cli(capsys, tmp_path: Path) -> None:
@@ -6207,6 +6232,51 @@ def test_autopilot_queue_preflight_json_outputs_combined_object(
     assert result["agent_profile"]["available"] is True
     assert result["preflight_result"] == "pass"
     assert result["next_action"] == "run_batch"
+
+
+def test_autopilot_queue_preflight_marks_missing_agent_config_as_risk(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class GhostAgent:
+        name = "ghost"
+
+        def check_available(self) -> bool:
+            return True
+
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Ready task\n", encoding="utf-8")
+    write_config(tmp_path)
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    capsys.readouterr()
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._select_agent",
+        lambda config, policy_engine: GhostAgent(),
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "preflight",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--json",
+            "--fail-on-risk",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert result["agent_profile"]["name"] == "ghost"
+    assert result["agent_profile"]["configured"] is False
+    assert result["agent_profile"]["type"] == "(missing)"
+    assert result["preflight_result"] == "risk_or_unavailable"
+    assert result["next_action"] == "fix_agent"
 
 
 def test_autopilot_queue_preflight_next_action_review_blocked(

@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- Added `.github/CODEOWNERS` and a local `.pre-commit-config.yaml` with
+  `ruff check` and `ruff format` hooks for review and formatting hygiene.
+
+- Documented the migration no-op contract with a regression test for matching
+  current and target schema versions.
+
+- Reused CLI state-store instances per repository DB path and extracted the
+  repeated `--max-runtime-sec` parser option into a helper.
+
+- Added a SQLite `plan_items(status, plan_item_id)` index for status-only queue
+  scans, including a schema migration for existing state stores.
+
+- Fixed CLI runtime-budget validation so every parsed `--max-runtime-sec` option
+  is rejected consistently when it is zero or negative.
+
+- Fixed `ai-orch verify` exit-code handling so policy-denied verification
+  commands are reported but do not fail CI-style verification gates; commands
+  that require approval still return a failing exit code.
+
+- Fixed autopilot task de-duplication so started plan items are matched by the
+  exact persisted `Source` line instead of substring matches against source or
+  task text, avoiding false skips when line numbers or task text overlap.
+
+- Fixed `ai-orch autopilot queue preflight` agent profile handling so a selected
+  agent missing from `config.agents` is reported as unconfigured, marks preflight
+  as risk, and returns `next_action=fix_agent` instead of showing unknown fields
+  as if the profile were usable.
+
 - Added read-only `--json` output to `ai-orch autopilot queue list` for selected
   plan and `--all-plans` views, including filtered queue rows, status counts,
   limit metadata, selected plan scope, and problem summary.

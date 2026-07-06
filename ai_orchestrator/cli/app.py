@@ -58,9 +58,22 @@ from ai_orchestrator.verification.runner import VerificationCommand, Verificatio
 
 _QUEUE_STATUSES = ("created", "in_progress", "done", "blocked", "skipped")
 _TERMINAL_QUEUE_STATUSES = {"done", "skipped"}
+_STATE_STORE_CACHE: dict[Path, StateStore] = {}
 
 # Schema version for the JSON trace produced by ``ai-orch export``.
 TRACE_SCHEMA_VERSION = "1.0"
+
+
+def _add_max_runtime_sec_argument(parser: Any) -> None:
+    parser.add_argument(
+        "--max-runtime-sec",
+        type=int,
+        metavar="SECONDS",
+        help=(
+            "Optional per-run supervisor runtime budget in seconds. "
+            "Overrides orchestrator.max_runtime_sec for this queue item."
+        ),
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -491,15 +504,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Relative paths are resolved from --repo."
         ),
     )
-    autopilot_queue_run_next.add_argument(
-        "--max-runtime-sec",
-        type=int,
-        metavar="SECONDS",
-        help=(
-            "Optional per-run supervisor runtime budget in seconds. "
-            "Overrides orchestrator.max_runtime_sec for this queue item."
-        ),
-    )
+    _add_max_runtime_sec_argument(autopilot_queue_run_next)
     autopilot_queue_run_batch = autopilot_queue_sub.add_parser(
         "run-batch",
         help="Run up to a configurable number of persisted queue items serially",
@@ -550,15 +555,7 @@ def build_parser() -> argparse.ArgumentParser:
             "BASE_DIR. Mutually exclusive with --worktree. Dry-run by default."
         ),
     )
-    autopilot_queue_run_batch.add_argument(
-        "--max-runtime-sec",
-        type=int,
-        metavar="SECONDS",
-        help=(
-            "Optional per-run supervisor runtime budget in seconds. "
-            "Overrides orchestrator.max_runtime_sec for this queue item."
-        ),
-    )
+    _add_max_runtime_sec_argument(autopilot_queue_run_batch)
     autopilot_queue_run_batch.add_argument(
         "--max-items",
         type=int,
@@ -765,6 +762,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     _configure_logging(args.log_level)
+    if not _validate_max_runtime_sec(args):
+        return 1
 
     if args.command == "init":
         Path(".ai-orch/state").mkdir(parents=True, exist_ok=True)
@@ -811,7 +810,11 @@ def main(argv: list[str] | None = None) -> int:
         verification_results = runner.run_many(config.verification_commands, cwd=repo)
         for item in verification_results:
             print(f"{item.name}: {item.status} exit={item.exit_code}")
-        return 0 if all(item.status == "passed" for item in verification_results) else 1
+        verification_ok = all(
+            _verify_status_allows_success(item.status)
+            for item in verification_results
+        )
+        return 0 if verification_ok else 1
 
     if args.command == "release-check":
         results = run_release_checks(Path(args.repo))
@@ -989,7 +992,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _state_store_for_repo(repo: Path) -> StateStore:
-    return StateStore(repo / ".ai-orch" / "state" / "ai-orch.db")
+    db_path = (repo / ".ai-orch" / "state" / "ai-orch.db").resolve()
+    store = _STATE_STORE_CACHE.get(db_path)
+    if store is None:
+        store = StateStore(db_path)
+        _STATE_STORE_CACHE[db_path] = store
+    return store
 
 
 def _write_task_report(store: StateStore, repo: Path, task_id: str) -> Path | None:
@@ -1102,6 +1110,10 @@ def _validate_max_runtime_sec(args: argparse.Namespace) -> bool:
         return True
     print("--max-runtime-sec must be greater than 0")
     return False
+
+
+def _verify_status_allows_success(status: str) -> bool:
+    return status in {"passed", "policy_denied"}
 
 
 def _filter_queue_items(
@@ -1928,11 +1940,13 @@ def _queue_preflight_snapshot(
     agent = _select_agent(config, policy_engine)
     agent_config = config.agents.get(agent.name)
     agent_available = agent.check_available()
+    agent_profile = _agent_profile_data(agent, agent_config, agent_available)
+    agent_ready = agent_available and bool(agent_profile["configured"])
     mode = "mock" if agent.name == "mock" else "real"
 
-    preflight_ok = not has_readiness_risk and agent_available
+    preflight_ok = not has_readiness_risk and agent_ready
     next_action = _next_action_for_preflight(
-        agent_available=agent_available,
+        agent_available=agent_ready,
         created_ready=created_ready,
         stale_created_count=len(stale_created),
         in_progress_count=in_progress_total,
@@ -1971,12 +1985,13 @@ def _queue_preflight_snapshot(
             limit=bounded_limit if bounded_limit else None,
         ),
         "agent_profile": {
-            "name": agent.name,
-            "type": _agent_config_value(agent_config, "type"),
-            "profile": _agent_config_value(agent_config, "profile"),
+            "name": agent_profile["name"],
+            "configured": agent_profile["configured"],
+            "type": agent_profile["type"],
+            "profile": agent_profile["profile"],
             "mode": mode,
-            "command": _agent_config_value(agent_config, "command"),
-            "available": agent_available,
+            "command": agent_profile["command"],
+            "available": agent_profile["available"],
         },
         "preflight_result": "pass" if preflight_ok else "risk_or_unavailable",
         "next_action": next_action,
@@ -2084,6 +2099,8 @@ def _run_autopilot_queue_preflight(
     agent_profile = snapshot["agent_profile"]
     print("Agent profile:")
     print(f"  name: {agent_profile['name']}")
+    if not agent_profile["configured"]:
+        print("  configured: no")
     print(f"  type: {agent_profile['type']}")
     print(f"  profile: {agent_profile['profile']}")
     print(f"  mode: {agent_profile['mode']}")
@@ -3640,22 +3657,49 @@ def _print_autopilot_agent_profile(
     agent_config: AgentConfig | None,
     available: bool,
 ) -> None:
+    profile = _agent_profile_data(agent, agent_config, available)
     print("Agent profile:")
-    print(f"  name: {agent.name}")
-    print(f"  type: {_agent_config_value(agent_config, 'type')}")
-    print(f"  profile: {_agent_config_value(agent_config, 'profile')}")
-    print(f"  mode: {'mock' if agent.name == 'mock' else 'real'}")
-    print(f"  command: {_agent_config_value(agent_config, 'command')}")
-    print(f"  available: {'yes' if available else 'no'}")
+    print(f"  name: {profile['name']}")
+    if not profile["configured"]:
+        print("  configured: no")
+    print(f"  type: {profile['type']}")
+    print(f"  profile: {profile['profile']}")
+    print(f"  mode: {profile['mode']}")
+    print(f"  command: {profile['command']}")
+    print(f"  available: {'yes' if profile['available'] else 'no'}")
 
 
 def _print_progress(message: str) -> None:
     print(f"progress: {message}", flush=True)
 
 
-def _agent_config_value(agent_config: AgentConfig | None, field: str) -> str:
+def _agent_profile_data(
+    agent: AgentAdapter,
+    agent_config: AgentConfig | None,
+    available: bool,
+) -> dict[str, Any]:
     if agent_config is None:
-        return "(unknown)"
+        return {
+            "name": agent.name,
+            "configured": False,
+            "type": "(missing)",
+            "profile": "(missing)",
+            "mode": "mock" if agent.name == "mock" else "real",
+            "command": "(missing)",
+            "available": available,
+        }
+    return {
+        "name": agent.name,
+        "configured": True,
+        "type": _agent_config_value(agent_config, "type"),
+        "profile": _agent_config_value(agent_config, "profile"),
+        "mode": "mock" if agent.name == "mock" else "real",
+        "command": _agent_config_value(agent_config, "command"),
+        "available": available,
+    }
+
+
+def _agent_config_value(agent_config: AgentConfig, field: str) -> str:
     value = getattr(agent_config, field)
     if value == "":
         return "(default)"

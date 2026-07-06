@@ -309,9 +309,14 @@ def refresh_created_backlog_item_refs(
 
 
 def _already_started(task: AutopilotTask, existing: list[StoredTask]) -> bool:
-    source = task.source_label
+    source_line = f"- Source: {task.source_label}"
     for stored_task in existing:
-        if source in stored_task.task or task.text in stored_task.task:
+        stored_sources = (
+            line.strip()
+            for line in stored_task.task.splitlines()
+            if line.strip().startswith("- Source:")
+        )
+        if any(line == source_line for line in stored_sources):
             return True
     return False
 

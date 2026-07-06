@@ -4,7 +4,7 @@ import sqlite3
 from collections.abc import Callable
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 Migration = Callable[[sqlite3.Connection], None]
 
 
@@ -167,6 +167,17 @@ def _migrate_6_to_7(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_7_to_8(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "plan_items"):
+        return
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_plan_items_status_id
+        ON plan_items (status, plan_item_id)
+        """
+    )
+
+
 def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     row = connection.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -193,6 +204,7 @@ MIGRATIONS: dict[int, Migration] = {
     4: _migrate_4_to_5,
     5: _migrate_5_to_6,
     6: _migrate_6_to_7,
+    7: _migrate_7_to_8,
 }
 
 

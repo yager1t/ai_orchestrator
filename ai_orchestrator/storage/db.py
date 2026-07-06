@@ -229,6 +229,9 @@ class StateStore:
 
                 CREATE INDEX IF NOT EXISTS idx_plan_items_plan_status
                 ON plan_items (plan_path, status, line_number);
+
+                CREATE INDEX IF NOT EXISTS idx_plan_items_status_id
+                ON plan_items (status, plan_item_id);
                 """
             )
             migrate_schema(connection)

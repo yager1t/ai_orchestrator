@@ -19,7 +19,7 @@ Current working surface:
 
 - CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `export`, `verify`, `release-check`, `ci`, `agents`, `metrics`, `approvals`, `autopilot`, `tui`.
 - Supervisor loop with verification-gated completion.
-- SQLite task, iteration, verification, and schema-version storage.
+- SQLite task, iteration, verification, autopilot queue, and schema-version storage.
 - Policy checks for agent and verification commands.
 - Cooperative cancellation and subprocess termination.
 - Safe metadata logs with stable `event=...` fields.
@@ -28,6 +28,7 @@ Current working surface:
 - Structured adapter output fields stored with each iteration:
   `summary`, `files_changed`, `tool_actions`, `exit_reason`, and `uncertainty`.
 - Optional Codebase Memory CLI helpers for manual architecture, search, and impact context.
+- Review hygiene with CODEOWNERS, local ruff pre-commit hooks, and release checks.
 
 Supported agent types:
 
@@ -42,7 +43,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 263 passed
+- `python -m pytest`: 469 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed

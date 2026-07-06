@@ -105,6 +105,37 @@ def test_next_task_skips_existing_stored_tasks(tmp_path: Path) -> None:
     assert selected.text == "Second task"
 
 
+def test_next_task_matches_started_task_by_exact_source_line(tmp_path: Path) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] First task",
+                "- [ ] Second task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / "state.db")
+    tasks = load_plan_tasks(plan)
+    stored_prompt = "\n".join(
+        [
+            "Autopilot plan item:",
+            f"- Source: {plan.as_posix()}:30",
+            "- Section: Roadmap",
+            "- Task: First task",
+        ]
+    )
+    store.create_task(stored_prompt, repo_path=tmp_path)
+
+    selected = next_task(tasks, store)
+
+    assert selected is not None
+    assert selected.source_label == tasks[0].source_label
+
+
 def test_recording_plan_items_does_not_execute_or_reorder_them(
     tmp_path: Path,
 ) -> None:

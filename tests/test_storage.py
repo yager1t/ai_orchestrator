@@ -81,6 +81,20 @@ def test_state_store_records_schema_version(tmp_path: Path) -> None:
     assert store.schema_version() == SCHEMA_VERSION
 
 
+def test_state_store_creates_plan_item_status_index(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    store.initialize()
+
+    with sqlite3.connect(tmp_path / "state.db") as connection:
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_items)").fetchall()
+        }
+
+    assert "idx_plan_items_status_id" in indexes
+
+
 def test_migrate_schema_sets_initial_version(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     with sqlite3.connect(db_path) as connection:
@@ -221,6 +235,21 @@ def test_migrate_between_versions_rejects_missing_path(tmp_path: Path) -> None:
                 target_version=2,
                 migrations={},
             )
+
+
+def test_migrate_between_versions_noops_when_versions_match(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 1")
+        migrate_between_versions(
+            connection,
+            current_version=1,
+            target_version=1,
+            migrations={},
+        )
+        version = schema_version(connection)
+
+    assert version == 1
 
 
 def test_state_store_lists_tasks_newest_first(tmp_path: Path) -> None:
@@ -893,6 +922,7 @@ def test_migrate_schema_upgrades_v4_store_with_plan_items(tmp_path: Path) -> Non
         "updated_at",
     }.issubset(columns)
     assert "idx_plan_items_plan_status" in indexes
+    assert "idx_plan_items_status_id" in indexes
 
 
 def test_migrate_schema_upgrades_v5_store_with_plan_item_worktree_path(
@@ -954,3 +984,36 @@ def test_migrate_schema_upgrades_v6_store_with_plan_item_blocked_reason(
 
     assert version == SCHEMA_VERSION
     assert "blocked_reason" in columns
+
+
+def test_migrate_schema_upgrades_v7_store_with_plan_item_status_index(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 7")
+        connection.execute(
+            """
+            CREATE TABLE plan_items (
+                plan_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_path TEXT NOT NULL,
+                line_number INTEGER NOT NULL,
+                section TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                task_id TEXT,
+                selected_worktree_path TEXT,
+                blocked_reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        version = migrate_schema(connection)
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_items)").fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "idx_plan_items_status_id" in indexes
