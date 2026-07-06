@@ -602,6 +602,14 @@ def build_parser() -> argparse.ArgumentParser:
             "than N hours"
         ),
     )
+    autopilot_queue_recover.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Print a machine-readable recovery summary without changing "
+            "dry-run/apply or exit-code semantics"
+        ),
+    )
 
     autopilot_queue_show = autopilot_queue_sub.add_parser(
         "show",
@@ -2203,12 +2211,23 @@ def _run_autopilot_queue_recover_in_progress(
             if _plan_item_updated_before(item, cutoff)
         ]
 
-    print(f"Queue recover for {plan_label}")
-    print(f"  stale_in_progress: {len(items)}")
     if not items:
-        print("  No stale in_progress queue items found.")
+        if args.json:
+            _print_recover_in_progress_json(
+                repo,
+                plan_label=plan_label,
+                include_plan_path=include_plan_path,
+                items=items,
+                args=args,
+                blocked_count=0,
+            )
+        else:
+            print(f"Queue recover for {plan_label}")
+            print(f"  stale_in_progress: {len(items)}")
+            print("  No stale in_progress queue items found.")
         return 0
 
+    blocked_count = 0
     if args.apply:
         updated_items: list[StoredPlanItem] = []
         for item in items:
@@ -2219,6 +2238,22 @@ def _run_autopilot_queue_recover_in_progress(
             )
             updated_items.append(updated if updated is not None else item)
         items = updated_items
+        blocked_count = len(items)
+
+    if args.json:
+        _print_recover_in_progress_json(
+            repo,
+            plan_label=plan_label,
+            include_plan_path=include_plan_path,
+            items=items,
+            args=args,
+            blocked_count=blocked_count,
+        )
+        return 0
+
+    print(f"Queue recover for {plan_label}")
+    print(f"  stale_in_progress: {len(items)}")
+    if args.apply:
         print(f"  blocked: {len(items)}")
         print(f"  reason: {args.reason}")
     else:
@@ -2231,6 +2266,34 @@ def _run_autopilot_queue_recover_in_progress(
         item_label = _queue_item_label(item, include_plan_path=include_plan_path)
         print(f"  [stale_in_progress] {item_label}: {item.text}{refs}")
     return 0
+
+
+def _print_recover_in_progress_json(
+    repo: Path,
+    *,
+    plan_label: str,
+    include_plan_path: bool,
+    items: list[StoredPlanItem],
+    args: argparse.Namespace,
+    blocked_count: int,
+) -> None:
+    payload = {
+        "plan": plan_label,
+        "all_plans": include_plan_path,
+        "apply": bool(args.apply),
+        "dry_run": not bool(args.apply),
+        "older_than_hours": args.older_than_hours,
+        "stale_in_progress": {
+            "count": len(items),
+            "items": [_queue_item_readiness_ref(repo, item) for item in items],
+        },
+        "blocked": {
+            "count": blocked_count,
+            "reason": args.reason if args.apply else None,
+        },
+        "applied_reason": args.reason if args.apply else None,
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
 def _plan_item_updated_before(item: StoredPlanItem, cutoff: datetime) -> bool:

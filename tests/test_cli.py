@@ -6632,6 +6632,112 @@ def test_autopilot_queue_recover_in_progress_stale_row_includes_refs_and_reason(
     assert "reason=interrupted" in output
 
 
+def test_autopilot_queue_recover_in_progress_json_dry_run_reports_scope_and_refs(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Old task\n- [ ] Current task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    old_task = store.create_task("old task", repo_path=tmp_path)
+    worktree = tmp_path / "wt"
+    store.update_plan_item_status(
+        items["Old task"].plan_item_id,
+        "in_progress",
+        task_id=old_task.task_id,
+        selected_worktree_path=worktree,
+    )
+    store.update_plan_item_status(items["Current task"].plan_item_id, "in_progress")
+    old_updated_at = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE plan_items SET updated_at = ? WHERE plan_item_id = ?",
+            (old_updated_at, items["Old task"].plan_item_id),
+        )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--older-than-hours",
+            "24",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    loaded = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+
+    assert exit_code == 0
+    assert payload["plan"] == str(plan)
+    assert payload["all_plans"] is False
+    assert payload["apply"] is False
+    assert payload["dry_run"] is True
+    assert payload["older_than_hours"] == 24
+    assert payload["blocked"] == {"count": 0, "reason": None}
+    assert payload["applied_reason"] is None
+    assert payload["stale_in_progress"]["count"] == 1
+    stale_item = payload["stale_in_progress"]["items"][0]
+    assert stale_item["plan_item_id"] == items["Old task"].plan_item_id
+    assert stale_item["task_id"] == old_task.task_id
+    assert stale_item["selected_worktree_path"] == str(worktree)
+    assert loaded["Old task"].status == "in_progress"
+    assert loaded["Current task"].status == "in_progress"
+
+
+def test_autopilot_queue_recover_in_progress_json_apply_reports_blocked_reason(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Orphan task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    store.update_plan_item_status(item.plan_item_id, "in_progress")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "recover-in-progress",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--apply",
+            "--reason",
+            "interrupted",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert payload["apply"] is True
+    assert payload["dry_run"] is False
+    assert payload["blocked"] == {"count": 1, "reason": "interrupted"}
+    assert payload["applied_reason"] == "interrupted"
+    assert payload["stale_in_progress"]["count"] == 1
+    stale_item = payload["stale_in_progress"]["items"][0]
+    assert stale_item["status"] == "blocked"
+    assert stale_item["blocked_reason"] == "interrupted"
+    assert loaded is not None
+    assert loaded.status == "blocked"
+    assert loaded.blocked_reason == "interrupted"
+
+
 def test_autopilot_queue_reconcile_stale_row_omits_refs_when_unset(
     capsys,
     tmp_path: Path,
