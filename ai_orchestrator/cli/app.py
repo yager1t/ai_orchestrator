@@ -661,6 +661,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Actually move the item back to created; without this flag the command is a dry run",
     )
+    autopilot_queue_requeue.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the requeue dry-run or apply result as machine-readable JSON",
+    )
 
     autopilot_queue_skip = autopilot_queue_sub.add_parser(
         "skip",
@@ -2470,15 +2475,42 @@ def _run_autopilot_queue_requeue(
     if validation_error is not None:
         return validation_error
 
-    print(f"Requeue queue item {item.plan_item_id}")
-    print(f"  source: {item.plan_path}:{item.line_number}")
-    print(f"  task: {item.text}")
-    if item.blocked_reason:
-        print(f"  blocked_reason: {item.blocked_reason}")
-    if item.task_id:
-        print(f"  task_id: {item.task_id}")
-    if item.selected_worktree_path:
-        print(f"  selected_worktree_path: {item.selected_worktree_path}")
+    cleared_metadata = [
+        "blocked_reason",
+        "task_id",
+        "selected_worktree_path",
+    ]
+    plan_scope = {
+        "requested_plan": (
+            str(_resolve_plan_path(repo, Path(args.plan))) if args.plan else None
+        ),
+        "item_plan": item.plan_path,
+        "validated": bool(args.plan),
+    }
+
+    if args.json and not args.apply:
+        payload = {
+            "plan_item": _queue_item_readiness_ref(repo, item),
+            "plan_scope": plan_scope,
+            "mode": "dry_run",
+            "applied": False,
+            "resulting_status": item.status,
+            "cleared_metadata": [],
+            "would_clear_metadata": cleared_metadata,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return 0
+
+    if not args.json:
+        print(f"Requeue queue item {item.plan_item_id}")
+        print(f"  source: {item.plan_path}:{item.line_number}")
+        print(f"  task: {item.text}")
+        if item.blocked_reason:
+            print(f"  blocked_reason: {item.blocked_reason}")
+        if item.task_id:
+            print(f"  task_id: {item.task_id}")
+        if item.selected_worktree_path:
+            print(f"  selected_worktree_path: {item.selected_worktree_path}")
 
     if not args.apply:
         print("  dry_run: use --apply to move this item back to created")
@@ -2488,6 +2520,19 @@ def _run_autopilot_queue_requeue(
     if requeued is None:
         print("  requeue failed: item is no longer blocked")
         return 1
+
+    if args.json:
+        payload = {
+            "plan_item": _queue_item_readiness_ref(repo, item),
+            "plan_scope": plan_scope,
+            "mode": "apply",
+            "applied": True,
+            "resulting_status": requeued.status,
+            "cleared_metadata": cleared_metadata,
+            "would_clear_metadata": [],
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return 0
 
     print("  status: created")
     print("  cleared: blocked_reason, task_id, selected_worktree_path")
