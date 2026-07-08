@@ -8,6 +8,10 @@
   changed the Windows `.cmd` installer to keep the console window open after
   success or failure, including explicit next commands and log guidance.
 
+- Improved the missing-Python path with a concrete
+  `INSTALL_WINDOWS.cmd /install-python` command and an opt-in winget-based
+  Python 3.12 bootstrap before continuing setup.
+
 ## 0.2.3 — clearer Windows first-run UX
 
 - Improved the Windows installer with install transcripts under

@@ -88,6 +88,12 @@ After it finishes, run:
 ai-orch.cmd
 ```
 
+If the installer says Python is missing, run:
+
+```cmd
+INSTALL_WINDOWS.cmd /install-python
+```
+
 See [`docs/WINDOWS_INSTALL.md`](docs/WINDOWS_INSTALL.md) for PowerShell options,
 developer install mode, and troubleshooting.
 

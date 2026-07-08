@@ -2,6 +2,7 @@ param(
     [switch]$Dev,
     [switch]$ForceSetup,
     [switch]$KeepConfig,
+    [switch]$InstallPython,
     [switch]$SkipDoctor
 )
 
@@ -32,7 +33,7 @@ function Write-Step {
     Write-Host "==> $Message"
 }
 
-function Resolve-Python {
+function Get-PythonCandidate {
     $candidates = @(
         @{ Command = "py"; Args = @("-3.12") },
         @{ Command = "py"; Args = @("-3") },
@@ -52,7 +53,77 @@ function Resolve-Python {
         }
     }
 
-    throw "Python 3.12+ was not found. Install Python from https://www.python.org/downloads/windows/ and re-run this script."
+    return $null
+}
+
+function Update-ProcessPath {
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machinePath;$userPath"
+}
+
+function Install-PythonWithWinget {
+    $winget = Get-Command "winget" -ErrorAction SilentlyContinue
+    if ($null -eq $winget) {
+        throw @"
+Python 3.12+ was not found, and winget is not available.
+
+Install Python manually:
+  1. Open https://www.python.org/downloads/windows/
+  2. Install Python 3.12 or newer.
+  3. Enable "Add python.exe to PATH" if the installer asks.
+  4. Run INSTALL_WINDOWS.cmd again.
+"@
+    }
+
+    Write-Step "Installing Python 3.12 with winget"
+    & $winget.Source install --exact --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+        throw @"
+Python installation through winget failed.
+
+Manual fix:
+  1. Open https://www.python.org/downloads/windows/
+  2. Install Python 3.12 or newer.
+  3. Run INSTALL_WINDOWS.cmd again.
+"@
+    }
+    Update-ProcessPath
+}
+
+function Resolve-Python {
+    $python = Get-PythonCandidate
+    if ($null -ne $python) {
+        return $python
+    }
+
+    if ($InstallPython) {
+        Install-PythonWithWinget
+        $python = Get-PythonCandidate
+        if ($null -ne $python) {
+            return $python
+        }
+        throw @"
+Python was installed, but this terminal cannot see it yet.
+
+Close this window, open the extracted project folder again, and run:
+  INSTALL_WINDOWS.cmd
+"@
+    }
+
+    throw @"
+Python 3.12+ was not found.
+
+Fast fix:
+  Double-click INSTALL_WINDOWS.cmd again with automatic Python install enabled:
+    INSTALL_WINDOWS.cmd /install-python
+
+Manual fix:
+  1. Open https://www.python.org/downloads/windows/
+  2. Install Python 3.12 or newer.
+  3. Enable "Add python.exe to PATH" if the installer asks.
+  4. Run INSTALL_WINDOWS.cmd again.
+"@
 }
 
 function Invoke-Python {

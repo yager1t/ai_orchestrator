@@ -43,7 +43,9 @@ For PowerShell options, development mode, and troubleshooting, see
 `docs/WINDOWS_INSTALL.md`. The Windows installer refreshes
 `.ai-orch/config.yaml` for the current machine by default; use `-KeepConfig`
 when you intentionally want to preserve an existing config. After installation,
-run `ai-orch.cmd` from the repository root to see common next commands.
+run `ai-orch.cmd` from the repository root to see common next commands. If
+Python is missing, run `INSTALL_WINDOWS.cmd /install-python` to let the
+installer try installing Python 3.12 through winget.
 
 ## Smoke Path
 

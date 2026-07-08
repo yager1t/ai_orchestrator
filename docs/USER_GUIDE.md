@@ -37,6 +37,12 @@ On Windows, the easiest path is:
 INSTALL_WINDOWS.cmd
 ```
 
+If it says Python is missing:
+
+```cmd
+INSTALL_WINDOWS.cmd /install-python
+```
+
 The Windows installer refreshes `.ai-orch/config.yaml` for the current machine
 creates local state directories, writes an install log, and creates
 `ai-orch.cmd` in the project root. See `docs/WINDOWS_INSTALL.md` for PowerShell

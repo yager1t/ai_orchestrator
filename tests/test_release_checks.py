@@ -88,6 +88,8 @@ def test_windows_installer_scripts_are_safe_repo_helpers() -> None:
     )
     assert "pause" in combined
     assert "/nopause" in combined
+    assert "/install-python" in combined
+    assert "Python.Python.3.12" in combined
     assert "INSTALL_WINDOWS.cmd" in combined
     assert "KeepConfig" in combined
     assert "install-logs" in combined

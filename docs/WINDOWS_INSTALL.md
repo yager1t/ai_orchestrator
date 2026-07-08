@@ -38,6 +38,17 @@ INSTALL_WINDOWS.cmd
 The installer window stays open when it finishes so you can read the result.
 For scripted smoke tests, pass `/nopause`.
 
+If the installer says Python 3.12+ was not found, use the built-in bootstrap:
+
+```cmd
+INSTALL_WINDOWS.cmd /install-python
+```
+
+This uses `winget` to install Python 3.12, then continues the `ai-orch`
+installation. If `winget` is not available, install Python manually from
+python.org, enable PATH when the installer asks, and run `INSTALL_WINDOWS.cmd`
+again.
+
 The lower-level script is also available from Command Prompt:
 
 ```cmd
@@ -134,7 +145,14 @@ service manager, or CI secrets.
 
 ## Troubleshooting
 
-If Python is not found, install Python 3.12+ and rerun the script.
+If Python is not found, run:
+
+```cmd
+INSTALL_WINDOWS.cmd /install-python
+```
+
+If automatic Python install is not available, install Python 3.12+ manually and
+rerun the script.
 
 If `doctor` reports `default_agent_unavailable`, either install/authenticate the
 selected worker CLI or run:
