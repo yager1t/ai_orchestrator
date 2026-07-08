@@ -1,0 +1,106 @@
+# Windows Install Guide
+
+This is the simplest Windows path for installing `ai-orch` from a checked-out
+repository. It creates a local virtual environment, installs the package,
+generates a safe local config when needed, and runs `ai-orch doctor`.
+
+The installer does not ask for API keys, does not create `.env` files, and does
+not read private auth files. Authenticate worker CLIs such as Codex, Claude,
+Kimi, or Gemini through their own login/setup flows before using them as real
+workers.
+
+## Prerequisites
+
+- Windows 10 or newer.
+- Python 3.12 or newer from the Microsoft Store, python.org, or another trusted
+  Python distribution.
+- The project repository downloaded or cloned locally.
+
+Optional real worker CLIs:
+
+- `codex`
+- `claude`
+- `kimi`
+- `gemini`
+
+If none are installed, `ai-orch setup` falls back to the safe `mock` worker for
+smoke tests.
+
+## One-Command Install
+
+From the repository root in Command Prompt:
+
+```cmd
+scripts\install_windows.cmd
+```
+
+From PowerShell:
+
+```powershell
+.\scripts\install_windows.ps1
+```
+
+The script will:
+
+1. Check for Python 3.12+.
+2. Create `.venv` when it does not exist.
+3. Install `ai-orchestrator` into `.venv`.
+4. Run `python -m ai_orchestrator --version`.
+5. Run `ai-orch setup --repo .` when `.ai-orch/config.yaml` does not exist.
+6. Run `ai-orch doctor --repo .`.
+
+## Development Install
+
+Use editable mode with development tools:
+
+```powershell
+.\scripts\install_windows.ps1 -Dev
+```
+
+## Regenerate Config
+
+By default, the installer keeps an existing `.ai-orch/config.yaml`.
+
+To regenerate it:
+
+```powershell
+.\scripts\install_windows.ps1 -ForceSetup
+```
+
+## Skip Doctor
+
+Use this only when you want installation without readiness diagnostics:
+
+```powershell
+.\scripts\install_windows.ps1 -SkipDoctor
+```
+
+## After Installation
+
+Run commands through the local virtual environment:
+
+```powershell
+.\.venv\Scripts\ai-orch.exe doctor --repo .
+.\.venv\Scripts\ai-orch.exe agents --repo . --check
+.\.venv\Scripts\ai-orch.exe start --repo . --task "Check setup"
+```
+
+If you installed Codex, Claude, Kimi, or Gemini and want a real worker, log in
+with that tool first. Keep raw provider keys outside `.ai-orch/config.yaml`;
+use the worker CLI's native login, environment variables, OS/user secret store,
+service manager, or CI secrets.
+
+## Troubleshooting
+
+If Python is not found, install Python 3.12+ and rerun the script.
+
+If `doctor` reports `default_agent_unavailable`, either install/authenticate the
+selected worker CLI or run:
+
+```powershell
+.\.venv\Scripts\ai-orch.exe setup --repo . --agent mock --force
+```
+
+If installation fails because pip cannot access the package index, check network
+access or install from an environment that already has the required development
+tools cached.

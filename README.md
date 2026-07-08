@@ -17,8 +17,8 @@ The robust local control plane is implemented in the current `main` branch.
 
 Current working surface:
 
-- CLI commands: `init`, `start`, `status`, `cancel`, `resume`, `recover`,
-  `report`, `timeline`, `export`, `verify`, `release-check`, `ci`, `agents`,
+- CLI commands: `init`, `setup`, `doctor`, `start`, `status`, `cancel`,
+  `resume`, `recover`, `report`, `timeline`, `export`, `verify`, `release-check`, `ci`, `agents`,
   `metrics`, `eval`, `approvals`, `autopilot`, `memory`, and `tui`.
 - Supervisor loop with verification-gated completion.
 - SQLite task, iteration, verification, event, action, approval, PlanGraph,
@@ -52,7 +52,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 574 passed
+- `python -m pytest`: 579 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -65,14 +65,25 @@ python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 python -m pip install -e ".[dev]"
 ai-orch --help
-ai-orch init
+ai-orch setup
+ai-orch doctor
 ai-orch start --task "Check the MVP scaffold" --repo .
 python -m pytest
 ```
 
 For a non-editable local install, run `python -m pip install .`. See
 [`docs/INSTALL.md`](docs/INSTALL.md) for the install smoke path and release
-verification commands.
+verification commands. See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for the
+operator workflow after installation.
+
+On Windows, use the one-command local installer:
+
+```cmd
+scripts\install_windows.cmd
+```
+
+See [`docs/WINDOWS_INSTALL.md`](docs/WINDOWS_INSTALL.md) for PowerShell options,
+developer install mode, and troubleshooting.
 
 ## Configuration
 
@@ -298,9 +309,18 @@ read-only `ai-orch tui approvals` and `ai-orch tui status <task_id>` views.
 Do not put API keys, tokens, passwords, or private key material in
 `.ai-orch/config.yaml`.
 
-Use each agent CLI's native login flow or process environment variables for
-credentials. Stored agent and verification outputs redact common secret-like
-token formats before reports are rendered.
+`ai-orch setup` intentionally does not ask for API keys and does not create a
+`.env` file. Use each worker CLI's native login flow first when one exists
+(`codex login`, `claude login`, or the equivalent command for that tool). If a
+generic wrapper needs a raw provider key, inject it outside the project config
+through the process environment, an OS/user secret store, a service manager, or
+CI secrets. Keep `.env` files out of git and load them from your shell or
+wrapper only when you deliberately choose that local workflow.
+
+`ai-orch` stores command names, arguments, timeouts, verification rules, and
+policy rules. It should not store or retrieve raw provider credentials. Stored
+agent and verification outputs redact common secret-like token formats before
+reports are rendered.
 
 ## State Migrations
 
@@ -311,6 +331,9 @@ in `ai_orchestrator/storage/migrations.py`.
 ## Documentation Map
 
 - `docs/ARCHITECTURE.md`: current component overview.
+- `docs/USER_GUIDE.md`: practical operator guide for installation, tasks,
+  approvals, memory, autopilot, evaluations, and recovery.
+- `docs/WINDOWS_INSTALL.md`: one-command Windows installer and troubleshooting.
 - `docs/MVP_IMPLEMENTATION_PLAN.md`: implemented phases and deferred work.
 - `docs/POST_MVP_ROADMAP.md`: post-MVP product and engineering roadmap.
 - `docs/BACKLOG.md`: current backlog.

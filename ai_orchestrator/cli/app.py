@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import shutil
 import sys
 from collections.abc import Callable
 from dataclasses import asdict
@@ -117,6 +118,30 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("init", help="Create local .ai-orch directories")
+
+    setup = sub.add_parser("setup", help="Create a beginner-friendly local config")
+    setup.add_argument("--repo", default=".")
+    setup.add_argument(
+        "--agent",
+        choices=["auto", "mock", "codex", "claude", "kimi", "gemini"],
+        default="auto",
+        help="Default agent to configure; auto chooses the first detected CLI",
+    )
+    setup.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing .ai-orch/config.yaml",
+    )
+    setup.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the config that would be written without changing files",
+    )
+    setup.add_argument("--json", action="store_true", help="Print machine-readable output")
+
+    doctor = sub.add_parser("doctor", help="Diagnose local setup readiness")
+    doctor.add_argument("--repo", default=".")
+    doctor.add_argument("--json", action="store_true", help="Print machine-readable output")
 
     start = sub.add_parser("start", help="Start a task with the mock agent")
     start.add_argument("--task", required=True)
@@ -1165,6 +1190,12 @@ def main(argv: list[str] | None = None) -> int:
         print("Initialized .ai-orch directories")
         return 0
 
+    if args.command == "setup":
+        return _run_setup_command(args)
+
+    if args.command == "doctor":
+        return _run_doctor_command(args)
+
     if args.command == "agents":
         config = load_project_config(Path(args.repo))
         print(f"default: {config.default_agent}")
@@ -1940,6 +1971,269 @@ def _agent_availability(config: ProjectConfig, agent_name: str) -> str:
     except ValueError:
         return "error"
     return "yes" if agent.check_available() else "no"
+
+
+def _run_setup_command(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    ai_orch_dir = repo / ".ai-orch"
+    config_path = ai_orch_dir / "config.yaml"
+    detected = _detect_agent_commands()
+    default_agent = _select_setup_default_agent(args.agent, detected)
+    config_text = _render_setup_config(default_agent, detected)
+    payload = {
+        "repo": str(repo),
+        "config_path": str(config_path),
+        "default_agent": default_agent,
+        "detected_agents": detected,
+        "dry_run": bool(args.dry_run),
+        "written": False,
+    }
+
+    if config_path.exists() and not args.force and not args.dry_run:
+        payload["error"] = "config_exists"
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"Config already exists: {config_path}")
+            print("Use --force to overwrite it, or --dry-run to preview the generated config.")
+        return 1
+
+    if not args.dry_run:
+        (ai_orch_dir / "state").mkdir(parents=True, exist_ok=True)
+        (ai_orch_dir / "reports").mkdir(parents=True, exist_ok=True)
+        config_path.write_text(config_text, encoding="utf-8")
+        payload["written"] = True
+
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    action = "Would write" if args.dry_run else "Wrote"
+    print(f"{action}: {config_path}")
+    print(f"default_agent: {default_agent}")
+    print("Detected CLI agents:")
+    for name in ["codex", "claude", "kimi", "gemini"]:
+        print(f"- {name}: {detected.get(name) or 'not found'}")
+    if default_agent == "mock":
+        print("No real CLI agent was detected; using mock for safe smoke tests.")
+    print("Next steps:")
+    print("1. Run: ai-orch doctor --repo .")
+    print("2. If a real agent is missing auth, run that CLI's native login command.")
+    print('3. Try: ai-orch start --repo . --task "Check setup"')
+    return 0
+
+
+def _run_doctor_command(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config_path = repo / ".ai-orch" / "config.yaml"
+    state_dir = repo / ".ai-orch" / "state"
+    reports_dir = repo / ".ai-orch" / "reports"
+    config = load_project_config(repo)
+    config_exists = config_path.exists()
+    agents = [
+        {
+            "name": agent.name,
+            "type": agent.type,
+            "enabled": agent.enabled,
+            "command": _agent_config_value(agent, "command"),
+            "available": _agent_availability(config, agent.name),
+            "default": agent.name == config.default_agent,
+        }
+        for agent in config.agents.values()
+    ]
+    default_available = _agent_availability(config, config.default_agent)
+    issues: list[str] = []
+    warnings: list[str] = []
+    if not config_exists:
+        issues.append("missing_config")
+    if config.default_agent not in config.agents:
+        issues.append("default_agent_missing")
+    elif not config.agents[config.default_agent].enabled:
+        issues.append("default_agent_disabled")
+    elif default_available != "yes":
+        issues.append("default_agent_unavailable")
+    if not config.verification_commands:
+        issues.append("no_verification_commands")
+    if not state_dir.exists():
+        warnings.append("missing_state_dir")
+    if not reports_dir.exists():
+        warnings.append("missing_reports_dir")
+
+    payload = {
+        "repo": str(repo),
+        "config_path": str(config_path),
+        "config_exists": config_exists,
+        "state_dir_exists": state_dir.exists(),
+        "reports_dir_exists": reports_dir.exists(),
+        "default_agent": config.default_agent,
+        "default_agent_available": default_available,
+        "agents": agents,
+        "verification_commands": [
+            {"name": command.name, "timeout_sec": command.timeout_sec}
+            for command in config.verification_commands
+        ],
+        "issues": issues,
+        "warnings": warnings,
+        "ready": not issues,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if not issues else 1
+
+    print("=== ai-orch doctor ===")
+    print(f"repo: {repo}")
+    print(f"config: {'found' if config_exists else 'missing'} ({config_path})")
+    print(f"state_dir: {'ok' if state_dir.exists() else 'missing'}")
+    print(f"reports_dir: {'ok' if reports_dir.exists() else 'missing'}")
+    print(f"default_agent: {config.default_agent} available={default_available}")
+    print("agents:")
+    for agent in agents:
+        marker = " default" if agent["default"] else ""
+        print(
+            f"- {agent['name']}: enabled={agent['enabled']} "
+            f"type={agent['type']} available={agent['available']}{marker}"
+        )
+    print(f"verification_commands: {len(config.verification_commands)}")
+    for command in config.verification_commands:
+        print(f"- {command.name}: timeout={command.timeout_sec}")
+    if warnings:
+        print("warnings:")
+        for warning in warnings:
+            print(f"- {warning}")
+    if issues:
+        print("issues:")
+        for issue in issues:
+            print(f"- {issue}")
+        print("Suggested fix: run ai-orch setup --repo .")
+        return 1
+    print("ready: yes")
+    return 0
+
+
+def _detect_agent_commands() -> dict[str, str | None]:
+    return {
+        "codex": shutil.which("codex"),
+        "claude": shutil.which("claude"),
+        "kimi": shutil.which("kimi"),
+        "gemini": shutil.which("gemini"),
+    }
+
+
+def _select_setup_default_agent(
+    requested: str,
+    detected: dict[str, str | None],
+) -> str:
+    if requested != "auto":
+        return requested
+    for name in ["codex", "claude", "kimi", "gemini"]:
+        if detected.get(name):
+            return name
+    return "mock"
+
+
+def _render_setup_config(
+    default_agent: str,
+    detected: dict[str, str | None],
+) -> str:
+    fallback_agents = [
+        name
+        for name in ["codex", "claude", "kimi", "gemini", "mock"]
+        if name != default_agent
+    ]
+    lines = [
+        "project:",
+        '  name: "ai-orchestrator-project"',
+        '  repo: "."',
+        "",
+        "orchestrator:",
+        f'  default_agent: "{default_agent}"',
+        "  fallback_agents:",
+        *[f'    - "{name}"' for name in fallback_agents],
+        "  max_iterations: 4",
+        "  max_no_change_iterations: 2",
+        "  max_runtime_sec: 1800",
+        "",
+        "agents:",
+        "  mock:",
+        "    enabled: true",
+        '    type: "mock"',
+        "",
+        "  codex:",
+        f'    enabled: {_yaml_bool(default_agent == "codex" or bool(detected.get("codex")))}',
+        '    type: "codex_exec"',
+        '    command: "codex"',
+        "    args:",
+        '      - "exec"',
+        '      - "--json"',
+        '      - "--sandbox"',
+        '      - "workspace-write"',
+        '      - "{prompt}"',
+        "    timeout_sec: 1800",
+        "",
+        "  claude:",
+        f'    enabled: {_yaml_bool(default_agent == "claude" or bool(detected.get("claude")))}',
+        '    type: "claude_headless"',
+        '    command: "claude"',
+        "    args:",
+        '      - "-p"',
+        '      - "{prompt}"',
+        '      - "--output-format"',
+        '      - "json"',
+        "    timeout_sec: 1800",
+        "",
+        "  kimi:",
+        f'    enabled: {_yaml_bool(default_agent == "kimi" or bool(detected.get("kimi")))}',
+        '    type: "kimi_cli"',
+        '    command: "kimi"',
+        "    args:",
+        '      - "{prompt}"',
+        "    timeout_sec: 1800",
+        "",
+        "  gemini:",
+        f'    enabled: {_yaml_bool(default_agent == "gemini" or bool(detected.get("gemini")))}',
+        '    type: "gemini_cli"',
+        '    command: "gemini"',
+        "    args:",
+        '      - "-p"',
+        '      - "{prompt}"',
+        "    timeout_sec: 1800",
+        "",
+        "verification:",
+        "  strict: true",
+        "  commands:",
+        '    - name: "compile"',
+        '      run: "python -m compileall ai_orchestrator"',
+        "      timeout_sec: 120",
+        '    - name: "tests"',
+        '      run: "python -m pytest"',
+        "      timeout_sec: 300",
+        "",
+        "policy:",
+        "  deny:",
+        '    - "rm -rf /"',
+        '    - "cat ~/.ssh"',
+        '    - "cat ~/.codex/auth.json"',
+        "  require_approval:",
+        '    - "git push"',
+        '    - "rm -rf"',
+        '    - "pip install"',
+        '    - "npm install"',
+        "",
+        "memory:",
+        '  provider: "codebase-memory-mcp"',
+        "  command:",
+        '    - "codebase-memory-mcp"',
+        '    - "cli"',
+        '  project: ""',
+        "  timeout_sec: 120",
+        "  max_lessons: 5",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _yaml_bool(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def _policy_engine(config: ProjectConfig) -> PolicyEngine:

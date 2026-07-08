@@ -31,16 +31,35 @@ The module entrypoint remains available:
 python -m ai_orchestrator --help
 ```
 
+## Windows Installer
+
+On Windows, use the repository-local installer:
+
+```cmd
+scripts\install_windows.cmd
+```
+
+For PowerShell options, development mode, and troubleshooting, see
+`docs/WINDOWS_INSTALL.md`.
+
 ## Smoke Path
 
 After installation, initialize state and run the local mock path:
 
 ```bash
-ai-orch init
+ai-orch setup
+ai-orch doctor
 ai-orch agents --repo . --check
 ai-orch start --task "Check the install path" --repo .
 ai-orch status TASK_ID --repo .
 ```
+
+`ai-orch setup` does not ask for, write, or validate raw API keys. For real
+workers, authenticate the worker CLI with its native login/setup flow before
+running tasks, or inject provider keys outside `.ai-orch/config.yaml` through
+environment variables, an OS/user secret store, a service manager, or CI
+secrets. The project config should contain commands and policy only, not
+credentials.
 
 For release verification, run:
 

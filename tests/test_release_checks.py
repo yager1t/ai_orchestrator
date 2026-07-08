@@ -55,6 +55,36 @@ def test_release_checks_require_install_doc(tmp_path: Path) -> None:
     assert "docs/INSTALL.md" in docs_result.detail
 
 
+def test_release_checks_require_windows_install_doc(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "WINDOWS_INSTALL.md").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(item for item in results if item.name == "release-docs")
+    assert docs_result.status == "failed"
+    assert "docs/WINDOWS_INSTALL.md" in docs_result.detail
+
+
+def test_windows_installer_scripts_are_safe_repo_helpers() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    ps1 = repo / "scripts" / "install_windows.ps1"
+    cmd = repo / "scripts" / "install_windows.cmd"
+
+    assert ps1.exists()
+    assert cmd.exists()
+    combined = (
+        ps1.read_text(encoding="utf-8")
+        + "\n"
+        + cmd.read_text(encoding="utf-8")
+    )
+    assert "setup" in combined
+    assert "doctor" in combined
+    assert "OPENAI_API_KEY" not in combined
+    assert "ANTHROPIC_API_KEY" not in combined
+    assert "Remove-Item" not in combined
+
+
 def write_release_tree(
     repo: Path,
     version: str = __version__,
@@ -92,6 +122,10 @@ requires-python = ">=3.12"
     (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
     (repo / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
     (repo / "docs" / "INSTALL.md").write_text("# Install\n", encoding="utf-8")
+    (repo / "docs" / "WINDOWS_INSTALL.md").write_text(
+        "# Windows Install\n",
+        encoding="utf-8",
+    )
     (repo / "docs" / "RELEASE.md").write_text("# Release\n", encoding="utf-8")
     (repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md").write_text(
         "# Shipping\n",

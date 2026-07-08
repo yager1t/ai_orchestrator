@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.2.1 — Windows installer and onboarding
+
+- Added `docs/USER_GUIDE.md` as a practical operator guide covering install,
+  task runs, verification, approvals, TUI views, memory, autopilot, PlanGraph,
+  evaluations, recovery, and safety rules.
+
+- Added beginner-friendly `ai-orch setup` and `ai-orch doctor` commands to
+  generate safe local config, detect installed worker CLIs, and diagnose setup
+  readiness without storing secrets.
+
+- Clarified API key onboarding guidance: `ai-orch` setup does not collect
+  credentials, worker CLIs should authenticate through their native login flows
+  when possible, and raw provider keys belong in external environment or secret
+  stores rather than `.ai-orch/config.yaml`.
+
+- Added a simple Windows installer pair, `scripts/install_windows.ps1` and
+  `scripts/install_windows.cmd`, plus `docs/WINDOWS_INSTALL.md` for
+  one-command local setup.
+
 ## 0.2.0 — robust autopilot
 
 - Added durable SQLite `task_events` with append/list state-store APIs and

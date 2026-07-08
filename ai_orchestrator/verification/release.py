@@ -137,6 +137,7 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
         repo / "README.md",
         repo / "CHANGELOG.md",
         repo / "docs" / "INSTALL.md",
+        repo / "docs" / "WINDOWS_INSTALL.md",
         repo / "docs" / "RELEASE.md",
         repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md",
     ]
@@ -158,7 +159,10 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
     return ReleaseCheckResult(
         name="release-docs",
         status="passed",
-        detail="README, changelog, install guide, release checklist, and shipping template present",
+        detail=(
+            "README, changelog, install guides, release checklist, and "
+            "shipping template present"
+        ),
     )
 
 

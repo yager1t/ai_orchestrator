@@ -2153,6 +2153,94 @@ def test_agents_lists_project_config(capsys, tmp_path: Path) -> None:
     assert "generic: enabled type=generic_cli" in output
 
 
+def test_setup_writes_beginner_config_without_secrets(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    exit_code = main(["setup", "--repo", str(tmp_path), "--agent", "mock"])
+    output = capsys.readouterr().out
+    config_path = tmp_path / ".ai-orch" / "config.yaml"
+    config_text = config_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert "Wrote:" in output
+    assert 'default_agent: "mock"' in config_text
+    assert 'command: "codex"' in config_text
+    assert "OPENAI_API_KEY" not in config_text
+    assert (tmp_path / ".ai-orch" / "state").is_dir()
+    assert (tmp_path / ".ai-orch" / "reports").is_dir()
+
+
+def test_setup_auto_selects_detected_agent(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_which(command: str) -> str | None:
+        if command == "claude":
+            return "/usr/bin/claude"
+        return None
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.shutil.which", fake_which)
+
+    exit_code = main(["setup", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    config_text = (tmp_path / ".ai-orch" / "config.yaml").read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert payload["default_agent"] == "claude"
+    assert payload["detected_agents"]["claude"] == "/usr/bin/claude"
+    assert 'default_agent: "claude"' in config_text
+    assert 'command: "claude"' in config_text
+
+
+def test_setup_refuses_to_overwrite_existing_config(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    config_path = config_dir / "config.yaml"
+    config_path.write_text("existing: true\n", encoding="utf-8")
+
+    exit_code = main(["setup", "--repo", str(tmp_path), "--agent", "mock"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Config already exists" in output
+    assert config_path.read_text(encoding="utf-8") == "existing: true\n"
+
+
+def test_doctor_reports_ready_setup(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    assert main(["setup", "--repo", str(tmp_path), "--agent", "mock"]) == 0
+    capsys.readouterr()
+
+    exit_code = main(["doctor", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["ready"] is True
+    assert payload["config_exists"] is True
+    assert payload["default_agent"] == "mock"
+    assert payload["default_agent_available"] == "yes"
+    assert payload["issues"] == []
+
+
+def test_doctor_reports_missing_config(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    exit_code = main(["doctor", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "missing_config" in output
+    assert "Suggested fix: run ai-orch setup --repo ." in output
+
+
 def test_agents_lists_adapter_profile(capsys, tmp_path: Path) -> None:
     config_dir = tmp_path / ".ai-orch"
     config_dir.mkdir()
