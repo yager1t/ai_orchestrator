@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.4 — double-click Windows installer
+
+- Added a root `INSTALL_WINDOWS.cmd` entry point for downloaded release ZIPs and
+  changed the Windows `.cmd` installer to keep the console window open after
+  success or failure, including explicit next commands and log guidance.
+
 ## 0.2.3 — clearer Windows first-run UX
 
 - Improved the Windows installer with install transcripts under

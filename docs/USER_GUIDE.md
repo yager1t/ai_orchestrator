@@ -34,7 +34,7 @@ ai-orch --help
 On Windows, the easiest path is:
 
 ```cmd
-scripts\install_windows.cmd
+INSTALL_WINDOWS.cmd
 ```
 
 The Windows installer refreshes `.ai-orch/config.yaml` for the current machine

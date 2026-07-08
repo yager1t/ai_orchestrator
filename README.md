@@ -79,7 +79,7 @@ operator workflow after installation.
 On Windows, use the one-command local installer:
 
 ```cmd
-scripts\install_windows.cmd
+INSTALL_WINDOWS.cmd
 ```
 
 After it finishes, run:

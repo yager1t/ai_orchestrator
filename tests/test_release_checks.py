@@ -70,18 +70,25 @@ def test_windows_installer_scripts_are_safe_repo_helpers() -> None:
     repo = Path(__file__).resolve().parents[1]
     ps1 = repo / "scripts" / "install_windows.ps1"
     cmd = repo / "scripts" / "install_windows.cmd"
+    root_installer = repo / "INSTALL_WINDOWS.cmd"
     launcher = repo / "ai-orch.cmd"
 
     assert ps1.exists()
     assert cmd.exists()
+    assert root_installer.exists()
     assert launcher.exists()
     combined = (
         ps1.read_text(encoding="utf-8")
         + "\n"
         + cmd.read_text(encoding="utf-8")
         + "\n"
+        + root_installer.read_text(encoding="utf-8")
+        + "\n"
         + launcher.read_text(encoding="utf-8")
     )
+    assert "pause" in combined
+    assert "/nopause" in combined
+    assert "INSTALL_WINDOWS.cmd" in combined
     assert "KeepConfig" in combined
     assert "install-logs" in combined
     assert "Common commands" in combined

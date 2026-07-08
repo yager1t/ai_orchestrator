@@ -28,7 +28,17 @@ smoke tests.
 
 ## One-Command Install
 
-From the repository root in Command Prompt:
+First extract the downloaded release ZIP. Then from the extracted project folder
+run the root installer:
+
+```cmd
+INSTALL_WINDOWS.cmd
+```
+
+The installer window stays open when it finishes so you can read the result.
+For scripted smoke tests, pass `/nopause`.
+
+The lower-level script is also available from Command Prompt:
 
 ```cmd
 scripts\install_windows.cmd

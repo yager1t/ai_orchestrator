@@ -36,7 +36,7 @@ python -m ai_orchestrator --help
 On Windows, use the repository-local installer:
 
 ```cmd
-scripts\install_windows.cmd
+INSTALL_WINDOWS.cmd
 ```
 
 For PowerShell options, development mode, and troubleshooting, see
