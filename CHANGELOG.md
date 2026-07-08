@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 — robust autopilot
+
 - Added durable SQLite `task_events` with append/list state-store APIs and
   exposed the task timeline in Markdown reports and JSON trace exports.
 
