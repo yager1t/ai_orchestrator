@@ -13,21 +13,30 @@ plan -> execute -> verify -> decide -> continue | done | blocked
 
 ## Project Status
 
-The MVP control plane is implemented in the current local branch.
+The robust local control plane is implemented in the current `main` branch.
 
 Current working surface:
 
-- CLI commands: `init`, `start`, `resume`, `cancel`, `status`, `report`, `export`, `verify`, `release-check`, `ci`, `agents`, `metrics`, `approvals`, `autopilot`, `tui`.
+- CLI commands: `init`, `start`, `status`, `cancel`, `resume`, `recover`,
+  `report`, `timeline`, `export`, `verify`, `release-check`, `ci`, `agents`,
+  `metrics`, `eval`, `approvals`, `autopilot`, `memory`, and `tui`.
 - Supervisor loop with verification-gated completion.
-- SQLite task, iteration, verification, autopilot queue, and schema-version storage.
-- Policy checks for agent and verification commands.
+- SQLite task, iteration, verification, event, action, approval, PlanGraph,
+  replan, memory, autopilot queue, dead-letter, loop-ledger, and
+  schema-version storage.
+- Policy checks for agent, verification, brokered tool, and memory commands.
 - Cooperative cancellation and subprocess termination.
 - Safe metadata logs with stable `event=...` fields.
-- Markdown reports generated from stored task history.
-- Read-only TUI status, task list, approval, current iteration, and logs views.
+- Markdown reports and JSON traces generated from stored task history.
+- Read-only TUI status, task list, approval, current iteration, logs, memory
+  lessons, and memory influence views.
 - Structured adapter output fields stored with each iteration:
   `summary`, `files_changed`, `tool_actions`, `exit_reason`, and `uncertainty`.
-- Optional Codebase Memory CLI helpers for manual architecture, search, and impact context.
+- Optional Codebase Memory CLI helpers plus durable memory lessons ranked into
+  supervisor planning context as non-authoritative hints.
+- Typed tool broker with read/write/network/destructive risk tiers, durable
+  action records, approval requests, and deny-rule precedence.
+- Local golden, chaos, and security red-team evaluation suites.
 - Review hygiene with CODEOWNERS, local ruff pre-commit hooks, and release checks.
 
 Supported agent types:
@@ -43,7 +52,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 469 passed
+- `python -m pytest`: 574 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -128,13 +137,17 @@ memory:
     - "cli"
   project: "ai_orchestrator_starter"
   timeout_sec: 120
+  max_lessons: 5
 ```
 
 ## Manual Code Memory Workflow
 
-Code memory is currently an optional manual context tool. The supervisor does
-not automatically use memory output for planning, and verification remains the
-source of truth.
+The external Codebase Memory provider is optional and manual: use it to inspect
+architecture, search symbols, and map impact before risky work. Separately,
+`ai-orch` stores durable memory lessons from blocked or failed-verification
+runs. The supervisor ranks active lessons against the current task text and
+injects up to `memory.max_lessons` as read-only, non-authoritative planning
+hints. Verification remains the source of truth.
 
 Suggested flow before a risky change:
 
@@ -144,6 +157,8 @@ python -m ai_orchestrator memory index --repo . --approve
 python -m ai_orchestrator memory architecture --repo .
 python -m ai_orchestrator memory search --repo . --pattern ".*Supervisor.*" --label Class
 python -m ai_orchestrator memory impact --repo .
+python -m ai_orchestrator memory lessons --repo .
+python -m ai_orchestrator memory influence --repo . --task-id <task-id>
 ```
 
 Use the output as planning context for the next bounded task. Do not treat it as
@@ -183,13 +198,18 @@ Default runtime values:
 
 ## Autopilot
 
-`ai-orch autopilot` is a guarded post-MVP helper for taking the next unstarted
-item from a Markdown plan and routing it through the existing supervisor.
+`ai-orch autopilot` is a guarded helper for Markdown plans, persisted queues,
+durable PlanGraphs, worktree inspection, and bounded unattended loops.
 
 ```bash
 python -m ai_orchestrator autopilot next --repo . --plan docs/POST_MVP_ROADMAP.md
 python -m ai_orchestrator autopilot run --repo . --plan docs/POST_MVP_ROADMAP.md
 python -m ai_orchestrator autopilot run --repo . --execute --worktree ../ai-orch-autopilot
+python -m ai_orchestrator autopilot queue sync --repo . --plan docs/BACKLOG.md
+python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 2
+python -m ai_orchestrator autopilot plan ready 1 --repo .
+python -m ai_orchestrator autopilot loop --repo . --plan docs/BACKLOG.md --max-items 2
+python -m ai_orchestrator autopilot loop-history --repo . --plan docs/BACKLOG.md
 ```
 
 `autopilot run` is a dry run unless `--execute` is passed. Execution is blocked
@@ -201,6 +221,11 @@ selected agent name, type, command, mock/real mode, and availability. Unavailabl
 non-mock agents are blocked before supervisor execution starts.
 Pass `--worktree` to run the supervisor inside an existing separate git worktree
 linked to `--repo`; dirty checks then apply to that execution worktree.
+`autopilot loop` is also dry-run-by-default and persists a budget ledger with
+mode, runtime/action/attempt budgets, selected and processed counts,
+dead-letter counts, stop reason, result code, selected item ids, and elapsed
+runtime. Use `autopilot loop-history` to inspect those persisted loop runs
+after restart.
 See [docs/AUTOPILOT_RUNBOOK.md](docs/AUTOPILOT_RUNBOOK.md) for the operator
 loop covering dry runs, execution, approvals, retry, reports, and stop
 conditions.
@@ -213,6 +238,22 @@ verification:
 python scripts/run_real_agent_smoke.py
 ```
 
+## Evaluation
+
+Local evaluation suites execute through the supervisor against isolated
+temporary repositories:
+
+```bash
+python -m ai_orchestrator eval golden --repo .
+python -m ai_orchestrator eval chaos --repo .
+python -m ai_orchestrator eval redteam --repo .
+python -m ai_orchestrator eval all --repo . --json
+```
+
+Evaluation summaries include executed count, pass rate, recovery count, blocked
+count, chaos/security counts, and unsafe action count. Unsafe action count is
+expected to remain zero.
+
 ## Verification Approvals
 
 `ai-orch verify` blocks commands that match `policy.require_approval` unless the
@@ -223,7 +264,8 @@ python -m ai_orchestrator verify --repo . --approve-command "git push origin mai
 ```
 
 Approvals are not stored in `.ai-orch/config.yaml`, do not override deny rules,
-and apply only to verification commands.
+and apply only to the exact verification, brokered tool, or memory command that
+created or matched the approval request.
 
 Persisted approval requests can be inspected and resolved through the approval
 inbox commands:
