@@ -1,6 +1,7 @@
 param(
     [switch]$Dev,
     [switch]$ForceSetup,
+    [switch]$KeepConfig,
     [switch]$SkipDoctor
 )
 
@@ -55,6 +56,8 @@ $VenvDir = Join-Path $RepoRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $VenvAiOrch = Join-Path $VenvDir "Scripts\ai-orch.exe"
 $ConfigPath = Join-Path $RepoRoot ".ai-orch\config.yaml"
+$StateDir = Join-Path $RepoRoot ".ai-orch\state"
+$ReportsDir = Join-Path $RepoRoot ".ai-orch\reports"
 
 Write-Host "AI Orchestrator Windows installer"
 Write-Host "Repository: $RepoRoot"
@@ -88,14 +91,16 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Step "Creating local ai-orch config"
+$null = New-Item -ItemType Directory -Force -Path $StateDir
+$null = New-Item -ItemType Directory -Force -Path $ReportsDir
 $SetupArgs = @("-m", "ai_orchestrator", "setup", "--repo", $RepoRoot)
-if ($ForceSetup) {
+if ($ForceSetup -or (-not $KeepConfig)) {
     $SetupArgs += "--force"
 }
 
-if ((Test-Path $ConfigPath) -and (-not $ForceSetup)) {
+if ((Test-Path $ConfigPath) -and $KeepConfig -and (-not $ForceSetup)) {
     Write-Host "Keeping existing config: $ConfigPath"
-    Write-Host "Use -ForceSetup to regenerate it."
+    Write-Host "Remove -KeepConfig or use -ForceSetup to regenerate it."
 } else {
     & $VenvPython @SetupArgs
     if ($LASTEXITCODE -ne 0) {

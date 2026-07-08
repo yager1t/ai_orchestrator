@@ -78,6 +78,9 @@ def test_windows_installer_scripts_are_safe_repo_helpers() -> None:
         + "\n"
         + cmd.read_text(encoding="utf-8")
     )
+    assert "KeepConfig" in combined
+    assert "state" in combined
+    assert "reports" in combined
     assert "setup" in combined
     assert "doctor" in combined
     assert "OPENAI_API_KEY" not in combined

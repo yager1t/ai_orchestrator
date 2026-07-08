@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.2 — Windows installer config refresh
+
+- Changed the Windows installer to create local state/report directories and
+  refresh `.ai-orch/config.yaml` for the current machine by default, with
+  `-KeepConfig` available for developers who intentionally want to preserve an
+  existing config.
+
 ## 0.2.1 — Windows installer and onboarding
 
 - Added `docs/USER_GUIDE.md` as a practical operator guide covering install,

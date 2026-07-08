@@ -40,7 +40,9 @@ scripts\install_windows.cmd
 ```
 
 For PowerShell options, development mode, and troubleshooting, see
-`docs/WINDOWS_INSTALL.md`.
+`docs/WINDOWS_INSTALL.md`. The Windows installer refreshes
+`.ai-orch/config.yaml` for the current machine by default; use `-KeepConfig`
+when you intentionally want to preserve an existing config.
 
 ## Smoke Path
 

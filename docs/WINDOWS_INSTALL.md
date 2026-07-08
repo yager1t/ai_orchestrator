@@ -46,8 +46,26 @@ The script will:
 2. Create `.venv` when it does not exist.
 3. Install `ai-orchestrator` into `.venv`.
 4. Run `python -m ai_orchestrator --version`.
-5. Run `ai-orch setup --repo .` when `.ai-orch/config.yaml` does not exist.
-6. Run `ai-orch doctor --repo .`.
+5. Create `.ai-orch/state` and `.ai-orch/reports`.
+6. Run `ai-orch setup --repo . --force` to generate a safe config for the
+   current machine.
+7. Run `ai-orch doctor --repo .`.
+
+The default behavior intentionally refreshes `.ai-orch/config.yaml` because the
+checked-out repository may contain a maintainer or example config that is not
+right for your machine.
+
+To keep an existing config during install:
+
+```powershell
+.\scripts\install_windows.ps1 -KeepConfig
+```
+
+To explicitly regenerate config:
+
+```powershell
+.\scripts\install_windows.ps1 -ForceSetup
+```
 
 ## Development Install
 
@@ -59,9 +77,10 @@ Use editable mode with development tools:
 
 ## Regenerate Config
 
-By default, the installer keeps an existing `.ai-orch/config.yaml`.
+By default, the installer regenerates `.ai-orch/config.yaml` for the current
+machine.
 
-To regenerate it:
+To be explicit:
 
 ```powershell
 .\scripts\install_windows.ps1 -ForceSetup

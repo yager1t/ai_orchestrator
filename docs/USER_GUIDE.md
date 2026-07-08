@@ -37,7 +37,9 @@ On Windows, the easiest path is:
 scripts\install_windows.cmd
 ```
 
-See `docs/WINDOWS_INSTALL.md` for PowerShell options and troubleshooting.
+The Windows installer refreshes `.ai-orch/config.yaml` for the current machine
+and creates local state directories. See `docs/WINDOWS_INSTALL.md` for
+PowerShell options, including `-KeepConfig`, and troubleshooting.
 
 ## 2. Initialize Local State
 
