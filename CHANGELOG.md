@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.3 — clearer Windows first-run UX
+
+- Improved the Windows installer with install transcripts under
+  `.ai-orch/install-logs/`, clearer failure output, a final next-steps summary,
+  and a root `ai-orch.cmd` launcher that prints common commands and runs
+  diagnostics when called without arguments.
+
 ## 0.2.2 — Windows installer config refresh
 
 - Changed the Windows installer to create local state/report directories and

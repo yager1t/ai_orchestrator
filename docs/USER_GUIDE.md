@@ -38,8 +38,9 @@ scripts\install_windows.cmd
 ```
 
 The Windows installer refreshes `.ai-orch/config.yaml` for the current machine
-and creates local state directories. See `docs/WINDOWS_INSTALL.md` for
-PowerShell options, including `-KeepConfig`, and troubleshooting.
+creates local state directories, writes an install log, and creates
+`ai-orch.cmd` in the project root. See `docs/WINDOWS_INSTALL.md` for PowerShell
+options, including `-KeepConfig`, and troubleshooting.
 
 ## 2. Initialize Local State
 
@@ -93,6 +94,18 @@ ai-orch init
 
 This creates the local `.ai-orch` state directories. Runtime state is stored in
 SQLite under `.ai-orch/state/`.
+
+On Windows after running `scripts\install_windows.cmd`, use the root launcher:
+
+```cmd
+.\ai-orch.cmd doctor
+.\ai-orch.cmd agents --check
+.\ai-orch.cmd start --task "Check setup"
+```
+
+In PowerShell, keep the leading `.\`. In Command Prompt, `ai-orch.cmd doctor`
+also works. Running `.\ai-orch.cmd` without arguments prints common commands
+and runs diagnostics.
 
 ## 3. Configure Agents And Verification
 

@@ -49,7 +49,9 @@ The script will:
 5. Create `.ai-orch/state` and `.ai-orch/reports`.
 6. Run `ai-orch setup --repo . --force` to generate a safe config for the
    current machine.
-7. Run `ai-orch doctor --repo .`.
+7. Create a simple root launcher: `ai-orch.cmd`.
+8. Run `ai-orch doctor --repo .`.
+9. Write an install log under `.ai-orch/install-logs/`.
 
 The default behavior intentionally refreshes `.ai-orch/config.yaml` because the
 checked-out repository may contain a maintainer or example config that is not
@@ -96,13 +98,24 @@ Use this only when you want installation without readiness diagnostics:
 
 ## After Installation
 
-Run commands through the local virtual environment:
+Run commands through the root launcher:
 
 ```powershell
-.\.venv\Scripts\ai-orch.exe doctor --repo .
-.\.venv\Scripts\ai-orch.exe agents --repo . --check
-.\.venv\Scripts\ai-orch.exe start --repo . --task "Check setup"
+.\ai-orch.cmd doctor
+.\ai-orch.cmd agents --check
+.\ai-orch.cmd start --task "Check setup"
 ```
+
+In Command Prompt, omit the leading `.\`:
+
+```cmd
+ai-orch.cmd doctor
+ai-orch.cmd agents --check
+ai-orch.cmd start --task "Check setup"
+```
+
+If you run `.\ai-orch.cmd` without arguments, it prints common commands and
+runs `doctor`.
 
 If you installed Codex, Claude, Kimi, or Gemini and want a real worker, log in
 with that tool first. Keep raw provider keys outside `.ai-orch/config.yaml`;
@@ -123,3 +136,6 @@ selected worker CLI or run:
 If installation fails because pip cannot access the package index, check network
 access or install from an environment that already has the required development
 tools cached.
+
+If the installer output disappears or is hard to understand, open the newest
+file in `.ai-orch/install-logs/`. It contains the full installation transcript.

@@ -70,15 +70,21 @@ def test_windows_installer_scripts_are_safe_repo_helpers() -> None:
     repo = Path(__file__).resolve().parents[1]
     ps1 = repo / "scripts" / "install_windows.ps1"
     cmd = repo / "scripts" / "install_windows.cmd"
+    launcher = repo / "ai-orch.cmd"
 
     assert ps1.exists()
     assert cmd.exists()
+    assert launcher.exists()
     combined = (
         ps1.read_text(encoding="utf-8")
         + "\n"
         + cmd.read_text(encoding="utf-8")
+        + "\n"
+        + launcher.read_text(encoding="utf-8")
     )
     assert "KeepConfig" in combined
+    assert "install-logs" in combined
+    assert "Common commands" in combined
     assert "state" in combined
     assert "reports" in combined
     assert "setup" in combined

@@ -82,6 +82,12 @@ On Windows, use the one-command local installer:
 scripts\install_windows.cmd
 ```
 
+After it finishes, run:
+
+```cmd
+ai-orch.cmd
+```
+
 See [`docs/WINDOWS_INSTALL.md`](docs/WINDOWS_INSTALL.md) for PowerShell options,
 developer install mode, and troubleshooting.
 

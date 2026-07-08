@@ -8,6 +8,24 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
+$InstallLogDir = Join-Path $RepoRoot ".ai-orch\install-logs"
+$null = New-Item -ItemType Directory -Force -Path $InstallLogDir
+$InstallLogPath = Join-Path $InstallLogDir ("install-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+Start-Transcript -Path $InstallLogPath -Force | Out-Null
+
+trap {
+    Write-Host ""
+    Write-Host "INSTALL FAILED" -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Log file: $InstallLogPath"
+    Write-Host "Fix the issue above and run scripts\install_windows.cmd again."
+    Stop-Transcript | Out-Null
+    exit 1
+}
+
 function Write-Step {
     param([string]$Message)
     Write-Host ""
@@ -50,14 +68,13 @@ function Invoke-Python {
     }
 }
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..")).Path
 $VenvDir = Join-Path $RepoRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $VenvAiOrch = Join-Path $VenvDir "Scripts\ai-orch.exe"
 $ConfigPath = Join-Path $RepoRoot ".ai-orch\config.yaml"
 $StateDir = Join-Path $RepoRoot ".ai-orch\state"
 $ReportsDir = Join-Path $RepoRoot ".ai-orch\reports"
+$LauncherPath = Join-Path $RepoRoot "ai-orch.cmd"
 
 Write-Host "AI Orchestrator Windows installer"
 Write-Host "Repository: $RepoRoot"
@@ -116,9 +133,63 @@ if (-not $SkipDoctor) {
     }
 }
 
-Write-Step "Done"
-Write-Host "Run ai-orch from this repository with:"
-Write-Host "  .\.venv\Scripts\ai-orch.exe doctor --repo ."
-Write-Host "  .\.venv\Scripts\ai-orch.exe start --repo . --task `"Check setup`""
+Write-Step "Creating launcher"
+$LauncherText = @'
+@echo off
+setlocal
+set "ROOT=%~dp0."
+set "AI_ORCH=%ROOT%\.venv\Scripts\ai-orch.exe"
+
+if not exist "%AI_ORCH%" (
+  echo ai-orch is not installed yet.
+  echo Run scripts\install_windows.cmd first.
+  exit /b 1
+)
+
+if "%~1"=="" (
+  echo AI Orchestrator is installed.
+  echo.
+  echo Common commands:
+  echo   ai-orch.cmd doctor
+  echo   ai-orch.cmd agents --check
+  echo   ai-orch.cmd start --task "Check setup"
+  echo   ai-orch.cmd status TASK_ID
+  echo.
+  echo Running doctor now:
+  echo.
+  "%AI_ORCH%" doctor --repo "%ROOT%"
+  exit /b %ERRORLEVEL%
+)
+
+"%AI_ORCH%" %* --repo "%ROOT%"
+exit /b %ERRORLEVEL%
+'@
+$LauncherText | Set-Content -Path $LauncherPath -Encoding ASCII
+
+Write-Step "INSTALL COMPLETE"
+Write-Host "Installed version:"
+& $VenvPython -m ai_orchestrator --version
 Write-Host ""
-Write-Host "API keys are not stored by this installer. Authenticate Codex, Claude, Kimi, or Gemini with their own login/setup flow before using them as real workers."
+Write-Host "Project folder:"
+Write-Host "  $RepoRoot"
+Write-Host ""
+Write-Host "Launcher created:"
+Write-Host "  .\ai-orch.cmd"
+Write-Host ""
+Write-Host "What to do next:"
+Write-Host "  1. Run diagnostics:"
+Write-Host "     PowerShell: .\ai-orch.cmd doctor"
+Write-Host "     Command Prompt: ai-orch.cmd doctor"
+Write-Host "  2. See detected workers:"
+Write-Host "     PowerShell: .\ai-orch.cmd agents --check"
+Write-Host "     Command Prompt: ai-orch.cmd agents --check"
+Write-Host "  3. Run a first safe task:"
+Write-Host "     PowerShell: .\ai-orch.cmd start --task `"Check setup`""
+Write-Host "     Command Prompt: ai-orch.cmd start --task `"Check setup`""
+Write-Host ""
+Write-Host "If you want Codex, Claude, Kimi, or Gemini as real workers, log in with that tool first."
+Write-Host "The installer does not store API keys."
+Write-Host ""
+Write-Host "Log file:"
+Write-Host "  $InstallLogPath"
+Stop-Transcript | Out-Null

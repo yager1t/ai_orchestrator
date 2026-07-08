@@ -12,6 +12,7 @@ build/
 .ai-orch/state/
 .ai-orch/reports/
 .ai-orch/traces/
+.ai-orch/install-logs/
 .codex/
 .private/
 .DS_Store
