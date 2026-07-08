@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,6 +15,20 @@ from ai_orchestrator.verification.runner import VerificationResult
 
 
 logger = logging.getLogger(__name__)
+_MEMORY_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+_MEMORY_STOP_WORDS = {
+    "and",
+    "for",
+    "the",
+    "this",
+    "that",
+    "with",
+    "after",
+    "before",
+    "into",
+    "from",
+    "task",
+}
 
 
 @dataclass(frozen=True)
@@ -103,6 +118,48 @@ class StoredApprovalRequest:
 
 
 @dataclass(frozen=True)
+class StoredTaskEvent:
+    event_id: int
+    task_id: str
+    sequence: int
+    event_type: str
+    payload: dict[str, object]
+    created_at: str
+
+
+@dataclass(frozen=True)
+class StoredActionRecord:
+    action_id: int
+    task_id: str
+    iteration_id: int | None
+    idempotency_key: str
+    action_type: str
+    status: str
+    command_string: str | None
+    policy_action: str | None
+    policy_reason: str | None
+    payload: dict[str, object]
+    result: dict[str, object]
+    lease_owner: str | None
+    lease_expires_at: str | None
+    heartbeat_at: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class StoredTimelineEntry:
+    timeline_index: int
+    occurred_at: str
+    source: str
+    source_id: str
+    event_type: str
+    status: str | None
+    summary: str
+    payload: dict[str, object]
+
+
+@dataclass(frozen=True)
 class StoredMetricsSummary:
     task_count: int
     iteration_count: int
@@ -133,8 +190,138 @@ class StoredPlanItem:
     task_id: str | None
     selected_worktree_path: str | None
     blocked_reason: str | None
+    plan_graph_id: int | None
+    plan_graph_root_node_id: int | None
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class StoredPlanGraph:
+    graph_id: int
+    task_id: str | None
+    title: str
+    status: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class StoredPlanGraphNode:
+    node_id: int
+    graph_id: int
+    node_key: str
+    title: str
+    status: str
+    attempts: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class StoredPlanGraphDependency:
+    graph_id: int
+    node_id: int
+    depends_on_node_id: int
+    created_at: str
+
+
+@dataclass(frozen=True)
+class StoredReplanDecision:
+    replan_id: int
+    task_id: str
+    iteration_id: int
+    source: str
+    status: str
+    reason: str
+    follow_up_prompt: str | None
+    failed_checks: list[dict[str, object]]
+    plan_graph_id: int | None
+    plan_graph_node_id: int | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class StoredMemoryLesson:
+    lesson_id: int
+    source_task_id: str
+    source_iteration_id: int | None
+    lesson: str
+    outcome_status: str
+    failure_reason: str | None
+    failed_checks: list[dict[str, object]]
+    follow_up_prompt: str | None
+    helpful_count: int
+    unhelpful_count: int
+    stale_after_days: int
+    created_at: str
+    updated_at: str
+
+    @property
+    def is_stale(self) -> bool:
+        if self.unhelpful_count >= 3:
+            return True
+        if self.stale_after_days == 0:
+            return True
+        try:
+            created_at = datetime.fromisoformat(self.created_at)
+        except ValueError:
+            return False
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        return datetime.now(UTC) - created_at > timedelta(days=self.stale_after_days)
+
+
+@dataclass(frozen=True)
+class StoredReflectionRecord:
+    reflection_id: int
+    task_id: str
+    iteration_id: int | None
+    reflection_type: str
+    failure_reason: str
+    failed_checks: list[dict[str, object]]
+    follow_up_prompt: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class StoredMemoryInfluence:
+    influence_id: int
+    task_id: str
+    iteration_id: int | None
+    lesson_id: int
+    reason: str
+    injected: bool
+    created_at: str
+
+
+@dataclass(frozen=True)
+class StoredDeadLetterItem:
+    dead_letter_id: int
+    plan_item_id: int
+    task_id: str | None
+    reason: str
+    attempts: int
+    created_at: str
+
+
+@dataclass(frozen=True)
+class StoredAutopilotLoopRun:
+    loop_run_id: int
+    plan_path: str
+    mode: str
+    max_runtime_sec: int | None
+    max_attempts: int
+    max_actions: int
+    selected_count: int
+    processed_count: int
+    dead_letter_count: int
+    stop_reason: str
+    result_code: int
+    selected_item_ids: list[int]
+    elapsed_sec: float
+    started_at: str
+    completed_at: str
 
 
 class StateStore:
@@ -222,9 +409,13 @@ class StateStore:
                     task_id TEXT,
                     selected_worktree_path TEXT,
                     blocked_reason TEXT,
+                    plan_graph_id INTEGER,
+                    plan_graph_root_node_id INTEGER,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY (plan_graph_id) REFERENCES plan_graphs(graph_id),
+                    FOREIGN KEY (plan_graph_root_node_id) REFERENCES plan_graph_nodes(node_id)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_plan_items_plan_status
@@ -232,6 +423,223 @@ class StateStore:
 
                 CREATE INDEX IF NOT EXISTS idx_plan_items_status_id
                 ON plan_items (status, plan_item_id);
+
+                CREATE INDEX IF NOT EXISTS idx_plan_items_plan_graph
+                ON plan_items (plan_graph_id, plan_graph_root_node_id, plan_item_id);
+
+                CREATE TABLE IF NOT EXISTS task_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    UNIQUE (task_id, sequence),
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_task_events_task_sequence
+                ON task_events (task_id, sequence);
+
+                CREATE TABLE IF NOT EXISTS action_records (
+                    action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    iteration_id INTEGER,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    action_type TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (
+                        status IN (
+                            'started',
+                            'succeeded',
+                            'failed',
+                            'skipped',
+                            'policy_denied',
+                            'needs_approval'
+                        )
+                    ),
+                    command_string TEXT,
+                    policy_action TEXT,
+                    policy_reason TEXT,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    heartbeat_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_action_records_task_iteration
+                ON action_records (task_id, iteration_id, action_id);
+
+                CREATE INDEX IF NOT EXISTS idx_action_records_status
+                ON action_records (status, action_id);
+
+                CREATE INDEX IF NOT EXISTS idx_action_records_lease_expiry
+                ON action_records (status, lease_expires_at, action_id);
+
+                CREATE TABLE IF NOT EXISTS plan_graphs (
+                    graph_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('active', 'done', 'blocked', 'archived')),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_plan_graphs_task_status
+                ON plan_graphs (task_id, status, graph_id);
+
+                CREATE TABLE IF NOT EXISTS plan_graph_nodes (
+                    node_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    graph_id INTEGER NOT NULL,
+                    node_key TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'done', 'blocked', 'skipped')),
+                    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (graph_id, node_key),
+                    FOREIGN KEY (graph_id) REFERENCES plan_graphs(graph_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_plan_graph_nodes_graph_status
+                ON plan_graph_nodes (graph_id, status, node_id);
+
+                CREATE TABLE IF NOT EXISTS plan_graph_dependencies (
+                    graph_id INTEGER NOT NULL,
+                    node_id INTEGER NOT NULL,
+                    depends_on_node_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (node_id, depends_on_node_id),
+                    CHECK (node_id <> depends_on_node_id),
+                    FOREIGN KEY (graph_id) REFERENCES plan_graphs(graph_id),
+                    FOREIGN KEY (node_id) REFERENCES plan_graph_nodes(node_id),
+                    FOREIGN KEY (depends_on_node_id) REFERENCES plan_graph_nodes(node_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_plan_graph_dependencies_graph
+                ON plan_graph_dependencies (graph_id, node_id, depends_on_node_id);
+
+                CREATE TABLE IF NOT EXISTS replan_decisions (
+                    replan_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    iteration_id INTEGER NOT NULL,
+                    source TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('continue', 'blocked')),
+                    reason TEXT NOT NULL,
+                    follow_up_prompt TEXT,
+                    failed_checks_json TEXT NOT NULL DEFAULT '[]',
+                    plan_graph_id INTEGER,
+                    plan_graph_node_id INTEGER,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id),
+                    FOREIGN KEY (plan_graph_id) REFERENCES plan_graphs(graph_id),
+                    FOREIGN KEY (plan_graph_node_id) REFERENCES plan_graph_nodes(node_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_replan_decisions_task_iteration
+                ON replan_decisions (task_id, iteration_id, replan_id);
+
+                CREATE INDEX IF NOT EXISTS idx_replan_decisions_plan_graph
+                ON replan_decisions (plan_graph_id, plan_graph_node_id, replan_id);
+
+                CREATE TABLE IF NOT EXISTS memory_lessons (
+                    lesson_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_task_id TEXT NOT NULL,
+                    source_iteration_id INTEGER,
+                    lesson TEXT NOT NULL,
+                    outcome_status TEXT NOT NULL,
+                    failure_reason TEXT,
+                    failed_checks_json TEXT NOT NULL DEFAULT '[]',
+                    follow_up_prompt TEXT,
+                    helpful_count INTEGER NOT NULL DEFAULT 0 CHECK (helpful_count >= 0),
+                    unhelpful_count INTEGER NOT NULL DEFAULT 0 CHECK (unhelpful_count >= 0),
+                    stale_after_days INTEGER NOT NULL DEFAULT 90 CHECK (stale_after_days >= 0),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (source_task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY (source_iteration_id) REFERENCES iterations(iteration_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_lessons_source
+                ON memory_lessons (source_task_id, source_iteration_id, lesson_id);
+
+                CREATE INDEX IF NOT EXISTS idx_memory_lessons_recency
+                ON memory_lessons (created_at, lesson_id);
+
+                CREATE TABLE IF NOT EXISTS reflection_records (
+                    reflection_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    iteration_id INTEGER,
+                    reflection_type TEXT NOT NULL CHECK (
+                        reflection_type IN ('blocked_run', 'failed_verification')
+                    ),
+                    failure_reason TEXT NOT NULL,
+                    failed_checks_json TEXT NOT NULL DEFAULT '[]',
+                    follow_up_prompt TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_reflection_records_task
+                ON reflection_records (task_id, iteration_id, reflection_id);
+
+                CREATE TABLE IF NOT EXISTS memory_influence_log (
+                    influence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    iteration_id INTEGER,
+                    lesson_id INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    injected INTEGER NOT NULL DEFAULT 1 CHECK (injected IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY (iteration_id) REFERENCES iterations(iteration_id),
+                    FOREIGN KEY (lesson_id) REFERENCES memory_lessons(lesson_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_influence_task
+                ON memory_influence_log (task_id, iteration_id, influence_id);
+
+                CREATE TABLE IF NOT EXISTS dead_letter_items (
+                    dead_letter_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plan_item_id INTEGER NOT NULL,
+                    task_id TEXT,
+                    reason TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 1 CHECK (attempts >= 1),
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (plan_item_id) REFERENCES plan_items(plan_item_id),
+                    FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_dead_letter_items_plan_item
+                ON dead_letter_items (plan_item_id, dead_letter_id);
+
+                CREATE TABLE IF NOT EXISTS autopilot_loop_runs (
+                    loop_run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plan_path TEXT NOT NULL,
+                    mode TEXT NOT NULL CHECK (mode IN ('dry-run', 'execute')),
+                    max_runtime_sec INTEGER,
+                    max_attempts INTEGER NOT NULL CHECK (max_attempts >= 1),
+                    max_actions INTEGER NOT NULL CHECK (max_actions >= 1),
+                    selected_count INTEGER NOT NULL DEFAULT 0 CHECK (selected_count >= 0),
+                    processed_count INTEGER NOT NULL DEFAULT 0 CHECK (processed_count >= 0),
+                    dead_letter_count INTEGER NOT NULL DEFAULT 0 CHECK (dead_letter_count >= 0),
+                    stop_reason TEXT NOT NULL,
+                    result_code INTEGER NOT NULL,
+                    selected_item_ids_json TEXT NOT NULL DEFAULT '[]',
+                    elapsed_sec REAL NOT NULL DEFAULT 0 CHECK (elapsed_sec >= 0),
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_autopilot_loop_runs_plan
+                ON autopilot_loop_runs (plan_path, loop_run_id);
                 """
             )
             migrate_schema(connection)
@@ -241,6 +649,9 @@ class StateStore:
         self.initialize()
         with self._connect() as connection:
             return schema_version(connection)
+
+    def run_id_for_task(self, task_id: str) -> str:
+        return _run_id_for_task(task_id)
 
     def create_task(
         self,
@@ -282,8 +693,1675 @@ class StateStore:
             connection.execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
                 (status, _now(), task_id),
-            )
+        )
         logger.debug("state task status updated task_id=%s status=%s", task_id, status)
+
+    def append_task_event(
+        self,
+        task_id: str,
+        event_type: str,
+        payload: dict[str, object] | None = None,
+    ) -> StoredTaskEvent:
+        self.initialize()
+        if not event_type.strip():
+            raise ValueError("Task event type cannot be empty")
+
+        now = _now()
+        payload_json = _encode_json_payload(payload)
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
+                FROM task_events
+                WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            sequence = int(row["sequence"])
+            cursor = connection.execute(
+                """
+                INSERT INTO task_events (
+                    task_id,
+                    sequence,
+                    event_type,
+                    payload_json,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    sequence,
+                    event_type.strip(),
+                    payload_json,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create task event")
+            event_id = cursor.lastrowid
+
+        logger.debug(
+            "state task event added task_id=%s event_id=%s sequence=%s type=%s",
+            task_id,
+            event_id,
+            sequence,
+            event_type.strip(),
+        )
+        return StoredTaskEvent(
+            event_id=event_id,
+            task_id=task_id,
+            sequence=sequence,
+            event_type=event_type.strip(),
+            payload=_decode_json_payload(payload_json),
+            created_at=now,
+        )
+
+    def list_task_events(self, task_id: str) -> list[StoredTaskEvent]:
+        self.initialize()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    event_id,
+                    task_id,
+                    sequence,
+                    event_type,
+                    payload_json,
+                    created_at
+                FROM task_events
+                WHERE task_id = ?
+                ORDER BY sequence ASC, event_id ASC
+                """,
+                (task_id,),
+            ).fetchall()
+        return [_stored_task_event_from_row(row) for row in rows]
+
+    def record_action(
+        self,
+        task_id: str,
+        idempotency_key: str,
+        action_type: str,
+        status: str = "started",
+        iteration_id: int | None = None,
+        command_string: str | None = None,
+        policy_action: str | None = None,
+        policy_reason: str | None = None,
+        payload: dict[str, object] | None = None,
+        result: dict[str, object] | None = None,
+    ) -> StoredActionRecord:
+        self.initialize()
+        _validate_action_status(status)
+        if not idempotency_key.strip():
+            raise ValueError("Action idempotency key cannot be empty")
+        if not action_type.strip():
+            raise ValueError("Action type cannot be empty")
+
+        now = _now()
+        payload_json = _encode_json_payload(payload)
+        result_json = _encode_json_payload(result)
+        with self._connect() as connection:
+            try:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO action_records (
+                        task_id,
+                        iteration_id,
+                        idempotency_key,
+                        action_type,
+                        status,
+                        command_string,
+                        policy_action,
+                        policy_reason,
+                        payload_json,
+                        result_json,
+                        lease_owner,
+                        lease_expires_at,
+                        heartbeat_at,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        task_id,
+                        iteration_id,
+                        idempotency_key.strip(),
+                        action_type.strip(),
+                        status,
+                        redact_secrets(command_string),
+                        redact_secrets(policy_action),
+                        redact_secrets(policy_reason),
+                        payload_json,
+                        result_json,
+                        None,
+                        None,
+                        None,
+                        now,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                row = connection.execute(
+                    """
+                    SELECT
+                        action_id,
+                        task_id,
+                        iteration_id,
+                        idempotency_key,
+                        action_type,
+                        status,
+                        command_string,
+                        policy_action,
+                        policy_reason,
+                        payload_json,
+                        result_json,
+                        lease_owner,
+                        lease_expires_at,
+                        heartbeat_at,
+                        created_at,
+                        updated_at
+                    FROM action_records
+                    WHERE idempotency_key = ?
+                    """,
+                    (idempotency_key.strip(),),
+                ).fetchone()
+                if row is not None:
+                    return _stored_action_record_from_row(row)
+                raise
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create action record")
+            action_id = cursor.lastrowid
+
+        logger.debug(
+            "state action recorded task_id=%s action_id=%s type=%s status=%s",
+            task_id,
+            action_id,
+            action_type.strip(),
+            status,
+        )
+        action = self.get_action_record(action_id)
+        if action is None:
+            raise RuntimeError("Failed to load recorded action")
+        return action
+
+    def complete_action_record(
+        self,
+        action_id: int,
+        status: str,
+        result: dict[str, object] | None = None,
+    ) -> StoredActionRecord | None:
+        self.initialize()
+        _validate_action_status(status)
+        updated_at = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE action_records
+                SET status = ?,
+                    result_json = ?,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    heartbeat_at = NULL,
+                    updated_at = ?
+                WHERE action_id = ?
+                """,
+                (
+                    status,
+                    _encode_json_payload(result),
+                    updated_at,
+                    action_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_action_record(action_id)
+
+    def acquire_action_lease(
+        self,
+        action_id: int,
+        lease_owner: str,
+        ttl_sec: int,
+        now: str | None = None,
+    ) -> StoredActionRecord | None:
+        self.initialize()
+        _validate_lease_owner(lease_owner)
+        _validate_lease_ttl(ttl_sec)
+        heartbeat_at = now or _now()
+        lease_expires_at = _expires_at(heartbeat_at, ttl_sec)
+        owner = lease_owner.strip()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE action_records
+                SET lease_owner = ?,
+                    lease_expires_at = ?,
+                    heartbeat_at = ?,
+                    updated_at = ?
+                WHERE action_id = ?
+                  AND status = 'started'
+                  AND (
+                    lease_owner IS NULL
+                    OR lease_owner = ?
+                    OR lease_expires_at IS NULL
+                    OR lease_expires_at <= ?
+                  )
+                """,
+                (
+                    owner,
+                    lease_expires_at,
+                    heartbeat_at,
+                    heartbeat_at,
+                    action_id,
+                    owner,
+                    heartbeat_at,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_action_record(action_id)
+
+    def heartbeat_action_lease(
+        self,
+        action_id: int,
+        lease_owner: str,
+        ttl_sec: int,
+        now: str | None = None,
+    ) -> StoredActionRecord | None:
+        self.initialize()
+        _validate_lease_owner(lease_owner)
+        _validate_lease_ttl(ttl_sec)
+        heartbeat_at = now or _now()
+        lease_expires_at = _expires_at(heartbeat_at, ttl_sec)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE action_records
+                SET lease_expires_at = ?,
+                    heartbeat_at = ?,
+                    updated_at = ?
+                WHERE action_id = ?
+                  AND status = 'started'
+                  AND lease_owner = ?
+                  AND lease_expires_at > ?
+                """,
+                (
+                    lease_expires_at,
+                    heartbeat_at,
+                    heartbeat_at,
+                    action_id,
+                    lease_owner.strip(),
+                    heartbeat_at,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_action_record(action_id)
+
+    def release_action_lease(
+        self,
+        action_id: int,
+        lease_owner: str,
+    ) -> StoredActionRecord | None:
+        self.initialize()
+        _validate_lease_owner(lease_owner)
+        updated_at = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE action_records
+                SET lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    heartbeat_at = NULL,
+                    updated_at = ?
+                WHERE action_id = ?
+                  AND lease_owner = ?
+                """,
+                (updated_at, action_id, lease_owner.strip()),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_action_record(action_id)
+
+    def list_expired_action_leases(
+        self,
+        cutoff_at: str | None = None,
+    ) -> list[StoredActionRecord]:
+        self.initialize()
+        cutoff = cutoff_at or _now()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    action_id,
+                    task_id,
+                    iteration_id,
+                    idempotency_key,
+                    action_type,
+                    status,
+                    command_string,
+                    policy_action,
+                    policy_reason,
+                    payload_json,
+                    result_json,
+                    lease_owner,
+                    lease_expires_at,
+                    heartbeat_at,
+                    created_at,
+                    updated_at
+                FROM action_records
+                WHERE status = 'started'
+                  AND lease_owner IS NOT NULL
+                  AND lease_expires_at IS NOT NULL
+                  AND lease_expires_at <= ?
+                ORDER BY lease_expires_at ASC, action_id ASC
+                """,
+                (cutoff,),
+            ).fetchall()
+        return [_stored_action_record_from_row(row) for row in rows]
+
+    def get_action_record(self, action_id: int) -> StoredActionRecord | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    action_id,
+                    task_id,
+                    iteration_id,
+                    idempotency_key,
+                    action_type,
+                    status,
+                    command_string,
+                    policy_action,
+                    policy_reason,
+                    payload_json,
+                    result_json,
+                    lease_owner,
+                    lease_expires_at,
+                    heartbeat_at,
+                    created_at,
+                    updated_at
+                FROM action_records
+                WHERE action_id = ?
+                """,
+                (action_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _stored_action_record_from_row(row)
+
+    def get_action_record_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> StoredActionRecord | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    action_id,
+                    task_id,
+                    iteration_id,
+                    idempotency_key,
+                    action_type,
+                    status,
+                    command_string,
+                    policy_action,
+                    policy_reason,
+                    payload_json,
+                    result_json,
+                    lease_owner,
+                    lease_expires_at,
+                    heartbeat_at,
+                    created_at,
+                    updated_at
+                FROM action_records
+                WHERE idempotency_key = ?
+                """,
+                (idempotency_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _stored_action_record_from_row(row)
+
+    def list_action_records(
+        self,
+        task_id: str,
+        iteration_id: int | None = None,
+    ) -> list[StoredActionRecord]:
+        self.initialize()
+        query = """
+            SELECT
+                action_id,
+                task_id,
+                iteration_id,
+                idempotency_key,
+                action_type,
+                status,
+                command_string,
+                policy_action,
+                policy_reason,
+                payload_json,
+                result_json,
+                lease_owner,
+                lease_expires_at,
+                heartbeat_at,
+                created_at,
+                updated_at
+            FROM action_records
+            WHERE task_id = ?
+        """
+        params: tuple[str] | tuple[str, int] = (task_id,)
+        if iteration_id is not None:
+            query += " AND iteration_id = ?"
+            params = (task_id, iteration_id)
+        query += " ORDER BY action_id ASC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_stored_action_record_from_row(row) for row in rows]
+
+    def record_replan_decision(
+        self,
+        task_id: str,
+        iteration_id: int,
+        source: str,
+        status: str,
+        reason: str,
+        failed_checks: list[dict[str, object]],
+        follow_up_prompt: str | None = None,
+        plan_graph_id: int | None = None,
+        plan_graph_node_id: int | None = None,
+    ) -> StoredReplanDecision:
+        self.initialize()
+        _validate_replan_decision_status(status)
+        _validate_non_empty(source, "Replan decision source")
+        now = _now()
+        with self._connect() as connection:
+            if plan_graph_id is not None:
+                _validate_plan_item_graph_link(
+                    connection,
+                    plan_graph_id,
+                    plan_graph_node_id,
+                )
+            elif plan_graph_node_id is not None:
+                raise ValueError("Replan decision graph node requires plan graph id")
+            cursor = connection.execute(
+                """
+                INSERT INTO replan_decisions (
+                    task_id,
+                    iteration_id,
+                    source,
+                    status,
+                    reason,
+                    follow_up_prompt,
+                    failed_checks_json,
+                    plan_graph_id,
+                    plan_graph_node_id,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    iteration_id,
+                    source.strip(),
+                    status,
+                    redact_secrets(reason) or "",
+                    redact_secrets(follow_up_prompt) if follow_up_prompt else None,
+                    _encode_json_array_payload(failed_checks),
+                    plan_graph_id,
+                    plan_graph_node_id,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create replan decision")
+            replan_id = cursor.lastrowid
+
+        decision = self.get_replan_decision(replan_id)
+        if decision is None:
+            raise RuntimeError("Failed to load created replan decision")
+        return decision
+
+    def get_replan_decision(
+        self,
+        replan_id: int,
+    ) -> StoredReplanDecision | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    replan_id,
+                    task_id,
+                    iteration_id,
+                    source,
+                    status,
+                    reason,
+                    follow_up_prompt,
+                    failed_checks_json,
+                    plan_graph_id,
+                    plan_graph_node_id,
+                    created_at
+                FROM replan_decisions
+                WHERE replan_id = ?
+                """,
+                (replan_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _stored_replan_decision_from_row(row)
+
+    def list_replan_decisions(
+        self,
+        task_id: str,
+        iteration_id: int | None = None,
+    ) -> list[StoredReplanDecision]:
+        self.initialize()
+        query = """
+            SELECT
+                replan_id,
+                task_id,
+                iteration_id,
+                source,
+                status,
+                reason,
+                follow_up_prompt,
+                failed_checks_json,
+                plan_graph_id,
+                plan_graph_node_id,
+                created_at
+            FROM replan_decisions
+            WHERE task_id = ?
+        """
+        params: tuple[str] | tuple[str, int] = (task_id,)
+        if iteration_id is not None:
+            query += " AND iteration_id = ?"
+            params = (task_id, iteration_id)
+        query += " ORDER BY replan_id ASC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_stored_replan_decision_from_row(row) for row in rows]
+
+    def record_memory_lesson(
+        self,
+        source_task_id: str,
+        lesson: str,
+        outcome_status: str,
+        source_iteration_id: int | None = None,
+        failure_reason: str | None = None,
+        failed_checks: list[dict[str, object]] | None = None,
+        follow_up_prompt: str | None = None,
+        stale_after_days: int = 90,
+    ) -> StoredMemoryLesson:
+        self.initialize()
+        _validate_non_empty(lesson, "Memory lesson")
+        _validate_non_empty(outcome_status, "Memory outcome status")
+        if stale_after_days < 0:
+            raise ValueError("Memory stale-after days cannot be negative")
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO memory_lessons (
+                    source_task_id,
+                    source_iteration_id,
+                    lesson,
+                    outcome_status,
+                    failure_reason,
+                    failed_checks_json,
+                    follow_up_prompt,
+                    helpful_count,
+                    unhelpful_count,
+                    stale_after_days,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_task_id,
+                    source_iteration_id,
+                    redact_secrets(lesson) or "",
+                    outcome_status.strip(),
+                    redact_secrets(failure_reason) if failure_reason else None,
+                    _encode_json_array_payload(failed_checks),
+                    redact_secrets(follow_up_prompt) if follow_up_prompt else None,
+                    0,
+                    0,
+                    stale_after_days,
+                    now,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create memory lesson")
+            lesson_id = cursor.lastrowid
+        loaded = self.get_memory_lesson(lesson_id)
+        if loaded is None:
+            raise RuntimeError("Failed to load memory lesson")
+        return loaded
+
+    def get_memory_lesson(self, lesson_id: int) -> StoredMemoryLesson | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    lesson_id,
+                    source_task_id,
+                    source_iteration_id,
+                    lesson,
+                    outcome_status,
+                    failure_reason,
+                    failed_checks_json,
+                    follow_up_prompt,
+                    helpful_count,
+                    unhelpful_count,
+                    stale_after_days,
+                    created_at,
+                    updated_at
+                FROM memory_lessons
+                WHERE lesson_id = ?
+                """,
+                (lesson_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _stored_memory_lesson_from_row(row)
+
+    def list_memory_lessons(
+        self,
+        *,
+        include_stale: bool = False,
+        limit: int | None = None,
+    ) -> list[StoredMemoryLesson]:
+        self.initialize()
+        if limit is not None and limit < 0:
+            raise ValueError("Memory lesson limit cannot be negative")
+        query = """
+            SELECT
+                lesson_id,
+                source_task_id,
+                source_iteration_id,
+                lesson,
+                outcome_status,
+                failure_reason,
+                failed_checks_json,
+                follow_up_prompt,
+                helpful_count,
+                unhelpful_count,
+                stale_after_days,
+                created_at,
+                updated_at
+            FROM memory_lessons
+            ORDER BY lesson_id DESC
+        """
+        with self._connect() as connection:
+            rows = connection.execute(query).fetchall()
+        lessons = [_stored_memory_lesson_from_row(row) for row in rows]
+        if not include_stale:
+            lessons = [lesson for lesson in lessons if not lesson.is_stale]
+        if limit is not None:
+            lessons = lessons[:limit]
+        return lessons
+
+    def search_memory_lessons(
+        self,
+        query: str,
+        *,
+        include_stale: bool = False,
+        limit: int = 5,
+    ) -> list[StoredMemoryLesson]:
+        self.initialize()
+        if limit < 0:
+            raise ValueError("Memory lesson search limit cannot be negative")
+        if limit == 0:
+            return []
+        lessons = self.list_memory_lessons(include_stale=include_stale)
+        query_tokens = _memory_search_tokens(query)
+        if not query_tokens:
+            return lessons[:limit]
+        scored = [
+            (_memory_lesson_relevance_score(lesson, query_tokens), lesson)
+            for lesson in lessons
+        ]
+        scored.sort(key=lambda item: (item[0], item[1].lesson_id), reverse=True)
+        return [lesson for _, lesson in scored[:limit]]
+
+    def record_memory_feedback(
+        self,
+        lesson_id: int,
+        *,
+        helpful_delta: int = 0,
+        unhelpful_delta: int = 0,
+    ) -> StoredMemoryLesson | None:
+        self.initialize()
+        if helpful_delta < 0 or unhelpful_delta < 0:
+            raise ValueError("Memory feedback deltas cannot be negative")
+        updated_at = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE memory_lessons
+                SET helpful_count = helpful_count + ?,
+                    unhelpful_count = unhelpful_count + ?,
+                    updated_at = ?
+                WHERE lesson_id = ?
+                """,
+                (helpful_delta, unhelpful_delta, updated_at, lesson_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_memory_lesson(lesson_id)
+
+    def add_reflection_record(
+        self,
+        task_id: str,
+        reflection_type: str,
+        failure_reason: str,
+        iteration_id: int | None = None,
+        failed_checks: list[dict[str, object]] | None = None,
+        follow_up_prompt: str | None = None,
+    ) -> StoredReflectionRecord:
+        self.initialize()
+        _validate_reflection_type(reflection_type)
+        _validate_non_empty(failure_reason, "Reflection failure reason")
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO reflection_records (
+                    task_id,
+                    iteration_id,
+                    reflection_type,
+                    failure_reason,
+                    failed_checks_json,
+                    follow_up_prompt,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    iteration_id,
+                    reflection_type,
+                    redact_secrets(failure_reason) or "",
+                    _encode_json_array_payload(failed_checks),
+                    redact_secrets(follow_up_prompt) if follow_up_prompt else None,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create reflection record")
+            reflection_id = cursor.lastrowid
+        loaded = self.get_reflection_record(reflection_id)
+        if loaded is None:
+            raise RuntimeError("Failed to load reflection record")
+        return loaded
+
+    def get_reflection_record(
+        self,
+        reflection_id: int,
+    ) -> StoredReflectionRecord | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    reflection_id,
+                    task_id,
+                    iteration_id,
+                    reflection_type,
+                    failure_reason,
+                    failed_checks_json,
+                    follow_up_prompt,
+                    created_at
+                FROM reflection_records
+                WHERE reflection_id = ?
+                """,
+                (reflection_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _stored_reflection_record_from_row(row)
+
+    def list_reflection_records(
+        self,
+        task_id: str | None = None,
+    ) -> list[StoredReflectionRecord]:
+        self.initialize()
+        query = """
+            SELECT
+                reflection_id,
+                task_id,
+                iteration_id,
+                reflection_type,
+                failure_reason,
+                failed_checks_json,
+                follow_up_prompt,
+                created_at
+            FROM reflection_records
+        """
+        params: tuple[object, ...] = ()
+        if task_id is not None:
+            query += " WHERE task_id = ?"
+            params = (task_id,)
+        query += " ORDER BY reflection_id DESC"
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_stored_reflection_record_from_row(row) for row in rows]
+
+    def record_memory_influence(
+        self,
+        task_id: str,
+        lesson_id: int,
+        reason: str,
+        iteration_id: int | None = None,
+        injected: bool = True,
+    ) -> StoredMemoryInfluence:
+        self.initialize()
+        _validate_non_empty(reason, "Memory influence reason")
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO memory_influence_log (
+                    task_id,
+                    iteration_id,
+                    lesson_id,
+                    reason,
+                    injected,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    iteration_id,
+                    lesson_id,
+                    redact_secrets(reason) or "",
+                    1 if injected else 0,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create memory influence record")
+            influence_id = cursor.lastrowid
+        loaded = self.get_memory_influence(influence_id)
+        if loaded is None:
+            raise RuntimeError("Failed to load memory influence")
+        return loaded
+
+    def get_memory_influence(
+        self,
+        influence_id: int,
+    ) -> StoredMemoryInfluence | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    influence_id,
+                    task_id,
+                    iteration_id,
+                    lesson_id,
+                    reason,
+                    injected,
+                    created_at
+                FROM memory_influence_log
+                WHERE influence_id = ?
+                """,
+                (influence_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _stored_memory_influence_from_row(row)
+
+    def list_memory_influence(
+        self,
+        task_id: str | None = None,
+    ) -> list[StoredMemoryInfluence]:
+        self.initialize()
+        query = """
+            SELECT
+                influence_id,
+                task_id,
+                iteration_id,
+                lesson_id,
+                reason,
+                injected,
+                created_at
+            FROM memory_influence_log
+        """
+        params: tuple[object, ...] = ()
+        if task_id is not None:
+            query += " WHERE task_id = ?"
+            params = (task_id,)
+        query += " ORDER BY influence_id ASC"
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_stored_memory_influence_from_row(row) for row in rows]
+
+    def add_dead_letter_item(
+        self,
+        plan_item_id: int,
+        reason: str,
+        *,
+        task_id: str | None = None,
+        attempts: int = 1,
+    ) -> StoredDeadLetterItem:
+        self.initialize()
+        _validate_non_empty(reason, "Dead-letter reason")
+        if attempts < 1:
+            raise ValueError("Dead-letter attempts must be at least 1")
+        now = _now()
+        with self._connect() as connection:
+            plan_item = connection.execute(
+                "SELECT plan_item_id FROM plan_items WHERE plan_item_id = ?",
+                (plan_item_id,),
+            ).fetchone()
+            if plan_item is None:
+                raise ValueError(f"Plan item not found: {plan_item_id}")
+            cursor = connection.execute(
+                """
+                INSERT INTO dead_letter_items (
+                    plan_item_id,
+                    task_id,
+                    reason,
+                    attempts,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    plan_item_id,
+                    task_id,
+                    redact_secrets(reason) or "",
+                    attempts,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create dead-letter item")
+            dead_letter_id = cursor.lastrowid
+        loaded = self.get_dead_letter_item(dead_letter_id)
+        if loaded is None:
+            raise RuntimeError("Failed to load dead-letter item")
+        return loaded
+
+    def get_dead_letter_item(
+        self,
+        dead_letter_id: int,
+    ) -> StoredDeadLetterItem | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    dead_letter_id,
+                    plan_item_id,
+                    task_id,
+                    reason,
+                    attempts,
+                    created_at
+                FROM dead_letter_items
+                WHERE dead_letter_id = ?
+                """,
+                (dead_letter_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _stored_dead_letter_item_from_row(row)
+
+    def list_dead_letter_items(
+        self,
+        plan_item_id: int | None = None,
+    ) -> list[StoredDeadLetterItem]:
+        self.initialize()
+        query = """
+            SELECT
+                dead_letter_id,
+                plan_item_id,
+                task_id,
+                reason,
+                attempts,
+                created_at
+            FROM dead_letter_items
+        """
+        params: tuple[object, ...] = ()
+        if plan_item_id is not None:
+            query += " WHERE plan_item_id = ?"
+            params = (plan_item_id,)
+        query += " ORDER BY dead_letter_id ASC"
+        with self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_stored_dead_letter_item_from_row(row) for row in rows]
+
+    def record_autopilot_loop_run(
+        self,
+        *,
+        plan_path: Path,
+        mode: str,
+        max_runtime_sec: int | None,
+        max_attempts: int,
+        max_actions: int,
+        selected_count: int,
+        processed_count: int,
+        dead_letter_count: int,
+        stop_reason: str,
+        result_code: int,
+        selected_item_ids: list[int] | None = None,
+        elapsed_sec: float = 0.0,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+    ) -> StoredAutopilotLoopRun:
+        self.initialize()
+        _validate_autopilot_loop_mode(mode)
+        _validate_non_empty(stop_reason, "Autopilot loop stop reason")
+        if max_attempts < 1:
+            raise ValueError("Autopilot loop max attempts must be at least 1")
+        if max_actions < 1:
+            raise ValueError("Autopilot loop max actions must be at least 1")
+        if selected_count < 0 or processed_count < 0 or dead_letter_count < 0:
+            raise ValueError("Autopilot loop counts cannot be negative")
+        if elapsed_sec < 0:
+            raise ValueError("Autopilot loop elapsed seconds cannot be negative")
+        now = _now()
+        started = started_at or now
+        completed = completed_at or now
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO autopilot_loop_runs (
+                    plan_path,
+                    mode,
+                    max_runtime_sec,
+                    max_attempts,
+                    max_actions,
+                    selected_count,
+                    processed_count,
+                    dead_letter_count,
+                    stop_reason,
+                    result_code,
+                    selected_item_ids_json,
+                    elapsed_sec,
+                    started_at,
+                    completed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(plan_path),
+                    mode,
+                    max_runtime_sec,
+                    max_attempts,
+                    max_actions,
+                    selected_count,
+                    processed_count,
+                    dead_letter_count,
+                    redact_secrets(stop_reason) or "",
+                    result_code,
+                    _encode_json_int_list(selected_item_ids),
+                    elapsed_sec,
+                    started,
+                    completed,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create autopilot loop run")
+            loop_run_id = cursor.lastrowid
+        loaded = self.get_autopilot_loop_run(loop_run_id)
+        if loaded is None:
+            raise RuntimeError("Failed to load autopilot loop run")
+        return loaded
+
+    def get_autopilot_loop_run(
+        self,
+        loop_run_id: int,
+    ) -> StoredAutopilotLoopRun | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    loop_run_id,
+                    plan_path,
+                    mode,
+                    max_runtime_sec,
+                    max_attempts,
+                    max_actions,
+                    selected_count,
+                    processed_count,
+                    dead_letter_count,
+                    stop_reason,
+                    result_code,
+                    selected_item_ids_json,
+                    elapsed_sec,
+                    started_at,
+                    completed_at
+                FROM autopilot_loop_runs
+                WHERE loop_run_id = ?
+                """,
+                (loop_run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _stored_autopilot_loop_run_from_row(row)
+
+    def list_autopilot_loop_runs(
+        self,
+        *,
+        plan_path: Path | None = None,
+        limit: int | None = None,
+    ) -> list[StoredAutopilotLoopRun]:
+        self.initialize()
+        if limit is not None and limit < 0:
+            raise ValueError("Autopilot loop run limit cannot be negative")
+        query = """
+            SELECT
+                loop_run_id,
+                plan_path,
+                mode,
+                max_runtime_sec,
+                max_attempts,
+                max_actions,
+                selected_count,
+                processed_count,
+                dead_letter_count,
+                stop_reason,
+                result_code,
+                selected_item_ids_json,
+                elapsed_sec,
+                started_at,
+                completed_at
+            FROM autopilot_loop_runs
+        """
+        params: list[object] = []
+        if plan_path is not None:
+            query += " WHERE plan_path = ?"
+            params.append(str(plan_path))
+        query += " ORDER BY loop_run_id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [_stored_autopilot_loop_run_from_row(row) for row in rows]
+
+    def link_replan_decisions_to_plan_graph(
+        self,
+        task_id: str,
+        plan_graph_id: int,
+        plan_graph_node_id: int | None = None,
+    ) -> list[StoredReplanDecision]:
+        """Attach unlinked task replan decisions to a PlanGraph node lifecycle."""
+        self.initialize()
+        with self._connect() as connection:
+            _validate_plan_item_graph_link(
+                connection,
+                plan_graph_id,
+                plan_graph_node_id,
+            )
+            connection.execute(
+                """
+                UPDATE replan_decisions
+                SET plan_graph_id = ?,
+                    plan_graph_node_id = ?
+                WHERE task_id = ? AND plan_graph_id IS NULL
+                """,
+                (plan_graph_id, plan_graph_node_id, task_id),
+            )
+        return self.list_replan_decisions(task_id)
+
+    def create_replan_follow_up_nodes(
+        self,
+        task_id: str,
+        plan_graph_id: int,
+    ) -> list[StoredPlanGraphNode]:
+        """Create idempotent pending PlanGraph nodes for linked replan decisions."""
+        self.initialize()
+        now = _now()
+        node_ids: list[int] = []
+        with self._connect() as connection:
+            _validate_plan_item_graph_link(connection, plan_graph_id, None)
+            rows = connection.execute(
+                """
+                SELECT
+                    replan_id,
+                    reason,
+                    follow_up_prompt,
+                    plan_graph_node_id
+                FROM replan_decisions
+                WHERE task_id = ?
+                  AND plan_graph_id = ?
+                  AND plan_graph_node_id IS NOT NULL
+                ORDER BY replan_id ASC
+                """,
+                (task_id, plan_graph_id),
+            ).fetchall()
+
+            for row in rows:
+                replan_id = int(row["replan_id"])
+                parent_node_id = int(row["plan_graph_node_id"])
+                _validate_plan_graph_dependency_ids(
+                    connection,
+                    plan_graph_id,
+                    [parent_node_id],
+                )
+                node_key = f"replan-{replan_id}"
+                existing = connection.execute(
+                    """
+                    SELECT node_id
+                    FROM plan_graph_nodes
+                    WHERE graph_id = ? AND node_key = ?
+                    """,
+                    (plan_graph_id, node_key),
+                ).fetchone()
+                if existing is not None:
+                    node_id = int(existing["node_id"])
+                else:
+                    title_source = row["follow_up_prompt"] or row["reason"] or ""
+                    cursor = connection.execute(
+                        """
+                        INSERT INTO plan_graph_nodes (
+                            graph_id,
+                            node_key,
+                            title,
+                            status,
+                            attempts,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (?, ?, ?, 'pending', 0, ?, ?)
+                        """,
+                        (
+                            plan_graph_id,
+                            node_key,
+                            _replan_follow_up_node_title(replan_id, str(title_source)),
+                            now,
+                            now,
+                        ),
+                    )
+                    if cursor.lastrowid is None:
+                        raise RuntimeError("Failed to create replan follow-up node")
+                    node_id = cursor.lastrowid
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO plan_graph_dependencies (
+                        graph_id,
+                        node_id,
+                        depends_on_node_id,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (plan_graph_id, node_id, parent_node_id, now),
+                )
+                node_ids.append(node_id)
+
+            if node_ids:
+                connection.execute(
+                    "UPDATE plan_graphs SET updated_at = ? WHERE graph_id = ?",
+                    (now, plan_graph_id),
+                )
+
+        nodes = [self.get_plan_graph_node(node_id) for node_id in node_ids]
+        return [node for node in nodes if node is not None]
+
+    def list_task_timeline(self, task_id: str) -> list[StoredTimelineEntry]:
+        self.initialize()
+        entries: list[StoredTimelineEntry] = []
+        with self._connect() as connection:
+            task = connection.execute(
+                """
+                SELECT task_id, task, repo_path, status, created_at, updated_at
+                FROM tasks
+                WHERE task_id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                return []
+
+            _append_timeline_entry(
+                entries,
+                occurred_at=str(task["created_at"]),
+                source="task",
+                source_id=str(task["task_id"]),
+                event_type="task.created",
+                status=str(task["status"]),
+                summary="Task created",
+                payload={
+                    "task": str(task["task"]),
+                    "repo_path": str(task["repo_path"]),
+                },
+            )
+            if task["updated_at"] != task["created_at"]:
+                _append_timeline_entry(
+                    entries,
+                    occurred_at=str(task["updated_at"]),
+                    source="task",
+                    source_id=str(task["task_id"]),
+                    event_type="task.current_status",
+                    status=str(task["status"]),
+                    summary=f"Task current status: {task['status']}",
+                    payload={},
+                )
+
+            for row in connection.execute(
+                """
+                SELECT event_id, sequence, event_type, payload_json, created_at
+                FROM task_events
+                WHERE task_id = ?
+                ORDER BY sequence ASC, event_id ASC
+                """,
+                (task_id,),
+            ).fetchall():
+                _append_timeline_entry(
+                    entries,
+                    occurred_at=str(row["created_at"]),
+                    source="task_event",
+                    source_id=str(row["event_id"]),
+                    event_type=str(row["event_type"]),
+                    status=None,
+                    summary=str(row["event_type"]),
+                    payload={
+                        "sequence": int(row["sequence"]),
+                        "payload": _decode_json_payload(row["payload_json"]),
+                    },
+                )
+
+            for row in connection.execute(
+                """
+                SELECT
+                    iteration_id,
+                    iteration_index,
+                    agent_name,
+                    agent_status,
+                    decision_status,
+                    decision_reason,
+                    created_at
+                FROM iterations
+                WHERE task_id = ?
+                ORDER BY iteration_index ASC, iteration_id ASC
+                """,
+                (task_id,),
+            ).fetchall():
+                _append_timeline_entry(
+                    entries,
+                    occurred_at=str(row["created_at"]),
+                    source="iteration",
+                    source_id=str(row["iteration_id"]),
+                    event_type="iteration.recorded",
+                    status=str(row["decision_status"]),
+                    summary=(
+                        f"Iteration {row['iteration_index']}: "
+                        f"{row['decision_status']}"
+                    ),
+                    payload={
+                        "iteration_index": int(row["iteration_index"]),
+                        "agent_name": str(row["agent_name"]),
+                        "agent_status": str(row["agent_status"]),
+                        "decision_reason": redact_secrets(row["decision_reason"]) or "",
+                    },
+                )
+
+            for row in connection.execute(
+                """
+                SELECT verification_id, iteration_id, name, status, exit_code, created_at
+                FROM verification_runs
+                WHERE task_id = ?
+                ORDER BY verification_id ASC
+                """,
+                (task_id,),
+            ).fetchall():
+                exit_code = row["exit_code"]
+                _append_timeline_entry(
+                    entries,
+                    occurred_at=str(row["created_at"]),
+                    source="verification",
+                    source_id=str(row["verification_id"]),
+                    event_type="verification.recorded",
+                    status=str(row["status"]),
+                    summary=f"Verification {row['name']}: {row['status']}",
+                    payload={
+                        "iteration_id": int(row["iteration_id"]),
+                        "name": str(row["name"]),
+                        "exit_code": None if exit_code is None else int(exit_code),
+                    },
+                )
+
+            for row in connection.execute(
+                """
+                SELECT
+                    replan_id,
+                    iteration_id,
+                    source,
+                    status,
+                    reason,
+                    follow_up_prompt,
+                    failed_checks_json,
+                    plan_graph_id,
+                    plan_graph_node_id,
+                    created_at
+                FROM replan_decisions
+                WHERE task_id = ?
+                ORDER BY replan_id ASC
+                """,
+                (task_id,),
+            ).fetchall():
+                failed_checks = _decode_json_array_payload(row["failed_checks_json"])
+                _append_timeline_entry(
+                    entries,
+                    occurred_at=str(row["created_at"]),
+                    source="replan",
+                    source_id=str(row["replan_id"]),
+                    event_type="replan.decision",
+                    status=str(row["status"]),
+                    summary=f"Replan decision: {row['status']}",
+                    payload={
+                        "iteration_id": int(row["iteration_id"]),
+                        "source": str(row["source"]),
+                        "reason": redact_secrets(row["reason"]) or "",
+                        "failed_checks": failed_checks,
+                        "follow_up_prompt": (
+                            redact_secrets(row["follow_up_prompt"])
+                            if row["follow_up_prompt"]
+                            else None
+                        ),
+                        "plan_graph_id": row["plan_graph_id"],
+                        "plan_graph_node_id": row["plan_graph_node_id"],
+                    },
+                )
+
+            for row in connection.execute(
+                """
+                SELECT
+                    reflection_id,
+                    iteration_id,
+                    reflection_type,
+                    failure_reason,
+                    failed_checks_json,
+                    follow_up_prompt,
+                    created_at
+                FROM reflection_records
+                WHERE task_id = ?
+                ORDER BY reflection_id ASC
+                """,
+                (task_id,),
+            ).fetchall():
+                _append_timeline_entry(
+                    entries,
+                    occurred_at=str(row["created_at"]),
+                    source="reflection",
+                    source_id=str(row["reflection_id"]),
+                    event_type=f"reflection.{row['reflection_type']}",
+                    status=None,
+                    summary=f"Reflection recorded: {row['reflection_type']}",
+                    payload={
+                        "iteration_id": row["iteration_id"],
+                        "failure_reason": redact_secrets(row["failure_reason"]) or "",
+                        "failed_checks": _decode_json_array_payload(
+                            row["failed_checks_json"]
+                        ),
+                        "follow_up_prompt": (
+                            redact_secrets(row["follow_up_prompt"])
+                            if row["follow_up_prompt"]
+                            else None
+                        ),
+                    },
+                )
+
+            for row in connection.execute(
+                """
+                SELECT
+                    influence_id,
+                    iteration_id,
+                    lesson_id,
+                    reason,
+                    injected,
+                    created_at
+                FROM memory_influence_log
+                WHERE task_id = ?
+                ORDER BY influence_id ASC
+                """,
+                (task_id,),
+            ).fetchall():
+                _append_timeline_entry(
+                    entries,
+                    occurred_at=str(row["created_at"]),
+                    source="memory",
+                    source_id=str(row["influence_id"]),
+                    event_type="memory.influence",
+                    status="injected" if int(row["injected"]) else "skipped",
+                    summary=f"Memory influence: lesson {row['lesson_id']}",
+                    payload={
+                        "iteration_id": row["iteration_id"],
+                        "lesson_id": int(row["lesson_id"]),
+                        "reason": redact_secrets(row["reason"]) or "",
+                        "injected": bool(row["injected"]),
+                    },
+                )
+
+            for row in connection.execute(
+                """
+                SELECT
+                    approval_id,
+                    iteration_id,
+                    source,
+                    command_string,
+                    reason,
+                    status,
+                    created_at,
+                    resolved_at,
+                    resolution
+                FROM approval_requests
+                WHERE task_id = ?
+                ORDER BY created_at ASC, approval_id ASC
+                """,
+                (task_id,),
+            ).fetchall():
+                _append_timeline_entry(
+                    entries,
+                    occurred_at=str(row["created_at"]),
+                    source="approval",
+                    source_id=str(row["approval_id"]),
+                    event_type="approval.requested",
+                    status=str(row["status"]),
+                    summary=f"Approval requested: {row['source']}",
+                    payload={
+                        "iteration_id": row["iteration_id"],
+                        "source": str(row["source"]),
+                        "command_string": redact_secrets(row["command_string"]) or "",
+                        "reason": redact_secrets(row["reason"]) or "",
+                    },
+                )
+                if row["resolved_at"] is not None:
+                    _append_timeline_entry(
+                        entries,
+                        occurred_at=str(row["resolved_at"]),
+                        source="approval",
+                        source_id=str(row["approval_id"]),
+                        event_type="approval.resolved",
+                        status=str(row["status"]),
+                        summary=f"Approval resolved: {row['status']}",
+                        payload={
+                            "resolution": redact_secrets(row["resolution"]) or "",
+                        },
+                    )
+
+            for row in connection.execute(
+                """
+                SELECT
+                    action_id,
+                    iteration_id,
+                    idempotency_key,
+                    action_type,
+                    status,
+                    command_string,
+                    policy_action,
+                    policy_reason,
+                    payload_json,
+                    result_json,
+                    lease_owner,
+                    lease_expires_at,
+                    heartbeat_at,
+                    created_at,
+                    updated_at
+                FROM action_records
+                WHERE task_id = ?
+                ORDER BY action_id ASC
+                """,
+                (task_id,),
+            ).fetchall():
+                action_payload = _action_timeline_payload(row)
+                _append_timeline_entry(
+                    entries,
+                    occurred_at=str(row["created_at"]),
+                    source="action",
+                    source_id=str(row["action_id"]),
+                    event_type="action.recorded",
+                    status=str(row["status"]),
+                    summary=f"Action {row['action_type']}: {row['status']}",
+                    payload=action_payload,
+                )
+                if row["updated_at"] != row["created_at"]:
+                    _append_timeline_entry(
+                        entries,
+                        occurred_at=str(row["updated_at"]),
+                        source="action",
+                        source_id=str(row["action_id"]),
+                        event_type="action.updated",
+                        status=str(row["status"]),
+                        summary=f"Action updated: {row['status']}",
+                        payload=action_payload,
+                    )
+
+        entries.sort(
+            key=lambda entry: (
+                entry.occurred_at,
+                entry.source,
+                entry.source_id,
+                entry.event_type,
+            )
+        )
+        return [
+            StoredTimelineEntry(
+                timeline_index=index,
+                occurred_at=entry.occurred_at,
+                source=entry.source,
+                source_id=entry.source_id,
+                event_type=entry.event_type,
+                status=entry.status,
+                summary=entry.summary,
+                payload={**entry.payload, "run_id": _run_id_for_task(task_id)},
+            )
+            for index, entry in enumerate(entries, start=1)
+        ]
 
     def get_task(self, task_id: str) -> StoredTask | None:
         self.initialize()
@@ -839,6 +2917,8 @@ class StateStore:
         task_id: str | None = None,
         selected_worktree_path: Path | str | None = None,
         blocked_reason: str | None = None,
+        plan_graph_id: int | None = None,
+        plan_graph_root_node_id: int | None = None,
     ) -> StoredPlanItem:
         self.initialize()
         _validate_plan_item_status(status)
@@ -847,6 +2927,14 @@ class StateStore:
             str(selected_worktree_path) if selected_worktree_path is not None else None
         )
         with self._connect() as connection:
+            if plan_graph_id is not None:
+                _validate_plan_item_graph_link(
+                    connection,
+                    plan_graph_id,
+                    plan_graph_root_node_id,
+                )
+            elif plan_graph_root_node_id is not None:
+                raise ValueError("Plan graph root node requires plan graph id")
             cursor = connection.execute(
                 """
                 INSERT INTO plan_items (
@@ -858,10 +2946,12 @@ class StateStore:
                     task_id,
                     selected_worktree_path,
                     blocked_reason,
+                    plan_graph_id,
+                    plan_graph_root_node_id,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(plan_path),
@@ -872,6 +2962,8 @@ class StateStore:
                     task_id,
                     selected_worktree,
                     redact_secrets(blocked_reason),
+                    plan_graph_id,
+                    plan_graph_root_node_id,
                     now,
                     now,
                 ),
@@ -906,6 +2998,8 @@ class StateStore:
                     task_id,
                     selected_worktree_path,
                     blocked_reason,
+                    plan_graph_id,
+                    plan_graph_root_node_id,
                     created_at,
                     updated_at
                 FROM plan_items
@@ -937,6 +3031,8 @@ class StateStore:
                 task_id,
                 selected_worktree_path,
                 blocked_reason,
+                plan_graph_id,
+                plan_graph_root_node_id,
                 created_at,
                 updated_at
             FROM plan_items
@@ -995,6 +3091,46 @@ class StateStore:
             "state plan item status updated plan_item_id=%s status=%s",
             plan_item_id,
             status,
+        )
+        return self.get_plan_item(plan_item_id)
+
+    def link_plan_item_to_plan_graph(
+        self,
+        plan_item_id: int,
+        plan_graph_id: int,
+        plan_graph_root_node_id: int | None = None,
+    ) -> StoredPlanItem | None:
+        """Link a queue item to a durable plan graph root.
+
+        Returns ``None`` when the queue item does not exist. Raises
+        ``ValueError`` when the graph or root node reference is invalid.
+        """
+        self.initialize()
+        now = _now()
+        with self._connect() as connection:
+            _validate_plan_item_graph_link(
+                connection,
+                plan_graph_id,
+                plan_graph_root_node_id,
+            )
+            cursor = connection.execute(
+                """
+                UPDATE plan_items
+                SET plan_graph_id = ?,
+                    plan_graph_root_node_id = ?,
+                    updated_at = ?
+                WHERE plan_item_id = ?
+                """,
+                (plan_graph_id, plan_graph_root_node_id, now, plan_item_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+
+        logger.debug(
+            "state plan item linked to plan graph plan_item_id=%s graph_id=%s root_node_id=%s",
+            plan_item_id,
+            plan_graph_id,
+            plan_graph_root_node_id,
         )
         return self.get_plan_item(plan_item_id)
 
@@ -1102,6 +3238,378 @@ class StateStore:
         )
         return self.get_plan_item(plan_item_id)
 
+    def create_plan_graph(
+        self,
+        title: str,
+        task_id: str | None = None,
+        status: str = "active",
+    ) -> StoredPlanGraph:
+        self.initialize()
+        _validate_non_empty(title, "Plan graph title")
+        _validate_plan_graph_status(status)
+        now = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO plan_graphs (task_id, title, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    task_id,
+                    redact_secrets(title) or "",
+                    status,
+                    now,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create plan graph")
+            graph_id = cursor.lastrowid
+        graph = self.get_plan_graph(graph_id)
+        if graph is None:
+            raise RuntimeError("Failed to load created plan graph")
+        return graph
+
+    def get_plan_graph(self, graph_id: int) -> StoredPlanGraph | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT graph_id, task_id, title, status, created_at, updated_at
+                FROM plan_graphs
+                WHERE graph_id = ?
+                """,
+                (graph_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredPlanGraph(**dict(row))
+
+    def list_plan_graphs(
+        self,
+        task_id: str | None = None,
+        status: str | None = None,
+    ) -> list[StoredPlanGraph]:
+        self.initialize()
+        if status is not None:
+            _validate_plan_graph_status(status)
+
+        query = """
+            SELECT graph_id, task_id, title, status, created_at, updated_at
+            FROM plan_graphs
+            WHERE 1 = 1
+        """
+        params: list[str] = []
+        if task_id is not None:
+            query += " AND task_id = ?"
+            params.append(task_id)
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY updated_at DESC, graph_id DESC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [StoredPlanGraph(**dict(row)) for row in rows]
+
+    def update_plan_graph_status(
+        self,
+        graph_id: int,
+        status: str,
+    ) -> StoredPlanGraph | None:
+        self.initialize()
+        _validate_plan_graph_status(status)
+        updated_at = _now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE plan_graphs
+                SET status = ?, updated_at = ?
+                WHERE graph_id = ?
+                """,
+                (status, updated_at, graph_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_plan_graph(graph_id)
+
+    def add_plan_graph_node(
+        self,
+        graph_id: int,
+        node_key: str,
+        title: str,
+        status: str = "pending",
+        attempts: int = 0,
+        depends_on_node_ids: list[int] | None = None,
+    ) -> StoredPlanGraphNode:
+        self.initialize()
+        _validate_plan_graph_node_key(node_key)
+        _validate_non_empty(title, "Plan graph node title")
+        _validate_plan_graph_node_status(status)
+        _validate_plan_graph_attempts(attempts)
+        dependency_ids = depends_on_node_ids or []
+        now = _now()
+        with self._connect() as connection:
+            if not _plan_graph_exists(connection, graph_id):
+                raise ValueError(f"Plan graph not found: {graph_id}")
+            _validate_plan_graph_dependency_ids(connection, graph_id, dependency_ids)
+            cursor = connection.execute(
+                """
+                INSERT INTO plan_graph_nodes (
+                    graph_id,
+                    node_key,
+                    title,
+                    status,
+                    attempts,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    graph_id,
+                    node_key.strip(),
+                    redact_secrets(title) or "",
+                    status,
+                    attempts,
+                    now,
+                    now,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to create plan graph node")
+            node_id = cursor.lastrowid
+            for depends_on_node_id in dependency_ids:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO plan_graph_dependencies (
+                        graph_id,
+                        node_id,
+                        depends_on_node_id,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (graph_id, node_id, depends_on_node_id, now),
+                )
+            connection.execute(
+                "UPDATE plan_graphs SET updated_at = ? WHERE graph_id = ?",
+                (now, graph_id),
+            )
+
+        node = self.get_plan_graph_node(node_id)
+        if node is None:
+            raise RuntimeError("Failed to load created plan graph node")
+        return node
+
+    def get_plan_graph_node(self, node_id: int) -> StoredPlanGraphNode | None:
+        self.initialize()
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    node_id,
+                    graph_id,
+                    node_key,
+                    title,
+                    status,
+                    attempts,
+                    created_at,
+                    updated_at
+                FROM plan_graph_nodes
+                WHERE node_id = ?
+                """,
+                (node_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredPlanGraphNode(**dict(row))
+
+    def list_plan_graph_nodes(
+        self,
+        graph_id: int,
+        status: str | None = None,
+    ) -> list[StoredPlanGraphNode]:
+        self.initialize()
+        if status is not None:
+            _validate_plan_graph_node_status(status)
+        query = """
+            SELECT
+                node_id,
+                graph_id,
+                node_key,
+                title,
+                status,
+                attempts,
+                created_at,
+                updated_at
+            FROM plan_graph_nodes
+            WHERE graph_id = ?
+        """
+        params: list[object] = [graph_id]
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY node_id ASC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [StoredPlanGraphNode(**dict(row)) for row in rows]
+
+    def list_ready_plan_graph_nodes(
+        self,
+        graph_id: int,
+        limit: int | None = None,
+    ) -> list[StoredPlanGraphNode]:
+        """Return pending PlanGraph nodes whose dependencies are all done."""
+        self.initialize()
+        if limit is not None and limit < 0:
+            raise ValueError("Ready PlanGraph node limit cannot be negative")
+
+        query = """
+            SELECT
+                node_id,
+                graph_id,
+                node_key,
+                title,
+                status,
+                attempts,
+                created_at,
+                updated_at
+            FROM plan_graph_nodes AS node
+            WHERE node.graph_id = ?
+              AND node.status = 'pending'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM plan_graph_dependencies AS dependency
+                  JOIN plan_graph_nodes AS dependency_node
+                    ON dependency_node.node_id = dependency.depends_on_node_id
+                  WHERE dependency.graph_id = node.graph_id
+                    AND dependency.node_id = node.node_id
+                    AND dependency_node.status <> 'done'
+              )
+            ORDER BY node.node_id ASC
+        """
+        params: list[object] = [graph_id]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [StoredPlanGraphNode(**dict(row)) for row in rows]
+
+    def update_plan_graph_node_status(
+        self,
+        node_id: int,
+        status: str,
+        attempts: int | None = None,
+        increment_attempts: bool = False,
+    ) -> StoredPlanGraphNode | None:
+        self.initialize()
+        _validate_plan_graph_node_status(status)
+        if attempts is not None and increment_attempts:
+            raise ValueError("Use either attempts or increment_attempts, not both")
+        if attempts is not None:
+            _validate_plan_graph_attempts(attempts)
+
+        updated_at = _now()
+        set_clause = "status = ?, updated_at = ?"
+        params: list[object] = [status, updated_at]
+        if attempts is not None:
+            set_clause += ", attempts = ?"
+            params.append(attempts)
+        elif increment_attempts:
+            set_clause += ", attempts = attempts + 1"
+        params.append(node_id)
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT graph_id FROM plan_graph_nodes WHERE node_id = ?",
+                (node_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = connection.execute(
+                f"""
+                UPDATE plan_graph_nodes
+                SET {set_clause}
+                WHERE node_id = ?
+                """,
+                tuple(params),
+            )
+            if cursor.rowcount == 0:
+                return None
+            connection.execute(
+                "UPDATE plan_graphs SET updated_at = ? WHERE graph_id = ?",
+                (updated_at, int(row["graph_id"])),
+            )
+        return self.get_plan_graph_node(node_id)
+
+    def add_plan_graph_dependency(
+        self,
+        graph_id: int,
+        node_id: int,
+        depends_on_node_id: int,
+    ) -> StoredPlanGraphDependency | None:
+        self.initialize()
+        if node_id == depends_on_node_id:
+            raise ValueError("Plan graph node cannot depend on itself")
+        now = _now()
+        with self._connect() as connection:
+            _validate_plan_graph_dependency_ids(connection, graph_id, [node_id])
+            _validate_plan_graph_dependency_ids(
+                connection,
+                graph_id,
+                [depends_on_node_id],
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO plan_graph_dependencies (
+                    graph_id,
+                    node_id,
+                    depends_on_node_id,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (graph_id, node_id, depends_on_node_id, now),
+            )
+            connection.execute(
+                "UPDATE plan_graphs SET updated_at = ? WHERE graph_id = ?",
+                (now, graph_id),
+            )
+        dependencies = self.list_plan_graph_dependencies(graph_id, node_id=node_id)
+        return next(
+            (
+                dependency
+                for dependency in dependencies
+                if dependency.depends_on_node_id == depends_on_node_id
+            ),
+            None,
+        )
+
+    def list_plan_graph_dependencies(
+        self,
+        graph_id: int,
+        node_id: int | None = None,
+    ) -> list[StoredPlanGraphDependency]:
+        self.initialize()
+        query = """
+            SELECT graph_id, node_id, depends_on_node_id, created_at
+            FROM plan_graph_dependencies
+            WHERE graph_id = ?
+        """
+        params: list[object] = [graph_id]
+        if node_id is not None:
+            query += " AND node_id = ?"
+            params.append(node_id)
+        query += " ORDER BY node_id ASC, depends_on_node_id ASC"
+
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [StoredPlanGraphDependency(**dict(row)) for row in rows]
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
@@ -1116,8 +3624,136 @@ def _validate_plan_item_status(status: str) -> None:
         raise ValueError(f"Unsupported plan item status: {status}")
 
 
+def _validate_autopilot_loop_mode(mode: str) -> None:
+    if mode not in {"dry-run", "execute"}:
+        raise ValueError("Autopilot loop mode must be 'dry-run' or 'execute'")
+
+
+def _run_id_for_task(task_id: str) -> str:
+    normalized = task_id.strip() or "unknown"
+    if normalized.startswith("task-"):
+        normalized = normalized.removeprefix("task-")
+    return f"run-{normalized}"
+
+
+def _validate_plan_graph_status(status: str) -> None:
+    if status not in {"active", "done", "blocked", "archived"}:
+        raise ValueError(f"Unsupported plan graph status: {status}")
+
+
+def _validate_plan_graph_node_status(status: str) -> None:
+    if status not in {"pending", "in_progress", "done", "blocked", "skipped"}:
+        raise ValueError(f"Unsupported plan graph node status: {status}")
+
+
+def _validate_plan_graph_node_key(node_key: str) -> None:
+    _validate_non_empty(node_key, "Plan graph node key")
+
+
+def _validate_plan_graph_attempts(attempts: int) -> None:
+    if attempts < 0:
+        raise ValueError("Plan graph node attempts cannot be negative")
+
+
+def _validate_replan_decision_status(status: str) -> None:
+    if status not in {"continue", "blocked"}:
+        raise ValueError(f"Unsupported replan decision status: {status}")
+
+
+def _validate_non_empty(value: str, label: str) -> None:
+    if not value.strip():
+        raise ValueError(f"{label} cannot be empty")
+
+
+def _plan_graph_exists(connection: sqlite3.Connection, graph_id: int) -> bool:
+    row = connection.execute(
+        "SELECT graph_id FROM plan_graphs WHERE graph_id = ?",
+        (graph_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _validate_plan_item_graph_link(
+    connection: sqlite3.Connection,
+    graph_id: int,
+    root_node_id: int | None,
+) -> None:
+    if not _plan_graph_exists(connection, graph_id):
+        raise ValueError(f"Plan graph not found: {graph_id}")
+    if root_node_id is not None:
+        _validate_plan_graph_dependency_ids(connection, graph_id, [root_node_id])
+
+
+def _validate_plan_graph_dependency_ids(
+    connection: sqlite3.Connection,
+    graph_id: int,
+    node_ids: list[int],
+) -> None:
+    if not node_ids:
+        return
+    unique_node_ids = sorted(set(node_ids))
+    placeholders = ", ".join("?" for _ in unique_node_ids)
+    rows = connection.execute(
+        f"""
+        SELECT node_id
+        FROM plan_graph_nodes
+        WHERE graph_id = ?
+          AND node_id IN ({placeholders})
+        """,
+        (graph_id, *unique_node_ids),
+    ).fetchall()
+    found = {int(row["node_id"]) for row in rows}
+    missing = [node_id for node_id in unique_node_ids if node_id not in found]
+    if missing:
+        raise ValueError(
+            "Plan graph dependency nodes not found in graph "
+            f"{graph_id}: {', '.join(str(node_id) for node_id in missing)}"
+        )
+
+
+def _replan_follow_up_node_title(replan_id: int, source: str) -> str:
+    summary = " ".join(source.split())
+    if not summary:
+        summary = f"Replan decision {replan_id}"
+    title = f"Follow-up for replan {replan_id}: {summary}"
+    if len(title) > 180:
+        title = f"{title[:177]}..."
+    return redact_secrets(title) or f"Follow-up for replan {replan_id}"
+
+
+def _validate_action_status(status: str) -> None:
+    if status not in {
+        "started",
+        "succeeded",
+        "failed",
+        "skipped",
+        "policy_denied",
+        "needs_approval",
+    }:
+        raise ValueError(f"Unsupported action status: {status}")
+
+
+def _validate_reflection_type(reflection_type: str) -> None:
+    if reflection_type not in {"blocked_run", "failed_verification"}:
+        raise ValueError(f"Unsupported reflection type: {reflection_type}")
+
+
+def _validate_lease_owner(lease_owner: str) -> None:
+    if not lease_owner.strip():
+        raise ValueError("Action lease owner cannot be empty")
+
+
+def _validate_lease_ttl(ttl_sec: int) -> None:
+    if ttl_sec <= 0:
+        raise ValueError("Action lease TTL must be positive")
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _expires_at(timestamp: str, ttl_sec: int) -> str:
+    return (datetime.fromisoformat(timestamp) + timedelta(seconds=ttl_sec)).isoformat()
 
 
 def _encode_json_list(values: list[str] | None) -> str:
@@ -1135,6 +3771,159 @@ def _decode_json_list(value: str | None) -> list[str]:
     if not isinstance(decoded, list):
         return []
     return [str(item) for item in decoded if isinstance(item, str)]
+
+
+def _encode_json_int_list(values: list[int] | None) -> str:
+    return json.dumps([int(value) for value in values or []])
+
+
+def _decode_json_int_list(value: str | None) -> list[int]:
+    if not value:
+        return []
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(decoded, list):
+        return []
+    return [int(item) for item in decoded if isinstance(item, int) and not isinstance(item, bool)]
+
+
+def _memory_search_tokens(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    return {
+        token
+        for token in _MEMORY_TOKEN_RE.findall(text.casefold())
+        if len(token) > 2 and token not in _MEMORY_STOP_WORDS
+    }
+
+
+def _memory_lesson_relevance_score(
+    lesson: StoredMemoryLesson,
+    query_tokens: set[str],
+) -> int:
+    lesson_tokens = _memory_search_tokens(_memory_lesson_relevance_text(lesson))
+    overlap = query_tokens & lesson_tokens
+    substring_bonus = 0
+    lesson_text = _memory_lesson_relevance_text(lesson).casefold()
+    for token in query_tokens:
+        if token in lesson_text:
+            substring_bonus += 1
+    return (
+        len(overlap) * 100
+        + substring_bonus * 10
+        + lesson.helpful_count * 5
+        - lesson.unhelpful_count * 10
+    )
+
+
+def _memory_lesson_relevance_text(lesson: StoredMemoryLesson) -> str:
+    parts = [
+        lesson.lesson,
+        lesson.outcome_status,
+        lesson.failure_reason or "",
+        lesson.follow_up_prompt or "",
+    ]
+    for check in lesson.failed_checks:
+        parts.extend(str(value) for value in check.values())
+    return " ".join(parts)
+
+
+def _encode_json_payload(value: dict[str, object] | None) -> str:
+    redacted = _redact_json_value(value or {})
+    return json.dumps(redacted, sort_keys=True)
+
+
+def _decode_json_payload(value: str | None) -> dict[str, object]:
+    if not value:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(decoded, dict):
+        return {}
+    return {str(key): item for key, item in decoded.items()}
+
+
+def _encode_json_array_payload(value: list[dict[str, object]] | None) -> str:
+    redacted = _redact_json_value(value or [])
+    return json.dumps(redacted, sort_keys=True)
+
+
+def _decode_json_array_payload(value: str | None) -> list[dict[str, object]]:
+    if not value:
+        return []
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(decoded, list):
+        return []
+    result: list[dict[str, object]] = []
+    for item in decoded:
+        if isinstance(item, dict):
+            result.append({str(key): value for key, value in item.items()})
+    return result
+
+
+def _append_timeline_entry(
+    entries: list[StoredTimelineEntry],
+    *,
+    occurred_at: str,
+    source: str,
+    source_id: str,
+    event_type: str,
+    status: str | None,
+    summary: str,
+    payload: dict[str, object],
+) -> None:
+    redacted_payload = _redact_json_value(payload)
+    if not isinstance(redacted_payload, dict):
+        redacted_payload = {}
+    entries.append(
+        StoredTimelineEntry(
+            timeline_index=0,
+            occurred_at=occurred_at,
+            source=source,
+            source_id=source_id,
+            event_type=event_type,
+            status=status,
+            summary=redact_secrets(summary) or "",
+            payload={str(key): item for key, item in redacted_payload.items()},
+        )
+    )
+
+
+def _action_timeline_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "iteration_id": row["iteration_id"],
+        "idempotency_key": str(row["idempotency_key"]),
+        "action_type": str(row["action_type"]),
+        "command_string": redact_secrets(row["command_string"]) or "",
+        "policy_action": row["policy_action"],
+        "policy_reason": redact_secrets(row["policy_reason"]) or "",
+        "payload": _decode_json_payload(row["payload_json"]),
+        "result": _decode_json_payload(row["result_json"]),
+        "lease_owner": redact_secrets(row["lease_owner"]),
+        "lease_expires_at": row["lease_expires_at"],
+        "heartbeat_at": row["heartbeat_at"],
+    }
+
+
+def _redact_json_value(value: object) -> object:
+    if isinstance(value, str):
+        return redact_secrets(value) or ""
+    if isinstance(value, dict):
+        return {str(key): _redact_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_json_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_json_value(item) for item in value]
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    return str(value)
 
 
 def _task_count(connection: sqlite3.Connection) -> int:
@@ -1184,3 +3973,58 @@ def _stored_iteration_detail_from_row(row: sqlite3.Row) -> StoredIterationDetail
     values["files_changed"] = _decode_json_list(values.get("files_changed"))
     values["tool_actions"] = _decode_json_list(values.get("tool_actions"))
     return StoredIterationDetail(**values)
+
+
+def _stored_task_event_from_row(row: sqlite3.Row) -> StoredTaskEvent:
+    values = dict(row)
+    values["payload"] = _decode_json_payload(values.pop("payload_json", None))
+    return StoredTaskEvent(**values)
+
+
+def _stored_action_record_from_row(row: sqlite3.Row) -> StoredActionRecord:
+    values = dict(row)
+    values["payload"] = _decode_json_payload(values.pop("payload_json", None))
+    values["result"] = _decode_json_payload(values.pop("result_json", None))
+    return StoredActionRecord(**values)
+
+
+def _stored_replan_decision_from_row(row: sqlite3.Row) -> StoredReplanDecision:
+    values = dict(row)
+    values["failed_checks"] = _decode_json_array_payload(
+        values.pop("failed_checks_json", None)
+    )
+    return StoredReplanDecision(**values)
+
+
+def _stored_memory_lesson_from_row(row: sqlite3.Row) -> StoredMemoryLesson:
+    values = dict(row)
+    values["failed_checks"] = _decode_json_array_payload(
+        values.pop("failed_checks_json", None)
+    )
+    return StoredMemoryLesson(**values)
+
+
+def _stored_autopilot_loop_run_from_row(row: sqlite3.Row) -> StoredAutopilotLoopRun:
+    values = dict(row)
+    values["selected_item_ids"] = _decode_json_int_list(
+        values.pop("selected_item_ids_json", None)
+    )
+    return StoredAutopilotLoopRun(**values)
+
+
+def _stored_reflection_record_from_row(row: sqlite3.Row) -> StoredReflectionRecord:
+    values = dict(row)
+    values["failed_checks"] = _decode_json_array_payload(
+        values.pop("failed_checks_json", None)
+    )
+    return StoredReflectionRecord(**values)
+
+
+def _stored_memory_influence_from_row(row: sqlite3.Row) -> StoredMemoryInfluence:
+    values = dict(row)
+    values["injected"] = bool(values["injected"])
+    return StoredMemoryInfluence(**values)
+
+
+def _stored_dead_letter_item_from_row(row: sqlite3.Row) -> StoredDeadLetterItem:
+    return StoredDeadLetterItem(**dict(row))

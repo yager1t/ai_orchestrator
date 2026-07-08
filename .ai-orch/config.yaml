@@ -3,7 +3,7 @@ project:
   repo: "."
 
 orchestrator:
-  default_agent: "kimi"
+  default_agent: "codex"
   fallback_agents:
     - "claude"
     - "mock"
@@ -25,14 +25,16 @@ agents:
     timeout_sec: 300
 
   codex:
-    enabled: false
+    enabled: true
     type: "codex_exec"
-    command: "codex"
+    command: "%USERPROFILE%\\.codex\\packages\\standalone\\releases\\0.142.5-x86_64-pc-windows-msvc\\bin\\codex.exe"
     args:
       - "exec"
       - "--json"
       - "--sandbox"
       - "workspace-write"
+      - "-c"
+      - "model_reasoning_effort=medium"
       - "{prompt}"
     timeout_sec: 1800
 

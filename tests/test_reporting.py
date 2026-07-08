@@ -34,20 +34,121 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
             stderr="",
         ),
     )
+    store.append_task_event(
+        task.task_id,
+        "task.created",
+        {"source": "test"},
+    )
+    store.record_action(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        idempotency_key="test-report-action",
+        action_type="verification_command",
+        status="succeeded",
+        command_string="python -m pytest",
+        payload={"name": "unit"},
+        result={"exit_code": 0},
+    )
+    leased_action = store.record_action(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        idempotency_key="test-report-lease",
+        action_type="tool_call",
+    )
+    store.acquire_action_lease(
+        leased_action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=30,
+        now="2026-01-01T00:00:00+00:00",
+    )
+    store.record_replan_decision(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        status="continue",
+        reason="Verification failed: lint",
+        follow_up_prompt="Fix lint",
+        failed_checks=[
+            {
+                "name": "lint",
+                "status": "failed",
+                "exit_code": 1,
+                "output_excerpt": "lint failed",
+            }
+        ],
+    )
+    lesson = store.record_memory_lesson(
+        source_task_id=task.task_id,
+        source_iteration_id=iteration.iteration_id,
+        lesson="Remember to rerun lint after formatting",
+        outcome_status="blocked",
+        failure_reason="Verification failed: lint",
+        failed_checks=[{"name": "lint", "status": "failed"}],
+        follow_up_prompt="Fix lint",
+    )
+    store.add_reflection_record(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        reflection_type="failed_verification",
+        failure_reason="Verification failed: lint",
+        failed_checks=[{"name": "lint", "status": "failed"}],
+        follow_up_prompt="Fix lint",
+    )
+    store.record_memory_influence(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        lesson_id=lesson.lesson_id,
+        reason="selected for planning",
+    )
     store.update_task_status(task.task_id, "done")
 
     report = render_task_report(store, task.task_id)
 
     assert report is not None
     assert f"# ai-orch report: {task.task_id}" in report
+    assert f"- Run id: `{store.run_id_for_task(task.task_id)}`" in report
     assert "- Status: `done`" in report
     assert "- Iterations: `1`" in report
     assert "- Verification runs: `1` (`passed`: 1)" in report
+    assert "- Task events: `1`" in report
+    assert "- Action records: `2` (`started`: 1, `succeeded`: 1)" in report
+    assert "- Replan decisions: `1`" in report
+    assert "- Memory lessons: `1`" in report
+    assert "- Reflection records: `1`" in report
+    assert "- Memory influences: `1`" in report
+    assert "- Timeline entries:" in report
     assert "- Verification verdict: `verified`" in report
     assert "final supervisor decision is backed by passing checks: `unit`" in report
     assert "- Final decision: `done`" in report
     assert "- Final reason: Verification passed: unit" in report
     assert "### Iteration 1" in report
+    assert "## Timeline" in report
+    assert "task.created" in report
+    assert "iteration.recorded" in report
+    assert "verification.recorded" in report
+    assert "reflection.failed_verification" in report
+    assert "memory.influence" in report
+    assert "action.recorded" in report
+    assert '"source": "test"' in report
+    assert "## Actions" in report
+    assert "- `1`: `verification_command` status=`succeeded`" in report
+    assert "key=`test-report-action`" in report
+    assert "- Command: `python -m pytest`" in report
+    assert "- `2`: `tool_call` status=`started`" in report
+    assert "- Lease owner: `worker-1`" in report
+    assert "- Lease expires: `2026-01-01T00:00:30+00:00`" in report
+    assert "- Heartbeat: `2026-01-01T00:00:00+00:00`" in report
+    assert "## Replan Decisions" in report
+    assert "- `1`: status=`continue` source=`verification`" in report
+    assert "- Reason: Verification failed: lint" in report
+    assert "- Failed checks: lint: failed" in report
+    assert "- Follow-up prompt: Fix lint" in report
+    assert "## Memory Lessons" in report
+    assert "Remember to rerun lint after formatting" in report
+    assert "## Reflections" in report
+    assert "`failed_verification`" in report
+    assert "## Memory Influence" in report
+    assert "selected for planning" in report
     assert "- Agent summary: updated report fixture" in report
     assert "- Files changed: `1`" in report
     assert "- Tool actions: `1`" in report

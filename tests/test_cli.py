@@ -8,8 +8,15 @@ from ai_orchestrator import __version__
 from ai_orchestrator.autopilot import load_plan_tasks
 from ai_orchestrator.cli.app import _state_store_for_repo, main
 from ai_orchestrator.core.supervisor import Supervisor, SupervisorResult
+from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessResult, ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.tools import (
+    ToolBroker,
+    make_fs_write_call,
+    make_memory_tool_call,
+    make_process_tool_call,
+)
 from ai_orchestrator.verification.release import ReleaseCheckResult, run_release_checks
 from ai_orchestrator.verification.runner import VerificationResult, VerificationRunner
 
@@ -219,6 +226,567 @@ def test_autopilot_run_blocks_invalid_worktree_before_execution(
 
     assert exit_code == 1
     assert "Execution blocked: worktree path does not exist:" in output
+
+
+def test_autopilot_plan_create_add_node_and_show_json(capsys, tmp_path: Path) -> None:
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "create",
+            "--repo",
+            str(tmp_path),
+            "--title",
+            "Robust autopilot",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    graph_id = payload["graph"]["graph_id"]
+
+    assert exit_code == 0
+    assert payload["graph"]["title"] == "Robust autopilot"
+    assert payload["graph"]["status"] == "active"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "add-node",
+            str(graph_id),
+            "--repo",
+            str(tmp_path),
+            "--key",
+            "discover",
+            "--title",
+            "Discover current state",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    first_node_id = payload["node"]["node_id"]
+
+    assert exit_code == 0
+    assert payload["node"]["node_key"] == "discover"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "add-node",
+            str(graph_id),
+            "--repo",
+            str(tmp_path),
+            "--key",
+            "implement",
+            "--title",
+            "Implement next slice",
+            "--depends-on",
+            str(first_node_id),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert len(payload["nodes"]) == 2
+    assert payload["dependencies"] == [
+        {
+            "graph_id": graph_id,
+            "node_id": payload["node"]["node_id"],
+            "depends_on_node_id": first_node_id,
+            "created_at": payload["dependencies"][0]["created_at"],
+        }
+    ]
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "show",
+            str(graph_id),
+            "--repo",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["graph"]["graph_id"] == graph_id
+    assert [node["node_key"] for node in payload["nodes"]] == ["discover", "implement"]
+    assert len(payload["dependencies"]) == 1
+
+
+def test_autopilot_plan_ready_lists_executable_nodes_json(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    graph = store.create_plan_graph("Ready graph")
+    first = store.add_plan_graph_node(graph.graph_id, "first", "First step")
+    second = store.add_plan_graph_node(
+        graph.graph_id,
+        "second",
+        "Second step",
+        depends_on_node_ids=[first.node_id],
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "ready",
+            str(graph.graph_id),
+            "--repo",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["graph"]["graph_id"] == graph.graph_id
+    assert payload["ready_count"] == 1
+    assert [node["node_id"] for node in payload["nodes"]] == [first.node_id]
+
+    store.update_plan_graph_node_status(first.node_id, "done")
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "ready",
+            str(graph.graph_id),
+            "--repo",
+            str(tmp_path),
+            "--limit",
+            "1",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Ready PlanGraph nodes: 1" in output
+    assert f"node={second.node_id} key=second" in output
+
+
+def test_autopilot_plan_run_next_dry_run_keeps_node_pending(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    graph = store.create_plan_graph("Run graph")
+    node = store.add_plan_graph_node(graph.graph_id, "root", "Root step")
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "run-next",
+            str(graph.graph_id),
+            "--repo",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded_node = store.get_plan_graph_node(node.node_id)
+
+    assert exit_code == 0
+    assert f"PlanGraph node: {node.node_id}" in output
+    assert "Dry run: add --execute" in output
+    assert loaded_node is not None
+    assert loaded_node.status == "pending"
+    assert loaded_node.attempts == 0
+
+
+def test_autopilot_plan_run_next_executes_and_creates_replan_follow_up(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    graph = store.create_plan_graph("Run graph")
+    node = store.add_plan_graph_node(graph.graph_id, "root", "Root step")
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(
+            task,
+            repo_path=repo,
+            task_id="plan-node-task",
+        )
+        iteration = self.state_store.add_iteration(
+            task_id=stored.task_id,
+            iteration_index=1,
+            agent_name="mock",
+            agent_status="success",
+            prompt=task,
+            raw_output="failed",
+            decision_status="continue",
+            decision_reason="Verification failed: unit",
+        )
+        self.state_store.record_replan_decision(
+            task_id=stored.task_id,
+            iteration_id=iteration.iteration_id,
+            source="verification",
+            status="continue",
+            reason="Verification failed: unit",
+            follow_up_prompt="Fix graph node failure",
+            failed_checks=[{"name": "unit", "status": "failed"}],
+        )
+        return SupervisorResult(
+            status="blocked",
+            summary="Verification failed",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "run-next",
+            str(graph.graph_id),
+            "--repo",
+            str(tmp_path),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    loaded_node = store.get_plan_graph_node(node.node_id)
+    decisions = store.list_replan_decisions("plan-node-task")
+    nodes = store.list_plan_graph_nodes(graph.graph_id)
+    follow_up = nodes[1]
+    dependencies = store.list_plan_graph_dependencies(
+        graph.graph_id,
+        node_id=follow_up.node_id,
+    )
+
+    assert exit_code == 1
+    assert "PlanGraph node" in output
+    assert "status=blocked" in output
+    assert "Report:" in output
+    assert loaded_node is not None
+    assert loaded_node.status == "blocked"
+    assert loaded_node.attempts == 1
+    assert len(decisions) == 1
+    assert decisions[0].plan_graph_id == graph.graph_id
+    assert decisions[0].plan_graph_node_id == node.node_id
+    assert [plan_node.node_key for plan_node in nodes] == [
+        "root",
+        f"replan-{decisions[0].replan_id}",
+    ]
+    assert follow_up.status == "pending"
+    assert dependencies[0].depends_on_node_id == node.node_id
+
+
+def test_autopilot_plan_run_batch_dry_run_keeps_nodes_pending(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    graph = store.create_plan_graph("Batch graph")
+    first = store.add_plan_graph_node(graph.graph_id, "first", "First step")
+    second = store.add_plan_graph_node(graph.graph_id, "second", "Second step")
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "run-batch",
+            str(graph.graph_id),
+            "--repo",
+            str(tmp_path),
+            "--max-items",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    loaded_first = store.get_plan_graph_node(first.node_id)
+    loaded_second = store.get_plan_graph_node(second.node_id)
+
+    assert exit_code == 0
+    assert f"PlanGraph node: {first.node_id}" in output
+    assert f"PlanGraph node: {second.node_id}" in output
+    assert "Dry run: would process 2 PlanGraph node(s)." in output
+    assert loaded_first is not None
+    assert loaded_second is not None
+    assert loaded_first.status == "pending"
+    assert loaded_first.attempts == 0
+    assert loaded_second.status == "pending"
+    assert loaded_second.attempts == 0
+
+
+def test_autopilot_plan_run_batch_stops_on_blocked_node(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    graph = store.create_plan_graph("Batch graph")
+    first = store.add_plan_graph_node(graph.graph_id, "first", "First step")
+    second = store.add_plan_graph_node(graph.graph_id, "second", "Second step")
+    third = store.add_plan_graph_node(graph.graph_id, "third", "Third step")
+    call_count = 0
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        nonlocal call_count
+        call_count += 1
+        stored = self.state_store.create_task(
+            task,
+            repo_path=repo,
+            task_id=f"plan-node-batch-{call_count}",
+        )
+        return SupervisorResult(
+            status="done" if call_count == 1 else "blocked",
+            summary=f"Result {call_count}",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "run-batch",
+            str(graph.graph_id),
+            "--repo",
+            str(tmp_path),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "3",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    loaded_first = store.get_plan_graph_node(first.node_id)
+    loaded_second = store.get_plan_graph_node(second.node_id)
+    loaded_third = store.get_plan_graph_node(third.node_id)
+
+    assert exit_code == 1
+    assert "PlanGraph batch stopped after 2 node(s): status=blocked" in output
+    assert call_count == 2
+    assert loaded_first is not None
+    assert loaded_second is not None
+    assert loaded_third is not None
+    assert loaded_first.status == "done"
+    assert loaded_first.attempts == 1
+    assert loaded_second.status == "blocked"
+    assert loaded_second.attempts == 1
+    assert loaded_third.status == "pending"
+    assert loaded_third.attempts == 0
+
+
+def test_autopilot_plan_updates_graph_and_node_status(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    graph = store.create_plan_graph("Robust autopilot")
+    node = store.add_plan_graph_node(
+        graph.graph_id,
+        node_key="implement",
+        title="Implement next slice",
+    )
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "update",
+            str(graph.graph_id),
+            "--repo",
+            str(tmp_path),
+            "--status",
+            "blocked",
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded_graph = store.get_plan_graph(graph.graph_id)
+
+    assert exit_code == 0
+    assert "Updated PlanGraph" in output
+    assert loaded_graph is not None
+    assert loaded_graph.status == "blocked"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "update-node",
+            str(node.node_id),
+            "--repo",
+            str(tmp_path),
+            "--status",
+            "in_progress",
+            "--increment-attempts",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    loaded_node = store.get_plan_graph_node(node.node_id)
+
+    assert exit_code == 0
+    assert payload["node"]["status"] == "in_progress"
+    assert payload["node"]["attempts"] == 1
+    assert loaded_node is not None
+    assert loaded_node.status == "in_progress"
+    assert loaded_node.attempts == 1
+
+
+def test_autopilot_plan_reports_missing_graph(capsys, tmp_path: Path) -> None:
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "show",
+            "404",
+            "--repo",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "PlanGraph not found: 404" in output
+
+
+def test_autopilot_queue_link_plan_graph_dry_run_and_apply_json(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Demo queue item",
+    )
+    graph = store.create_plan_graph("Demo graph")
+    root = store.add_plan_graph_node(graph.graph_id, "root", "Root step")
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "link-plan-graph",
+            str(item.plan_item_id),
+            "--repo",
+            str(tmp_path),
+            "--graph-id",
+            str(graph.graph_id),
+            "--root-node-id",
+            str(root.node_id),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert payload["mode"] == "dry_run"
+    assert payload["applied"] is False
+    assert payload["link"]["graph_id"] == graph.graph_id
+    assert loaded is not None
+    assert loaded.plan_graph_id is None
+    assert loaded.plan_graph_root_node_id is None
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "link-plan-graph",
+            str(item.plan_item_id),
+            "--repo",
+            str(tmp_path),
+            "--graph-id",
+            str(graph.graph_id),
+            "--root-node-id",
+            str(root.node_id),
+            "--apply",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert payload["mode"] == "apply"
+    assert payload["applied"] is True
+    assert payload["plan_item"]["plan_graph_id"] == graph.graph_id
+    assert payload["plan_item"]["plan_graph_root_node_id"] == root.node_id
+    assert loaded is not None
+    assert loaded.plan_graph_id == graph.graph_id
+    assert loaded.plan_graph_root_node_id == root.node_id
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "show",
+            str(item.plan_item_id),
+            "--repo",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["plan_graph_id"] == graph.graph_id
+    assert payload["plan_graph_root_node_id"] == root.node_id
+
+
+def test_autopilot_queue_link_plan_graph_rejects_wrong_root_node(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Demo queue item",
+    )
+    graph = store.create_plan_graph("First graph")
+    other_graph = store.create_plan_graph("Other graph")
+    other_root = store.add_plan_graph_node(other_graph.graph_id, "root", "Root")
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "link-plan-graph",
+            str(item.plan_item_id),
+            "--repo",
+            str(tmp_path),
+            "--graph-id",
+            str(graph.graph_id),
+            "--root-node-id",
+            str(other_root.node_id),
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 1
+    assert f"PlanGraph root node not found in graph {graph.graph_id}" in output
+    assert loaded is not None
+    assert loaded.plan_graph_id is None
 
 
 def test_status_prints_stored_task(capsys, tmp_path: Path) -> None:
@@ -503,6 +1071,171 @@ def test_approvals_retry_runs_approved_request(
     assert "retry ok" in output
     assert captured == [(["retry-token", "command"], tmp_path)]
     loaded = store.get_approval_request(approval.approval_id)
+    assert loaded is not None
+    assert loaded.retry_count == 1
+    assert loaded.last_retry_status == "passed"
+    assert loaded.last_retry_exit_code == 0
+
+
+def test_approvals_retry_runs_approved_tool_broker_request(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[tuple[list[str], Path | None]] = []
+
+    def fake_run(
+        self: ProcessRunner,
+        argv: list[str],
+        cwd: Path | None = None,
+        timeout_sec: int = 300,
+        terminate_grace_sec: int = 5,
+        should_cancel=None,
+        options: RunOptions | None = None,
+    ) -> ProcessResult:
+        captured.append((argv, cwd))
+        return ProcessResult(
+            status="success",
+            exit_code=0,
+            stdout="tool retry ok",
+            stderr="",
+        )
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    broker = ToolBroker(store, PolicyEngine())
+    call = make_process_tool_call(
+        "process.write",
+        "write",
+        argv=["python", "-c", "print('ok')"],
+        task_id=task.task_id,
+        idempotency_key="tool:process.write:approval",
+    )
+    requested = broker.run(call, lambda _call: {"unused": True})
+    approval_id = requested.output["approval_id"]
+    assert isinstance(approval_id, int)
+    store.resolve_approval_request(
+        approval_id,
+        "approved",
+        resolution="looks safe",
+    )
+
+    exit_code = main(["approvals", "retry", str(approval_id), "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+    actions = store.list_action_records(task.task_id)
+    loaded = store.get_approval_request(approval_id)
+
+    assert exit_code == 0
+    assert "retry: passed exit=0" in output
+    assert "tool retry ok" in output
+    assert captured == [(["python", "-c", "print('ok')"], tmp_path)]
+    assert loaded is not None
+    assert loaded.retry_count == 1
+    assert loaded.last_retry_status == "passed"
+    assert loaded.last_retry_exit_code == 0
+    assert [action.status for action in actions] == ["needs_approval", "succeeded"]
+    assert actions[1].payload["approved_retry"] is True
+    assert actions[1].result["output"]["approval_id"] == approval_id
+
+
+def test_approvals_retry_runs_approved_fs_write_request(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    broker = ToolBroker(store, PolicyEngine())
+    call = make_fs_write_call(
+        "generated/result.txt",
+        "approved content",
+        create_parents=True,
+        task_id=task.task_id,
+        idempotency_key="tool:fs.write:approval",
+    )
+    requested = broker.run(call, lambda _call: {"unused": True})
+    approval_id = requested.output["approval_id"]
+    assert isinstance(approval_id, int)
+    store.resolve_approval_request(approval_id, "approved", resolution="looks safe")
+
+    exit_code = main(["approvals", "retry", str(approval_id), "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+    written = tmp_path / "generated" / "result.txt"
+    actions = store.list_action_records(task.task_id)
+    loaded = store.get_approval_request(approval_id)
+
+    assert exit_code == 0
+    assert "retry: passed exit=None" in output
+    assert written.read_text(encoding="utf-8") == "approved content"
+    assert loaded is not None
+    assert loaded.retry_count == 1
+    assert loaded.last_retry_status == "passed"
+    assert loaded.last_retry_exit_code is None
+    assert [action.status for action in actions] == ["needs_approval", "succeeded"]
+    assert actions[1].result["output"]["tool_output"] == {
+        "path": "generated/result.txt",
+        "bytes": 16,
+    }
+
+
+def test_approvals_retry_runs_approved_memory_tool_request(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[tuple[list[str], Path | None]] = []
+
+    def fake_run(
+        self: ProcessRunner,
+        argv: list[str],
+        cwd: Path | None = None,
+        timeout_sec: int = 300,
+        terminate_grace_sec: int = 5,
+        should_cancel=None,
+        options: RunOptions | None = None,
+    ) -> ProcessResult:
+        captured.append((argv, cwd))
+        return ProcessResult(
+            status="success",
+            exit_code=0,
+            stdout='{"indexed":true}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    broker = ToolBroker(store, PolicyEngine())
+    call = make_memory_tool_call(
+        "index_repository",
+        risk_tier="network",
+        args={"repo_path": str(tmp_path.resolve())},
+        task_id=task.task_id,
+        idempotency_key="tool:memory.index_repository:approval",
+    )
+    requested = broker.run(call, lambda _call: {"unused": True})
+    approval_id = requested.output["approval_id"]
+    assert isinstance(approval_id, int)
+    store.resolve_approval_request(approval_id, "approved", resolution="looks safe")
+
+    exit_code = main(["approvals", "retry", str(approval_id), "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+    loaded = store.get_approval_request(approval_id)
+
+    assert exit_code == 0
+    assert "retry: passed exit=0" in output
+    assert '{"indexed":true}' in output
+    assert captured == [
+        (
+            [
+                "codebase-memory-mcp",
+                "cli",
+                "index_repository",
+                json.dumps({"repo_path": str(tmp_path.resolve())}, sort_keys=True),
+            ],
+            tmp_path,
+        )
+    ]
     assert loaded is not None
     assert loaded.retry_count == 1
     assert loaded.last_retry_status == "passed"
@@ -892,6 +1625,43 @@ def test_tui_logs_returns_error_for_missing_task(capsys, tmp_path: Path) -> None
     assert "Task not found: missing-task" in output
 
 
+def test_tui_memory_views_print_lessons_and_influence(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    seed = store.create_task("seed", repo_path=tmp_path)
+    task = store.create_task("run", repo_path=tmp_path)
+    lesson = store.record_memory_lesson(
+        source_task_id=seed.task_id,
+        lesson="Use verifier result as authority",
+        outcome_status="blocked",
+    )
+    store.record_memory_influence(
+        task_id=task.task_id,
+        lesson_id=lesson.lesson_id,
+        reason="selected for planning",
+    )
+
+    lessons_exit = main(["tui", "memory-lessons", "--repo", str(tmp_path)])
+    lessons_output = capsys.readouterr().out
+    influence_exit = main(
+        [
+            "tui",
+            "memory-influence",
+            "--repo",
+            str(tmp_path),
+            "--task-id",
+            task.task_id,
+        ]
+    )
+    influence_output = capsys.readouterr().out
+
+    assert lessons_exit == 0
+    assert "Memory lessons" in lessons_output
+    assert "Use verifier result as authority" in lessons_output
+    assert influence_exit == 0
+    assert "Memory influence" in influence_output
+    assert f"task={task.task_id}" in influence_output
+
+
 def test_report_writes_markdown_file(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo report", repo_path=tmp_path)
@@ -938,6 +1708,161 @@ def test_report_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
     assert "Task not found: missing-task" in output
 
 
+def test_recover_dry_run_reports_interrupted_state(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("interrupted task", repo_path=tmp_path, status="running")
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="recover-action-1",
+        action_type="tool_call",
+    )
+    store.acquire_action_lease(
+        action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=30,
+        now="2026-01-01T00:00:00+00:00",
+    )
+
+    exit_code = main(["recover", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Recovery" in output
+    assert "running_tasks: 1" in output
+    assert "expired_action_leases: 1" in output
+    assert "dry_run: use --apply --reason" in output
+    assert store.get_task(task.task_id).status == "running"  # type: ignore[union-attr]
+    assert store.get_action_record(action.action_id).status == "started"  # type: ignore[union-attr]
+
+
+def test_recover_apply_requires_reason(capsys, tmp_path: Path) -> None:
+    exit_code = main(["recover", "--repo", str(tmp_path), "--apply"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "--reason is required when --apply is set" in output
+
+
+def test_recover_apply_blocks_running_tasks_and_fails_expired_actions(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("interrupted task", repo_path=tmp_path, status="running")
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="recover-action-apply",
+        action_type="tool_call",
+    )
+    store.acquire_action_lease(
+        action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=30,
+        now="2026-01-01T00:00:00+00:00",
+    )
+
+    exit_code = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--apply",
+            "--reason",
+            "operator recovered interrupted run",
+        ]
+    )
+    output = capsys.readouterr().out
+    recovered_task = store.get_task(task.task_id)
+    recovered_action = store.get_action_record(action.action_id)
+    events = store.list_task_events(task.task_id)
+
+    assert exit_code == 0
+    assert "blocked_tasks: 1" in output
+    assert "failed_actions: 1" in output
+    assert recovered_task is not None
+    assert recovered_task.status == "blocked"
+    assert recovered_action is not None
+    assert recovered_action.status == "failed"
+    assert recovered_action.lease_owner is None
+    assert recovered_action.lease_expires_at is None
+    assert recovered_action.result["recovered"] is True
+    assert events[-1].event_type == "task.recovered"
+    assert events[-1].payload["reason"] == "operator recovered interrupted run"
+
+
+def test_recover_json_reports_counts(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("json interrupted task", repo_path=tmp_path, status="running")
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="recover-action-json",
+        action_type="tool_call",
+    )
+    store.acquire_action_lease(
+        action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=30,
+        now="2026-01-01T00:00:00+00:00",
+    )
+
+    exit_code = main(["recover", "--repo", str(tmp_path), "--json"])
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+
+    assert exit_code == 0
+    assert payload["dry_run"] is True
+    assert payload["running_tasks"]["count"] == 1
+    assert payload["running_tasks"]["items"][0]["task_id"] == task.task_id
+    assert payload["expired_action_leases"]["count"] == 1
+    assert payload["expired_action_leases"]["items"][0]["action_id"] == action.action_id
+    assert payload["recovered"] == {"blocked_tasks": 0, "failed_actions": 0}
+
+
+def test_timeline_prints_replay_read_model(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("timeline task", repo_path=tmp_path)
+    store.append_task_event(task.task_id, "task.recovered", {"reason": "test"})
+
+    exit_code = main(["timeline", task.task_id, "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert f"Timeline: {task.task_id}" in output
+    assert "entries: 2" in output
+    assert "task.created status=created" in output
+    assert "task.recovered" in output
+
+
+def test_timeline_json_prints_replay_read_model(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("timeline json task", repo_path=tmp_path)
+    store.append_task_event(task.task_id, "task.recovered", {"reason": "test"})
+
+    exit_code = main(["timeline", task.task_id, "--repo", str(tmp_path), "--json"])
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+
+    assert exit_code == 0
+    assert payload["task"]["task_id"] == task.task_id
+    assert [entry["event_type"] for entry in payload["timeline"]] == [
+        "task.created",
+        "task.recovered",
+    ]
+    assert payload["timeline"][1]["payload"] == {
+        "sequence": 1,
+        "payload": {"reason": "test"},
+        "run_id": store.run_id_for_task(task.task_id),
+    }
+
+
+def test_timeline_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
+    exit_code = main(["timeline", "missing-task", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Task not found: missing-task" in output
+
+
 def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo export", repo_path=tmp_path)
@@ -962,6 +1887,72 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
             stderr="",
         ),
     )
+    store.append_task_event(
+        task.task_id,
+        "task.created",
+        {"source": "export-test"},
+    )
+    store.record_action(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        idempotency_key="export-action-1",
+        action_type="verification_command",
+        status="succeeded",
+        command_string="python -m pytest",
+        payload={"name": "unit"},
+        result={"exit_code": 0},
+    )
+    leased_action = store.record_action(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        idempotency_key="export-action-lease",
+        action_type="tool_call",
+    )
+    store.acquire_action_lease(
+        leased_action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=30,
+        now="2026-01-01T00:00:00+00:00",
+    )
+    store.record_replan_decision(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        status="continue",
+        reason="Verification failed: unit",
+        follow_up_prompt="Fix unit",
+        failed_checks=[
+            {
+                "name": "unit",
+                "status": "failed",
+                "exit_code": 1,
+                "output_excerpt": "assertion failed",
+            }
+        ],
+    )
+    lesson = store.record_memory_lesson(
+        source_task_id=task.task_id,
+        source_iteration_id=iteration.iteration_id,
+        lesson="Retry unit after fixing assertion",
+        outcome_status="blocked",
+        failure_reason="Verification failed: unit",
+        failed_checks=[{"name": "unit", "status": "failed"}],
+        follow_up_prompt="Fix unit",
+    )
+    store.add_reflection_record(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        reflection_type="failed_verification",
+        failure_reason="Verification failed: unit",
+        failed_checks=[{"name": "unit", "status": "failed"}],
+        follow_up_prompt="Fix unit",
+    )
+    store.record_memory_influence(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        lesson_id=lesson.lesson_id,
+        reason="selected for planning",
+    )
     approval = store.add_approval_request(
         task_id=task.task_id,
         iteration_id=iteration.iteration_id,
@@ -983,10 +1974,40 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
     assert trace["metadata"]["schema_version"] == "1.0"
     assert trace["metadata"]["task_id"] == task.task_id
+    assert trace["metadata"]["run_id"] == store.run_id_for_task(task.task_id)
+    assert trace["metadata"]["unsafe_action_count"] == 0
     assert trace["metadata"]["redaction_mode"] == "none"
     assert "exported_at" in trace["metadata"]
     assert trace["task"]["task_id"] == task.task_id
+    assert trace["task"]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["task"]["status"] == "done"
+    assert len(trace["timeline"]) >= 1
+    assert all(entry["run_id"] == store.run_id_for_task(task.task_id) for entry in trace["timeline"])
+    assert any(entry["event_type"] == "task.created" for entry in trace["timeline"])
+    assert any(entry["event_type"] == "replan.decision" for entry in trace["timeline"])
+    assert any(entry["event_type"] == "reflection.failed_verification" for entry in trace["timeline"])
+    assert any(entry["event_type"] == "memory.influence" for entry in trace["timeline"])
+    assert len(trace["task_events"]) == 1
+    assert trace["task_events"][0]["sequence"] == 1
+    assert trace["task_events"][0]["event_type"] == "task.created"
+    assert trace["task_events"][0]["run_id"] == store.run_id_for_task(task.task_id)
+    assert trace["task_events"][0]["payload"] == {"source": "export-test"}
+    assert len(trace["action_records"]) == 2
+    assert trace["action_records"][0]["idempotency_key"] == "export-action-1"
+    assert trace["action_records"][0]["action_type"] == "verification_command"
+    assert trace["action_records"][0]["status"] == "succeeded"
+    assert trace["action_records"][0]["run_id"] == store.run_id_for_task(task.task_id)
+    assert trace["action_records"][0]["result"] == {"exit_code": 0}
+    assert trace["action_records"][1]["idempotency_key"] == "export-action-lease"
+    assert trace["action_records"][1]["lease_owner"] == "worker-1"
+    assert trace["action_records"][1]["lease_expires_at"] == "2026-01-01T00:00:30+00:00"
+    assert trace["action_records"][1]["heartbeat_at"] == "2026-01-01T00:00:00+00:00"
+    assert len(trace["replan_decisions"]) == 1
+    assert trace["replan_decisions"][0]["status"] == "continue"
+    assert trace["replan_decisions"][0]["failed_checks"][0]["name"] == "unit"
+    assert trace["memory_lessons"][0]["lesson"] == "Retry unit after fixing assertion"
+    assert trace["reflection_records"][0]["reflection_type"] == "failed_verification"
+    assert trace["memory_influence"][0]["lesson_id"] == lesson.lesson_id
     assert len(trace["iterations"]) == 1
     assert trace["iterations"][0]["prompt"] == "demo export"
     assert trace["iterations"][0]["decision_status"] == "done"
@@ -1835,6 +2856,56 @@ def test_memory_status_prints_provider_config(capsys, monkeypatch, tmp_path: Pat
     assert "available: yes" in output
 
 
+def test_memory_lessons_lists_active_lessons(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("seed", repo_path=tmp_path)
+    store.record_memory_lesson(
+        source_task_id=task.task_id,
+        lesson="Inspect failed checks first",
+        outcome_status="blocked",
+    )
+
+    exit_code = main(["memory", "lessons", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Memory lessons" in output
+    assert "Inspect failed checks first" in output
+
+
+def test_memory_influence_lists_task_influence(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    seed = store.create_task("seed", repo_path=tmp_path)
+    task = store.create_task("run", repo_path=tmp_path)
+    lesson = store.record_memory_lesson(
+        source_task_id=seed.task_id,
+        lesson="Avoid unsafe retry",
+        outcome_status="blocked",
+    )
+    store.record_memory_influence(
+        task_id=task.task_id,
+        lesson_id=lesson.lesson_id,
+        reason="selected for planning",
+    )
+
+    exit_code = main(
+        [
+            "memory",
+            "influence",
+            "--repo",
+            str(tmp_path),
+            "--task-id",
+            task.task_id,
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Memory influence" in output
+    assert f"task={task.task_id}" in output
+    assert "selected for planning" in output
+
+
 def test_memory_search_runs_read_only_tool(capsys, monkeypatch, tmp_path: Path) -> None:
     captured_argv: list[list[str]] = []
 
@@ -2527,6 +3598,8 @@ def test_autopilot_queue_list_json_includes_filtered_rows_and_metadata(
             "task_id": None,
             "selected_worktree_path": None,
             "blocked_reason": "needs review",
+            "plan_graph_id": None,
+            "plan_graph_root_node_id": None,
             "report_path": None,
         }
     ]
@@ -2937,6 +4010,97 @@ def test_autopilot_queue_run_next_stops_on_blocked_result(
     item = store.list_plan_items(plan_path=plan)[0]
     assert item.status == "blocked"
     assert item.task_id == "task-2"
+
+
+def test_autopilot_queue_run_next_updates_linked_plan_graph_node_lifecycle(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    graph = store.create_plan_graph("First task graph")
+    root = store.add_plan_graph_node(graph.graph_id, "root", "Root step")
+    store.link_plan_item_to_plan_graph(
+        item.plan_item_id,
+        graph.graph_id,
+        plan_graph_root_node_id=root.node_id,
+    )
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(task, repo_path=repo, task_id="task-replan")
+        iteration = self.state_store.add_iteration(
+            task_id=stored.task_id,
+            iteration_index=1,
+            agent_name="mock",
+            agent_status="success",
+            prompt=task,
+            raw_output="failed",
+            decision_status="continue",
+            decision_reason="Verification failed: unit",
+        )
+        self.state_store.record_replan_decision(
+            task_id=stored.task_id,
+            iteration_id=iteration.iteration_id,
+            source="verification",
+            status="continue",
+            reason="Verification failed: unit",
+            failed_checks=[{"name": "unit", "status": "failed"}],
+        )
+        return SupervisorResult(
+            status="blocked",
+            summary="Verification failed",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-next",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+        ]
+    )
+    capsys.readouterr()
+    node = store.get_plan_graph_node(root.node_id)
+    decisions = store.list_replan_decisions("task-replan")
+    nodes = store.list_plan_graph_nodes(graph.graph_id)
+
+    assert exit_code == 1
+    assert node is not None
+    assert node.status == "blocked"
+    assert node.attempts == 1
+    assert len(decisions) == 1
+    assert decisions[0].plan_graph_id == graph.graph_id
+    assert decisions[0].plan_graph_node_id == root.node_id
+    assert [plan_node.node_key for plan_node in nodes] == [
+        "root",
+        f"replan-{decisions[0].replan_id}",
+    ]
+    assert nodes[1].status == "pending"
+    dependencies = store.list_plan_graph_dependencies(
+        graph.graph_id,
+        node_id=nodes[1].node_id,
+    )
+    assert len(dependencies) == 1
+    assert dependencies[0].depends_on_node_id == root.node_id
 
 
 def test_autopilot_queue_run_next_returns_zero_when_no_ready_items(
@@ -3673,6 +4837,379 @@ def test_autopilot_queue_run_batch_stops_on_blocked_result(
     )
     assert f"Reports:\n  {report_dir / 'batch-task-1.md'}\n  {report_dir / 'batch-task-2.md'}" in output
     assert not (report_dir / "batch-task-3.md").exists()
+
+
+def test_autopilot_loop_defaults_to_dry_run(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+
+    exit_code = main(
+        [
+            "autopilot",
+            "loop",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-items",
+            "1",
+        ]
+    )
+    output = capsys.readouterr().out
+    item = store.list_plan_items(plan_path=plan)[0]
+
+    assert exit_code == 0
+    assert "=== Autopilot loop ===" in output
+    assert "Mode: dry-run" in output
+    assert "Dry run: would process 1 item(s). Add --execute to run." in output
+    assert "=== Loop budget ledger ===" in output
+    assert "loop_run_id: " in output
+    assert "actions: max=100 selected=1 processed=0" in output
+    assert item.status == "created"
+    runs = store.list_autopilot_loop_runs(plan_path=plan)
+    assert len(runs) == 1
+    assert runs[0].mode == "dry-run"
+    assert runs[0].selected_count == 1
+    assert runs[0].selected_item_ids == [item.plan_item_id]
+
+
+def test_autopilot_loop_execute_completes_items(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n- [ ] Second task\n", encoding="utf-8")
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+
+    call_count = 0
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        nonlocal call_count
+        call_count += 1
+        stored = self.state_store.create_task(
+            task,
+            repo_path=repo,
+            task_id=f"loop-task-{call_count}",
+        )
+        return SupervisorResult(
+            status="done",
+            summary=f"Verification passed: {call_count}",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "loop",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "2",
+        ]
+    )
+    output = capsys.readouterr().out
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+
+    assert exit_code == 0
+    assert "Mode: execute" in output
+    assert "Batch complete: processed 2 item(s)" in output
+    assert "Loop complete" in output
+    assert "actions: max=100 selected=2 processed=2" in output
+    assert items["First task"].status == "done"
+    assert items["Second task"].status == "done"
+    assert call_count == 2
+    runs = store.list_autopilot_loop_runs(plan_path=plan)
+    assert len(runs) == 1
+    assert runs[0].mode == "execute"
+    assert runs[0].processed_count == 2
+    assert runs[0].stop_reason == "complete"
+
+
+def test_autopilot_loop_history_lists_persisted_ledger(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    main(
+        [
+            "autopilot",
+            "loop",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-items",
+            "1",
+        ]
+    )
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "loop-history",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["count"] == 1
+    assert payload["runs"][0]["mode"] == "dry-run"
+    assert payload["runs"][0]["selected_count"] == 1
+
+
+def test_autopilot_loop_stop_on_risk_blocks_execution(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Created task\n- [ ] Blocked task\n", encoding="utf-8")
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(items["Blocked task"].plan_item_id, "blocked")
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        raise AssertionError("loop should stop before supervisor execution")
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "loop",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--stop-on-risk",
+        ]
+    )
+    output = capsys.readouterr().out
+    refreshed = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+
+    assert exit_code == 1
+    assert "Loop stopped on risk: next_action=review_blocked" in output
+    assert "actions: max=100 selected=0 processed=0" in output
+    assert refreshed["Created task"].status == "created"
+    assert refreshed["Blocked task"].status == "blocked"
+    runs = store.list_autopilot_loop_runs(plan_path=plan)
+    assert len(runs) == 1
+    assert runs[0].stop_reason == "risk"
+    assert runs[0].result_code == 1
+
+
+def test_autopilot_loop_rejects_exhausted_action_budget(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    exit_code = main(
+        [
+            "autopilot",
+            "loop",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-actions",
+            "0",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Loop stopped: budget exhausted (--max-actions must be at least 1)" in output
+
+
+def test_autopilot_loop_records_dead_letter_for_blocked_item(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Poisoned task\n", encoding="utf-8")
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(
+            task,
+            repo_path=repo,
+            task_id="loop-blocked-task",
+        )
+        return SupervisorResult(
+            status="blocked",
+            summary="Verification failed",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "loop",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-attempts",
+            "1",
+        ]
+    )
+    output = capsys.readouterr().out
+    item = store.list_plan_items(plan_path=plan)[0]
+    dead_letters = store.list_dead_letter_items(plan_item_id=item.plan_item_id)
+
+    assert exit_code == 1
+    assert "Loop stopped: dead-letter" in output
+    assert "dead_letters: 1" in output
+    assert item.status == "blocked"
+    assert len(dead_letters) == 1
+    assert dead_letters[0].task_id == "loop-blocked-task"
+    assert dead_letters[0].reason == "loop item stopped with status=blocked"
+
+
+def test_autopilot_loop_writes_batch_report(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    report_path = tmp_path / "loop-report.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+
+    exit_code = main(
+        [
+            "autopilot",
+            "loop",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--max-items",
+            "1",
+            "--batch-report",
+            str(report_path),
+        ]
+    )
+    output = capsys.readouterr().out
+    report = report_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert "=== Batch summary ===" in output
+    assert report_path.exists()
+    assert "# Autopilot Batch Report" in report
+    assert "- Mode: `dry-run`" in report
+
+
+def test_autopilot_queue_run_batch_updates_linked_plan_graph_node_lifecycle(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] First task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    item = store.list_plan_items(plan_path=plan)[0]
+    graph = store.create_plan_graph("First task graph")
+    root = store.add_plan_graph_node(graph.graph_id, "root", "Root step")
+    store.link_plan_item_to_plan_graph(
+        item.plan_item_id,
+        graph.graph_id,
+        plan_graph_root_node_id=root.node_id,
+    )
+
+    def fake_run_once(
+        self: Supervisor,
+        task: str,
+        repo: Path,
+        planning_context=None,
+    ) -> SupervisorResult:
+        stored = self.state_store.create_task(
+            task, repo_path=repo, task_id="batch-done"
+        )
+        return SupervisorResult(
+            status="done",
+            summary="Verification passed",
+            task_id=stored.task_id,
+        )
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "run-batch",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--execute",
+            "--allow-mock-agent",
+            "--allow-dirty",
+            "--max-items",
+            "1",
+        ]
+    )
+    capsys.readouterr()
+
+    node = store.get_plan_graph_node(root.node_id)
+
+    assert exit_code == 0
+    assert node is not None
+    assert node.status == "done"
+    assert node.attempts == 1
 
 
 def test_autopilot_queue_run_batch_returns_zero_when_no_ready_items(
@@ -7316,6 +8853,8 @@ def test_autopilot_queue_show_json_prints_item_details_without_changing_state(
         "report_path": str(report_path),
         "selected_worktree": str(worktree),
         "reason": "needs operator review",
+        "plan_graph_id": None,
+        "plan_graph_root_node_id": None,
     }
     assert loaded is not None
     assert loaded.status == "blocked"

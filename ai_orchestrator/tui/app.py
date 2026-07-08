@@ -84,6 +84,55 @@ def render_logs_view(store: StateStore, task_id: str) -> str | None:
     return "\n".join(lines) + "\n"
 
 
+def render_memory_lessons_view(
+    store: StateStore,
+    *,
+    include_stale: bool = False,
+) -> str:
+    lessons = store.list_memory_lessons(include_stale=include_stale)
+    lines = ["Memory lessons"]
+    if not lessons:
+        lines.append("  No memory lessons recorded.")
+        return "\n".join(lines) + "\n"
+
+    for lesson in lessons:
+        stale = "yes" if lesson.is_stale else "no"
+        lines.append(
+            (
+                f"  lesson={lesson.lesson_id} outcome={lesson.outcome_status} "
+                f"stale={stale} source_task={lesson.source_task_id}"
+            )
+        )
+        lines.append(f"     lesson: {redact_secrets(lesson.lesson) or ''}")
+        if lesson.failure_reason:
+            lines.append(f"     reason: {redact_secrets(lesson.failure_reason) or ''}")
+    return "\n".join(lines) + "\n"
+
+
+def render_memory_influence_view(
+    store: StateStore,
+    *,
+    task_id: str | None = None,
+) -> str:
+    influences = store.list_memory_influence(task_id)
+    lines = ["Memory influence"]
+    if not influences:
+        lines.append("  No memory influence recorded.")
+        return "\n".join(lines) + "\n"
+
+    for influence in influences:
+        iteration = "none" if influence.iteration_id is None else str(influence.iteration_id)
+        injected = "yes" if influence.injected else "no"
+        lines.append(
+            (
+                f"  influence={influence.influence_id} task={influence.task_id} "
+                f"lesson={influence.lesson_id} iteration={iteration} injected={injected}"
+            )
+        )
+        lines.append(f"     reason: {redact_secrets(influence.reason) or ''}")
+    return "\n".join(lines) + "\n"
+
+
 def render_tasks_view(store: StateStore) -> str:
     tasks = store.list_tasks()
     lines = ["Tasks"]

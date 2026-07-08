@@ -13,5 +13,6 @@ build/
 .ai-orch/reports/
 .ai-orch/traces/
 .codex/
+.private/
 .DS_Store
 REVIEW.md

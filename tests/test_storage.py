@@ -95,6 +95,378 @@ def test_state_store_creates_plan_item_status_index(tmp_path: Path) -> None:
     assert "idx_plan_items_status_id" in indexes
 
 
+def test_migrate_schema_creates_autopilot_loop_runs_from_v16(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 16")
+        version = migrate_schema(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA index_list(autopilot_loop_runs)"
+            ).fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "autopilot_loop_runs" in tables
+    assert "idx_autopilot_loop_runs_plan" in indexes
+
+
+def test_state_store_creates_plan_item_graph_link_columns_and_index(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    store.initialize()
+
+    with sqlite3.connect(tmp_path / "state.db") as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(plan_items)").fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_items)").fetchall()
+        }
+
+    assert {"plan_graph_id", "plan_graph_root_node_id"}.issubset(columns)
+    assert "idx_plan_items_plan_graph" in indexes
+
+
+def test_state_store_records_memory_reflection_and_influence(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="prompt",
+        raw_output="output",
+        decision_status="blocked",
+        decision_reason="failed checks",
+    )
+    failed_checks = [{"name": "unit", "status": "failed", "exit_code": 1}]
+
+    lesson = store.record_memory_lesson(
+        source_task_id=task.task_id,
+        source_iteration_id=iteration.iteration_id,
+        lesson="Retry after fixing unit failure",
+        outcome_status="blocked",
+        failure_reason="failed checks",
+        failed_checks=failed_checks,
+        follow_up_prompt="Fix unit",
+    )
+    reflection = store.add_reflection_record(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        reflection_type="failed_verification",
+        failure_reason="failed checks",
+        failed_checks=failed_checks,
+        follow_up_prompt="Fix unit",
+    )
+    influence = store.record_memory_influence(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        lesson_id=lesson.lesson_id,
+        reason="selected for planning",
+    )
+
+    assert store.list_memory_lessons()[0] == lesson
+    assert store.list_reflection_records(task.task_id) == [reflection]
+    assert store.list_memory_influence(task.task_id) == [influence]
+    assert influence.injected is True
+
+
+def test_state_store_records_dead_letter_items(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Poisoned task",
+    )
+
+    dead_letter = store.add_dead_letter_item(
+        item.plan_item_id,
+        "blocked repeatedly",
+        task_id=task.task_id,
+        attempts=2,
+    )
+
+    assert store.get_dead_letter_item(dead_letter.dead_letter_id) == dead_letter
+    assert store.list_dead_letter_items() == [dead_letter]
+    assert store.list_dead_letter_items(plan_item_id=item.plan_item_id) == [dead_letter]
+    assert dead_letter.task_id == task.task_id
+    assert dead_letter.attempts == 2
+
+
+def test_state_store_rejects_invalid_dead_letter_items(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    with pytest.raises(ValueError, match="Plan item not found"):
+        store.add_dead_letter_item(999, "missing")
+
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Poisoned task",
+    )
+    with pytest.raises(ValueError, match="attempts must be at least 1"):
+        store.add_dead_letter_item(item.plan_item_id, "blocked", attempts=0)
+
+
+def test_state_store_records_autopilot_loop_runs(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    plan_path = tmp_path / "ROADMAP.md"
+
+    first = store.record_autopilot_loop_run(
+        plan_path=plan_path,
+        mode="dry-run",
+        max_runtime_sec=None,
+        max_attempts=1,
+        max_actions=5,
+        selected_count=2,
+        processed_count=0,
+        dead_letter_count=0,
+        stop_reason="complete",
+        result_code=0,
+        selected_item_ids=[11, 12],
+        elapsed_sec=0.5,
+    )
+    second = store.record_autopilot_loop_run(
+        plan_path=plan_path,
+        mode="execute",
+        max_runtime_sec=60,
+        max_attempts=2,
+        max_actions=5,
+        selected_count=1,
+        processed_count=1,
+        dead_letter_count=0,
+        stop_reason="budget exhausted",
+        result_code=0,
+        selected_item_ids=[13],
+        elapsed_sec=1.25,
+    )
+
+    assert store.get_autopilot_loop_run(first.loop_run_id) == first
+    assert first.selected_item_ids == [11, 12]
+    assert second.max_runtime_sec == 60
+    assert [run.loop_run_id for run in store.list_autopilot_loop_runs(plan_path=plan_path)] == [
+        second.loop_run_id,
+        first.loop_run_id,
+    ]
+    assert store.list_autopilot_loop_runs(plan_path=plan_path, limit=1) == [second]
+
+
+def test_state_store_rejects_invalid_autopilot_loop_runs(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    with pytest.raises(ValueError, match="mode"):
+        store.record_autopilot_loop_run(
+            plan_path=tmp_path / "ROADMAP.md",
+            mode="unsafe",
+            max_runtime_sec=None,
+            max_attempts=1,
+            max_actions=1,
+            selected_count=0,
+            processed_count=0,
+            dead_letter_count=0,
+            stop_reason="complete",
+            result_code=0,
+        )
+    with pytest.raises(ValueError, match="max actions"):
+        store.record_autopilot_loop_run(
+            plan_path=tmp_path / "ROADMAP.md",
+            mode="dry-run",
+            max_runtime_sec=None,
+            max_attempts=1,
+            max_actions=0,
+            selected_count=0,
+            processed_count=0,
+            dead_letter_count=0,
+            stop_reason="complete",
+            result_code=0,
+        )
+
+
+def test_state_store_filters_stale_memory_without_deleting_history(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    fresh = store.record_memory_lesson(
+        source_task_id=task.task_id,
+        lesson="Fresh lesson",
+        outcome_status="blocked",
+    )
+    old = store.record_memory_lesson(
+        source_task_id=task.task_id,
+        lesson="Old lesson",
+        outcome_status="blocked",
+    )
+    repeated = store.record_memory_lesson(
+        source_task_id=task.task_id,
+        lesson="Unhelpful lesson",
+        outcome_status="blocked",
+    )
+    old_timestamp = (datetime.now(UTC) - timedelta(days=120)).isoformat()
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE memory_lessons SET created_at = ?, updated_at = ? WHERE lesson_id = ?",
+            (old_timestamp, old_timestamp, old.lesson_id),
+        )
+    store.record_memory_feedback(repeated.lesson_id, unhelpful_delta=3)
+
+    active_ids = {lesson.lesson_id for lesson in store.list_memory_lessons()}
+    all_ids = {
+        lesson.lesson_id
+        for lesson in store.list_memory_lessons(include_stale=True)
+    }
+
+    assert active_ids == {fresh.lesson_id}
+    assert all_ids == {fresh.lesson_id, old.lesson_id, repeated.lesson_id}
+
+
+def test_state_store_searches_memory_lessons_by_task_relevance(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("seed", repo_path=tmp_path)
+    relevant = store.record_memory_lesson(
+        source_task_id=task.task_id,
+        lesson="Retry flaky verifier after writing a recovery marker",
+        outcome_status="blocked",
+        failure_reason="flaky verifier failed before marker",
+        follow_up_prompt="Create recovery marker before retry",
+    )
+    store.record_memory_lesson(
+        source_task_id=task.task_id,
+        lesson="Check approval request list before retry",
+        outcome_status="blocked",
+    )
+    store.record_memory_lesson(
+        source_task_id=task.task_id,
+        lesson="Update documentation heading after release notes",
+        outcome_status="blocked",
+    )
+
+    results = store.search_memory_lessons("fix flaky verifier recovery", limit=1)
+
+    assert results[0].lesson_id == relevant.lesson_id
+
+
+def test_state_store_creates_task_events_table_and_index(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    store.initialize()
+
+    with sqlite3.connect(tmp_path / "state.db") as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(task_events)").fetchall()
+        }
+
+    assert "task_events" in tables
+    assert "idx_task_events_task_sequence" in indexes
+
+
+def test_state_store_creates_action_records_table_and_indexes(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    store.initialize()
+
+    with sqlite3.connect(tmp_path / "state.db") as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(action_records)").fetchall()
+        }
+
+    assert "action_records" in tables
+    assert "idx_action_records_task_iteration" in indexes
+    assert "idx_action_records_status" in indexes
+    assert "idx_action_records_lease_expiry" in indexes
+
+
+def test_state_store_creates_plan_graph_tables_and_indexes(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    store.initialize()
+
+    with sqlite3.connect(tmp_path / "state.db") as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        graph_indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_graphs)").fetchall()
+        }
+        node_indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_graph_nodes)").fetchall()
+        }
+        dependency_indexes = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA index_list(plan_graph_dependencies)"
+            ).fetchall()
+        }
+
+    assert {
+        "plan_graphs",
+        "plan_graph_nodes",
+        "plan_graph_dependencies",
+    }.issubset(tables)
+    assert "idx_plan_graphs_task_status" in graph_indexes
+    assert "idx_plan_graph_nodes_graph_status" in node_indexes
+    assert "idx_plan_graph_dependencies_graph" in dependency_indexes
+
+
+def test_state_store_creates_replan_decisions_table_and_indexes(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    store.initialize()
+
+    with sqlite3.connect(tmp_path / "state.db") as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA index_list(replan_decisions)"
+            ).fetchall()
+        }
+
+    assert "replan_decisions" in tables
+    assert "idx_replan_decisions_task_iteration" in indexes
+    assert "idx_replan_decisions_plan_graph" in indexes
+
+
 def test_migrate_schema_sets_initial_version(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     with sqlite3.connect(db_path) as connection:
@@ -130,6 +502,236 @@ def test_migrate_schema_upgrades_v1_store_with_approval_requests(
         "last_retry_exit_code",
         "last_retry_error",
     }.issubset(approval_columns)
+
+
+def test_migrate_schema_upgrades_v8_store_with_task_events(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 8")
+        connection.execute(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                task TEXT NOT NULL,
+                repo_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        version = migrate_schema(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(task_events)").fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "task_events" in tables
+    assert "idx_task_events_task_sequence" in indexes
+
+
+def test_migrate_schema_upgrades_v9_store_with_action_records(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 9")
+        connection.execute(
+            """
+            CREATE TABLE tasks (
+                task_id TEXT PRIMARY KEY,
+                task TEXT NOT NULL,
+                repo_path TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        version = migrate_schema(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(action_records)").fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "action_records" in tables
+    assert "idx_action_records_task_iteration" in indexes
+    assert "idx_action_records_status" in indexes
+    assert "idx_action_records_lease_expiry" in indexes
+
+
+def test_migrate_schema_upgrades_v10_store_with_action_leases(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 10")
+        connection.execute(
+            """
+            CREATE TABLE action_records (
+                action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                iteration_id INTEGER,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                action_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                command_string TEXT,
+                policy_action TEXT,
+                policy_reason TEXT,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        version = migrate_schema(connection)
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(action_records)")
+        }
+        indexes = {
+            row[1] for row in connection.execute("PRAGMA index_list(action_records)")
+        }
+
+    assert version == SCHEMA_VERSION
+    assert {"lease_owner", "lease_expires_at", "heartbeat_at"}.issubset(columns)
+    assert "idx_action_records_lease_expiry" in indexes
+
+
+def test_migrate_schema_upgrades_v11_store_with_plan_graphs(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 11")
+        version = migrate_schema(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        graph_indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_graphs)").fetchall()
+        }
+        node_indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_graph_nodes)").fetchall()
+        }
+        dependency_indexes = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA index_list(plan_graph_dependencies)"
+            ).fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert {
+        "plan_graphs",
+        "plan_graph_nodes",
+        "plan_graph_dependencies",
+    }.issubset(tables)
+    assert "idx_plan_graphs_task_status" in graph_indexes
+    assert "idx_plan_graph_nodes_graph_status" in node_indexes
+    assert "idx_plan_graph_dependencies_graph" in dependency_indexes
+
+
+def test_migrate_schema_upgrades_v12_plan_items_with_graph_links(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE plan_items (
+                plan_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_path TEXT NOT NULL,
+                line_number INTEGER NOT NULL,
+                section TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                task_id TEXT,
+                selected_worktree_path TEXT,
+                blocked_reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute("PRAGMA user_version = 12")
+        version = migrate_schema(connection)
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(plan_items)").fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_items)").fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert {"plan_graph_id", "plan_graph_root_node_id"}.issubset(columns)
+    assert "idx_plan_items_plan_graph" in indexes
+
+
+def test_migrate_schema_upgrades_v13_store_with_replan_decisions(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 13")
+        version = migrate_schema(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA index_list(replan_decisions)"
+            ).fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "replan_decisions" in tables
+    assert "idx_replan_decisions_task_iteration" in indexes
+    assert "idx_replan_decisions_plan_graph" in indexes
+
+
+def test_migrate_schema_upgrades_v15_store_with_dead_letter_items(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 15")
+        version = migrate_schema(connection)
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA index_list(dead_letter_items)"
+            ).fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert "dead_letter_items" in tables
+    assert "idx_dead_letter_items_plan_item" in indexes
 
 
 def test_migrate_schema_upgrades_v3_store_with_structured_iteration_fields(
@@ -340,6 +942,701 @@ def test_state_store_persists_structured_iteration_fields(tmp_path: Path) -> Non
     assert details[0].tool_actions == ["write README.md"]
     assert details[0].exit_reason == "success"
     assert details[0].uncertainty == "low"
+
+
+def test_state_store_appends_task_events_in_sequence(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo events", repo_path=tmp_path)
+
+    first = store.append_task_event(
+        task.task_id,
+        "task.created",
+        {"source": "cli", "attempt": 1},
+    )
+    second = store.append_task_event(
+        task.task_id,
+        "verification.started",
+        {"checks": ["unit", "compile"]},
+    )
+
+    events = store.list_task_events(task.task_id)
+
+    assert [event.sequence for event in events] == [1, 2]
+    assert events == [first, second]
+    assert events[0].event_type == "task.created"
+    assert events[0].payload == {"source": "cli", "attempt": 1}
+    assert events[1].payload == {"checks": ["unit", "compile"]}
+
+
+def test_state_store_redacts_task_event_payload(tmp_path: Path) -> None:
+    secret = "ghp_abcdefghijklmnopqrstuvwxyz123456"
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo event secret", repo_path=tmp_path)
+
+    event = store.append_task_event(
+        task.task_id,
+        "agent.output",
+        {"message": f"token {secret}", "nested": {"value": secret}},
+    )
+
+    assert secret not in str(event.payload)
+    assert secret not in str(store.list_task_events(task.task_id)[0].payload)
+
+
+def test_state_store_rejects_empty_task_event_type(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo empty event type", repo_path=tmp_path)
+
+    with pytest.raises(ValueError, match="Task event type cannot be empty"):
+        store.append_task_event(task.task_id, " ")
+
+
+def test_state_store_records_action_with_idempotency_key(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo action", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="do it",
+        raw_output="done",
+        decision_status="done",
+        decision_reason="ok",
+    )
+
+    first = store.record_action(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        idempotency_key="demo-action-1",
+        action_type="verification_command",
+        command_string="python -m pytest",
+        payload={"name": "unit"},
+    )
+    duplicate = store.record_action(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        idempotency_key="demo-action-1",
+        action_type="verification_command",
+        status="failed",
+        payload={"name": "changed"},
+    )
+
+    assert duplicate == first
+    assert store.get_action_record_by_idempotency_key("demo-action-1") == first
+    assert store.list_action_records(task.task_id) == [first]
+    assert first.status == "started"
+    assert first.command_string == "python -m pytest"
+    assert first.payload == {"name": "unit"}
+    assert first.result == {}
+
+
+def test_state_store_completes_action_record(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo action complete", repo_path=tmp_path)
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="demo-action-complete",
+        action_type="verification_command",
+    )
+
+    completed = store.complete_action_record(
+        action.action_id,
+        "succeeded",
+        result={"exit_code": 0},
+    )
+
+    assert completed is not None
+    assert completed.status == "succeeded"
+    assert completed.result == {"exit_code": 0}
+    assert completed.lease_owner is None
+    assert completed.lease_expires_at is None
+    assert completed.heartbeat_at is None
+    assert completed.updated_at >= completed.created_at
+
+
+def test_state_store_acquires_and_heartbeats_action_lease(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo action lease", repo_path=tmp_path)
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="demo-action-lease",
+        action_type="verification_command",
+    )
+
+    acquired = store.acquire_action_lease(
+        action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=30,
+        now="2026-01-01T00:00:00+00:00",
+    )
+    blocked = store.acquire_action_lease(
+        action.action_id,
+        lease_owner="worker-2",
+        ttl_sec=30,
+        now="2026-01-01T00:00:10+00:00",
+    )
+    heartbeat = store.heartbeat_action_lease(
+        action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=60,
+        now="2026-01-01T00:00:20+00:00",
+    )
+
+    assert acquired is not None
+    assert acquired.lease_owner == "worker-1"
+    assert acquired.lease_expires_at == "2026-01-01T00:00:30+00:00"
+    assert acquired.heartbeat_at == "2026-01-01T00:00:00+00:00"
+    assert blocked is None
+    assert heartbeat is not None
+    assert heartbeat.lease_owner == "worker-1"
+    assert heartbeat.lease_expires_at == "2026-01-01T00:01:20+00:00"
+    assert heartbeat.heartbeat_at == "2026-01-01T00:00:20+00:00"
+
+
+def test_state_store_allows_reacquiring_expired_action_lease(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo expired lease", repo_path=tmp_path)
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="demo-expired-lease",
+        action_type="verification_command",
+    )
+    store.acquire_action_lease(
+        action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=30,
+        now="2026-01-01T00:00:00+00:00",
+    )
+
+    expired = store.list_expired_action_leases("2026-01-01T00:00:30+00:00")
+    reacquired = store.acquire_action_lease(
+        action.action_id,
+        lease_owner="worker-2",
+        ttl_sec=30,
+        now="2026-01-01T00:00:31+00:00",
+    )
+
+    assert [item.action_id for item in expired] == [action.action_id]
+    assert reacquired is not None
+    assert reacquired.lease_owner == "worker-2"
+    assert reacquired.lease_expires_at == "2026-01-01T00:01:01+00:00"
+
+
+def test_state_store_releases_action_lease(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo release lease", repo_path=tmp_path)
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="demo-release-lease",
+        action_type="verification_command",
+    )
+    store.acquire_action_lease(
+        action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=30,
+        now="2026-01-01T00:00:00+00:00",
+    )
+
+    wrong_owner = store.release_action_lease(action.action_id, "worker-2")
+    released = store.release_action_lease(action.action_id, "worker-1")
+
+    assert wrong_owner is None
+    assert released is not None
+    assert released.lease_owner is None
+    assert released.lease_expires_at is None
+    assert released.heartbeat_at is None
+
+
+def test_state_store_rejects_invalid_action_lease_inputs(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo invalid lease", repo_path=tmp_path)
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="demo-invalid-lease",
+        action_type="verification_command",
+    )
+
+    with pytest.raises(ValueError, match="Action lease owner cannot be empty"):
+        store.acquire_action_lease(action.action_id, " ", ttl_sec=30)
+    with pytest.raises(ValueError, match="Action lease TTL must be positive"):
+        store.acquire_action_lease(action.action_id, "worker-1", ttl_sec=0)
+
+
+def test_state_store_redacts_action_record_payloads(tmp_path: Path) -> None:
+    secret = "ghp_abcdefghijklmnopqrstuvwxyz123456"
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo action secret", repo_path=tmp_path)
+
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="demo-action-secret",
+        action_type="verification_command",
+        command_string=f"echo {secret}",
+        policy_reason=f"blocked {secret}",
+        payload={"secret": secret},
+        result={"error": secret},
+    )
+
+    assert secret not in str(action)
+    loaded = store.list_action_records(task.task_id)[0]
+    assert secret not in str(loaded)
+
+
+def test_state_store_rejects_invalid_action_record_inputs(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo invalid action", repo_path=tmp_path)
+
+    with pytest.raises(ValueError, match="Action idempotency key cannot be empty"):
+        store.record_action(task.task_id, " ", "verification_command")
+    with pytest.raises(ValueError, match="Action type cannot be empty"):
+        store.record_action(task.task_id, "key", " ")
+    with pytest.raises(ValueError, match="Unsupported action status"):
+        store.record_action(task.task_id, "key", "verification_command", status="weird")
+
+
+def test_state_store_builds_replay_task_timeline(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo timeline", repo_path=tmp_path)
+    event = store.append_task_event(task.task_id, "task.recovered", {"reason": "test"})
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="do it",
+        raw_output="done",
+        decision_status="done",
+        decision_reason="Verification passed",
+    )
+    verification = store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="ok",
+            stderr="",
+        ),
+    )
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        command_string="git push",
+        reason="approval required",
+    )
+    action = store.record_action(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        idempotency_key="timeline-action",
+        action_type="verification_command",
+        status="succeeded",
+        command_string="python -m pytest",
+        result={"exit_code": 0},
+    )
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET created_at = ?, updated_at = ? WHERE task_id = ?",
+            (
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+                task.task_id,
+            ),
+        )
+        connection.execute(
+            "UPDATE task_events SET created_at = ? WHERE event_id = ?",
+            ("2026-01-01T00:00:01+00:00", event.event_id),
+        )
+        connection.execute(
+            "UPDATE iterations SET created_at = ? WHERE iteration_id = ?",
+            ("2026-01-01T00:00:02+00:00", iteration.iteration_id),
+        )
+        connection.execute(
+            "UPDATE verification_runs SET created_at = ? WHERE verification_id = ?",
+            ("2026-01-01T00:00:03+00:00", verification.verification_id),
+        )
+        connection.execute(
+            "UPDATE approval_requests SET created_at = ? WHERE approval_id = ?",
+            ("2026-01-01T00:00:04+00:00", approval.approval_id),
+        )
+        connection.execute(
+            "UPDATE action_records SET created_at = ?, updated_at = ? WHERE action_id = ?",
+            (
+                "2026-01-01T00:00:05+00:00",
+                "2026-01-01T00:00:05+00:00",
+                action.action_id,
+            ),
+        )
+
+    timeline = store.list_task_timeline(task.task_id)
+
+    assert [entry.timeline_index for entry in timeline] == list(range(1, 7))
+    assert [entry.event_type for entry in timeline] == [
+        "task.created",
+        "task.recovered",
+        "iteration.recorded",
+        "verification.recorded",
+        "approval.requested",
+        "action.recorded",
+    ]
+    assert timeline[1].payload == {
+        "sequence": 1,
+        "payload": {"reason": "test"},
+        "run_id": store.run_id_for_task(task.task_id),
+    }
+    assert timeline[-1].payload["idempotency_key"] == "timeline-action"
+
+
+def test_state_store_task_timeline_returns_empty_for_missing_task(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    assert store.list_task_timeline("missing-task") == []
+
+
+def test_state_store_persists_plan_graph_nodes_and_dependencies(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo plan graph", repo_path=tmp_path)
+
+    graph = store.create_plan_graph("Implement durable graph", task_id=task.task_id)
+    first = store.add_plan_graph_node(
+        graph.graph_id,
+        node_key="discover",
+        title="Read current storage design",
+    )
+    second = store.add_plan_graph_node(
+        graph.graph_id,
+        node_key="implement",
+        title="Add PlanGraph storage",
+        depends_on_node_ids=[first.node_id],
+    )
+    dependency = store.add_plan_graph_dependency(
+        graph.graph_id,
+        node_id=second.node_id,
+        depends_on_node_id=first.node_id,
+    )
+    updated_node = store.update_plan_graph_node_status(
+        second.node_id,
+        "in_progress",
+        increment_attempts=True,
+    )
+    updated_graph = store.update_plan_graph_status(graph.graph_id, "blocked")
+
+    assert graph.task_id == task.task_id
+    assert graph.status == "active"
+    assert store.list_plan_graphs(task_id=task.task_id) == [updated_graph]
+    assert [node.node_key for node in store.list_plan_graph_nodes(graph.graph_id)] == [
+        "discover",
+        "implement",
+    ]
+    assert store.list_plan_graph_nodes(graph.graph_id, status="in_progress") == [
+        updated_node
+    ]
+    assert dependency is not None
+    assert dependency.node_id == second.node_id
+    assert dependency.depends_on_node_id == first.node_id
+    assert store.list_plan_graph_dependencies(graph.graph_id) == [dependency]
+    assert updated_node is not None
+    assert updated_node.status == "in_progress"
+    assert updated_node.attempts == 1
+    assert updated_graph is not None
+    assert updated_graph.status == "blocked"
+
+
+def test_state_store_lists_ready_plan_graph_nodes(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    graph = store.create_plan_graph("Ready graph")
+    first = store.add_plan_graph_node(graph.graph_id, "first", "First step")
+    second = store.add_plan_graph_node(
+        graph.graph_id,
+        "second",
+        "Second step",
+        depends_on_node_ids=[first.node_id],
+    )
+    third = store.add_plan_graph_node(graph.graph_id, "third", "Third step")
+    store.update_plan_graph_node_status(third.node_id, "blocked")
+
+    ready_before = store.list_ready_plan_graph_nodes(graph.graph_id)
+    store.update_plan_graph_node_status(first.node_id, "done")
+    ready_after = store.list_ready_plan_graph_nodes(graph.graph_id)
+    limited = store.list_ready_plan_graph_nodes(graph.graph_id, limit=1)
+
+    assert [node.node_id for node in ready_before] == [first.node_id]
+    assert [node.node_id for node in ready_after] == [second.node_id]
+    assert [node.node_id for node in limited] == [second.node_id]
+
+
+def test_state_store_rejects_invalid_plan_graph_inputs(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+
+    with pytest.raises(ValueError, match="Plan graph title cannot be empty"):
+        store.create_plan_graph(" ")
+
+    graph = store.create_plan_graph("Demo graph")
+    with pytest.raises(ValueError, match="Unsupported plan graph status"):
+        store.update_plan_graph_status(graph.graph_id, "weird")
+    with pytest.raises(ValueError, match="Plan graph node key cannot be empty"):
+        store.add_plan_graph_node(graph.graph_id, " ", "Demo node")
+    with pytest.raises(ValueError, match="Plan graph node title cannot be empty"):
+        store.add_plan_graph_node(graph.graph_id, "demo", " ")
+    with pytest.raises(ValueError, match="Unsupported plan graph node status"):
+        store.add_plan_graph_node(graph.graph_id, "demo", "Demo node", status="weird")
+    with pytest.raises(ValueError, match="Plan graph node attempts cannot be negative"):
+        store.add_plan_graph_node(graph.graph_id, "demo", "Demo node", attempts=-1)
+    with pytest.raises(ValueError, match="Plan graph not found"):
+        store.add_plan_graph_node(999, "demo", "Demo node")
+
+
+def test_state_store_rejects_cross_graph_plan_graph_dependency(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    first_graph = store.create_plan_graph("First graph")
+    second_graph = store.create_plan_graph("Second graph")
+    first_node = store.add_plan_graph_node(first_graph.graph_id, "first", "First")
+    second_node = store.add_plan_graph_node(second_graph.graph_id, "second", "Second")
+
+    with pytest.raises(ValueError, match="Plan graph dependency nodes not found"):
+        store.add_plan_graph_dependency(
+            first_graph.graph_id,
+            node_id=first_node.node_id,
+            depends_on_node_id=second_node.node_id,
+        )
+    with pytest.raises(ValueError, match="Plan graph node cannot depend on itself"):
+        store.add_plan_graph_dependency(
+            first_graph.graph_id,
+            node_id=first_node.node_id,
+            depends_on_node_id=first_node.node_id,
+        )
+
+
+def test_state_store_links_plan_item_to_plan_graph_root_node(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    graph = store.create_plan_graph("Queue item graph")
+    root = store.add_plan_graph_node(graph.graph_id, "root", "Root step")
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Demo item",
+    )
+
+    linked = store.link_plan_item_to_plan_graph(
+        item.plan_item_id,
+        graph.graph_id,
+        plan_graph_root_node_id=root.node_id,
+    )
+
+    assert linked is not None
+    assert linked.plan_graph_id == graph.graph_id
+    assert linked.plan_graph_root_node_id == root.node_id
+    assert store.get_plan_item(item.plan_item_id) == linked
+
+
+def test_state_store_rejects_invalid_plan_item_graph_links(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    first_graph = store.create_plan_graph("First graph")
+    second_graph = store.create_plan_graph("Second graph")
+    second_root = store.add_plan_graph_node(second_graph.graph_id, "root", "Root")
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=1,
+        section="",
+        text="Demo item",
+    )
+
+    with pytest.raises(ValueError, match="Plan graph not found: 999"):
+        store.link_plan_item_to_plan_graph(item.plan_item_id, 999)
+    with pytest.raises(ValueError, match="Plan graph dependency nodes not found"):
+        store.link_plan_item_to_plan_graph(
+            item.plan_item_id,
+            first_graph.graph_id,
+            plan_graph_root_node_id=second_root.node_id,
+        )
+    with pytest.raises(ValueError, match="Plan graph root node requires plan graph id"):
+        store.record_plan_item(
+            plan_path=tmp_path / "ROADMAP.md",
+            line_number=2,
+            section="",
+            text="Invalid root-only item",
+            plan_graph_root_node_id=second_root.node_id,
+        )
+    assert store.link_plan_item_to_plan_graph(999, first_graph.graph_id) is None
+
+
+def test_state_store_records_replan_decision_and_timeline_entry(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo",
+        raw_output="ok",
+        decision_status="continue",
+        decision_reason="Verification failed",
+    )
+    graph = store.create_plan_graph("Demo graph", task_id=task.task_id)
+    root = store.add_plan_graph_node(graph.graph_id, "fix", "Fix failed test")
+
+    decision = store.record_replan_decision(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        status="continue",
+        reason="Verification failed: unit",
+        follow_up_prompt="Fix unit",
+        failed_checks=[
+            {
+                "name": "unit",
+                "status": "failed",
+                "exit_code": 1,
+                "output_excerpt": "assertion failed",
+            }
+        ],
+        plan_graph_id=graph.graph_id,
+        plan_graph_node_id=root.node_id,
+    )
+
+    assert decision.status == "continue"
+    assert decision.failed_checks[0]["name"] == "unit"
+    assert decision.plan_graph_id == graph.graph_id
+    assert decision.plan_graph_node_id == root.node_id
+    assert store.get_replan_decision(decision.replan_id) == decision
+    assert store.list_replan_decisions(task.task_id) == [decision]
+    assert store.list_replan_decisions(
+        task.task_id,
+        iteration_id=iteration.iteration_id,
+    ) == [decision]
+
+    timeline = store.list_task_timeline(task.task_id)
+    replan_entries = [
+        entry for entry in timeline if entry.event_type == "replan.decision"
+    ]
+    assert len(replan_entries) == 1
+    assert replan_entries[0].status == "continue"
+    assert replan_entries[0].payload["failed_checks"] == decision.failed_checks
+
+
+def test_state_store_links_replan_decisions_to_plan_graph_node(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo",
+        raw_output="ok",
+        decision_status="continue",
+        decision_reason="Verification failed",
+    )
+    graph = store.create_plan_graph("Demo graph", task_id=task.task_id)
+    root = store.add_plan_graph_node(graph.graph_id, "fix", "Fix failed test")
+    decision = store.record_replan_decision(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        status="continue",
+        reason="Verification failed: unit",
+        failed_checks=[{"name": "unit", "status": "failed"}],
+    )
+
+    linked = store.link_replan_decisions_to_plan_graph(
+        task.task_id,
+        graph.graph_id,
+        plan_graph_node_id=root.node_id,
+    )
+
+    assert len(linked) == 1
+    assert linked[0].replan_id == decision.replan_id
+    assert linked[0].plan_graph_id == graph.graph_id
+    assert linked[0].plan_graph_node_id == root.node_id
+
+
+def test_state_store_creates_idempotent_replan_follow_up_nodes(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo",
+        raw_output="ok",
+        decision_status="continue",
+        decision_reason="Verification failed",
+    )
+    graph = store.create_plan_graph("Demo graph", task_id=task.task_id)
+    root = store.add_plan_graph_node(graph.graph_id, "fix", "Fix failed test")
+    decision = store.record_replan_decision(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        status="continue",
+        reason="Verification failed: unit",
+        follow_up_prompt="Fix the failing unit test",
+        failed_checks=[{"name": "unit", "status": "failed"}],
+        plan_graph_id=graph.graph_id,
+        plan_graph_node_id=root.node_id,
+    )
+
+    created = store.create_replan_follow_up_nodes(task.task_id, graph.graph_id)
+    repeated = store.create_replan_follow_up_nodes(task.task_id, graph.graph_id)
+
+    dependencies = store.list_plan_graph_dependencies(
+        graph.graph_id,
+        node_id=created[0].node_id,
+    )
+
+    assert len(created) == 1
+    assert repeated == created
+    assert created[0].node_key == f"replan-{decision.replan_id}"
+    assert created[0].status == "pending"
+    assert created[0].attempts == 0
+    assert "Fix the failing unit test" in created[0].title
+    assert len(dependencies) == 1
+    assert dependencies[0].depends_on_node_id == root.node_id
+
+
+def test_state_store_rejects_invalid_replan_decisions(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo",
+        raw_output="ok",
+        decision_status="continue",
+        decision_reason="Verification failed",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported replan decision status"):
+        store.record_replan_decision(
+            task_id=task.task_id,
+            iteration_id=iteration.iteration_id,
+            source="verification",
+            status="weird",
+            reason="Verification failed",
+            failed_checks=[],
+        )
+    with pytest.raises(ValueError, match="Replan decision source cannot be empty"):
+        store.record_replan_decision(
+            task_id=task.task_id,
+            iteration_id=iteration.iteration_id,
+            source=" ",
+            status="continue",
+            reason="Verification failed",
+            failed_checks=[],
+        )
 
 
 def test_state_store_persists_and_resolves_approval_requests(tmp_path: Path) -> None:

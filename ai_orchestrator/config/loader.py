@@ -40,6 +40,7 @@ class MemoryConfig:
     command: list[str] = field(default_factory=lambda: ["codebase-memory-mcp", "cli"])
     project: str = ""
     timeout_sec: int = 120
+    max_lessons: int = 5
 
 
 def find_project_config(start: Path | None = None) -> Path | None:
@@ -119,6 +120,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
     memory_command: list[str] = []
     memory_project = ""
     memory_timeout_sec = 120
+    memory_max_lessons = 5
     current_command: dict[str, object] | None = None
     in_verification_argv = False
     in_memory_command = False
@@ -353,6 +355,14 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
             memory_timeout_sec = _as_int(_value_after_colon(stripped), default=120)
             continue
 
+        if section == "memory" and stripped.startswith("max_lessons:"):
+            in_memory_command = False
+            memory_max_lessons = max(
+                1,
+                _as_int(_value_after_colon(stripped), default=5),
+            )
+            continue
+
         if not in_verification_commands:
             continue
 
@@ -405,6 +415,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
             command=memory_command or ["codebase-memory-mcp", "cli"],
             project=memory_project,
             timeout_sec=memory_timeout_sec,
+            max_lessons=memory_max_lessons,
         ),
     )
 

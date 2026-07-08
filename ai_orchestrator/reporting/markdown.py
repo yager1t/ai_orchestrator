@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Sequence
 
 from ai_orchestrator.storage.db import (
     StateStore,
+    StoredActionRecord,
     StoredApprovalRequest,
     StoredIteration,
+    StoredMemoryInfluence,
+    StoredMemoryLesson,
     StoredPlanItem,
+    StoredReplanDecision,
+    StoredReflectionRecord,
+    StoredTimelineEntry,
     StoredVerificationRun,
 )
 from ai_orchestrator.storage.redaction import redact_secrets
@@ -21,6 +28,17 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
     iterations = store.list_iterations(task.task_id)
     verification_runs = store.list_verification_runs(task.task_id)
     approvals = store.list_approval_requests(task.task_id)
+    task_events = store.list_task_events(task.task_id)
+    action_records = store.list_action_records(task.task_id)
+    replan_decisions = store.list_replan_decisions(task.task_id)
+    memory_lessons = [
+        lesson
+        for lesson in store.list_memory_lessons(include_stale=True)
+        if lesson.source_task_id == task.task_id
+    ]
+    reflections = store.list_reflection_records(task.task_id)
+    memory_influence = store.list_memory_influence(task.task_id)
+    timeline_entries = store.list_task_timeline(task.task_id)
     plan_item = _plan_item_for_task(store, task.task_id)
     final_iteration = iterations[-1] if iterations else None
     final_verification_runs = (
@@ -34,6 +52,7 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
         "",
         "## Summary",
         "",
+        f"- Run id: `{store.run_id_for_task(task.task_id)}`",
         f"- Status: `{task.status}`",
         f"- Repository: `{task.repo_path}`",
         *_queue_worktree_lines(plan_item),
@@ -41,6 +60,13 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
         f"- Iterations: `{len(iterations)}`",
         f"- Verification runs: `{len(verification_runs)}`{_status_summary(verification_runs)}",
         f"- Approval requests: `{len(approvals)}`{_approval_status_summary(approvals)}",
+        f"- Task events: `{len(task_events)}`",
+        f"- Action records: `{len(action_records)}`{_action_status_summary(action_records)}",
+        f"- Replan decisions: `{len(replan_decisions)}`",
+        f"- Memory lessons: `{len(memory_lessons)}`",
+        f"- Reflection records: `{len(reflections)}`",
+        f"- Memory influences: `{len(memory_influence)}`",
+        f"- Timeline entries: `{len(timeline_entries)}`",
         *_verification_verdict_lines(final_iteration, final_verification_runs),
         f"- Created: `{task.created_at}`",
         f"- Updated: `{task.updated_at}`",
@@ -53,6 +79,24 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
                 f"- Final reason: {final_iteration.decision_reason}",
             ]
         )
+
+    lines.extend(["", "## Timeline", ""])
+    lines.extend(_render_timeline_entry_lines(timeline_entries))
+
+    lines.extend(["", "## Actions", ""])
+    lines.extend(_render_action_record_lines(action_records))
+
+    lines.extend(["", "## Replan Decisions", ""])
+    lines.extend(_render_replan_decision_lines(replan_decisions))
+
+    lines.extend(["", "## Memory Lessons", ""])
+    lines.extend(_render_memory_lesson_lines(memory_lessons))
+
+    lines.extend(["", "## Reflections", ""])
+    lines.extend(_render_reflection_lines(reflections))
+
+    lines.extend(["", "## Memory Influence", ""])
+    lines.extend(_render_memory_influence_lines(memory_influence))
 
     lines.extend(["", "## Approvals", ""])
     lines.extend(_render_approval_lines(approvals, iterations))
@@ -152,6 +196,173 @@ def _approval_status_summary(approvals: Sequence[StoredApprovalRequest]) -> str:
     counts = Counter(approval.status for approval in approvals)
     summary = ", ".join(f"`{status}`: {count}" for status, count in sorted(counts.items()))
     return f" ({summary})"
+
+
+def _action_status_summary(action_records: Sequence[StoredActionRecord]) -> str:
+    if not action_records:
+        return ""
+
+    counts = Counter(action.status for action in action_records)
+    summary = ", ".join(f"`{status}`: {count}" for status, count in sorted(counts.items()))
+    return f" ({summary})"
+
+
+def _render_timeline_entry_lines(
+    timeline_entries: Sequence[StoredTimelineEntry],
+) -> list[str]:
+    if not timeline_entries:
+        return ["No timeline entries recorded."]
+
+    lines: list[str] = []
+    for entry in timeline_entries:
+        status = f" status=`{entry.status}`" if entry.status else ""
+        lines.append(
+            (
+                f"- `{entry.timeline_index}`: `{entry.event_type}` "
+                f"at `{entry.occurred_at}` source=`{entry.source}:{entry.source_id}`"
+                f"{status}"
+            )
+        )
+        lines.append(f"  - Summary: {redact_secrets(entry.summary) or ''}")
+        if entry.payload:
+            payload = json.dumps(entry.payload, ensure_ascii=False, sort_keys=True)
+            lines.append(f"  - Payload: `{redact_secrets(payload) or ''}`")
+    return lines
+
+
+def _render_action_record_lines(action_records: Sequence[StoredActionRecord]) -> list[str]:
+    if not action_records:
+        return ["No action records recorded."]
+
+    lines: list[str] = []
+    for action in action_records:
+        iteration = "none" if action.iteration_id is None else str(action.iteration_id)
+        lines.append(
+            (
+                f"- `{action.action_id}`: `{action.action_type}` status=`{action.status}` "
+                f"iteration=`{iteration}` key=`{action.idempotency_key}`"
+            )
+        )
+        if action.command_string:
+            lines.append(f"  - Command: `{redact_secrets(action.command_string) or ''}`")
+        if action.policy_action:
+            lines.append(f"  - Policy: `{action.policy_action}`")
+        if action.policy_reason:
+            lines.append(f"  - Policy reason: {redact_secrets(action.policy_reason) or ''}")
+        if action.lease_owner:
+            lines.append(f"  - Lease owner: `{redact_secrets(action.lease_owner) or ''}`")
+        if action.lease_expires_at:
+            lines.append(f"  - Lease expires: `{action.lease_expires_at}`")
+        if action.heartbeat_at:
+            lines.append(f"  - Heartbeat: `{action.heartbeat_at}`")
+        if action.payload:
+            payload = json.dumps(action.payload, ensure_ascii=False, sort_keys=True)
+            lines.append(f"  - Payload: `{redact_secrets(payload) or ''}`")
+        if action.result:
+            result = json.dumps(action.result, ensure_ascii=False, sort_keys=True)
+            lines.append(f"  - Result: `{redact_secrets(result) or ''}`")
+    return lines
+
+
+def _render_replan_decision_lines(
+    replan_decisions: Sequence[StoredReplanDecision],
+) -> list[str]:
+    if not replan_decisions:
+        return ["No replan decisions recorded."]
+
+    lines: list[str] = []
+    for decision in replan_decisions:
+        graph_ref = ""
+        if decision.plan_graph_id is not None:
+            graph_ref = f" graph=`{decision.plan_graph_id}`"
+            if decision.plan_graph_node_id is not None:
+                graph_ref += f" node=`{decision.plan_graph_node_id}`"
+        lines.append(
+            (
+                f"- `{decision.replan_id}`: status=`{decision.status}` "
+                f"source=`{decision.source}` iteration=`{decision.iteration_id}`"
+                f"{graph_ref}"
+            )
+        )
+        lines.append(f"  - Reason: {redact_secrets(decision.reason) or ''}")
+        if decision.failed_checks:
+            checks = ", ".join(
+                f"{check.get('name')}: {check.get('status')}"
+                for check in decision.failed_checks
+            )
+            lines.append(f"  - Failed checks: {redact_secrets(checks) or ''}")
+        if decision.follow_up_prompt:
+            lines.append(
+                f"  - Follow-up prompt: {redact_secrets(decision.follow_up_prompt) or ''}"
+            )
+    return lines
+
+
+def _render_memory_lesson_lines(
+    memory_lessons: Sequence[StoredMemoryLesson],
+) -> list[str]:
+    if not memory_lessons:
+        return ["No memory lessons recorded."]
+
+    lines: list[str] = []
+    for lesson in memory_lessons:
+        stale = "yes" if lesson.is_stale else "no"
+        lines.append(
+            (
+                f"- `{lesson.lesson_id}`: status=`{lesson.outcome_status}` "
+                f"source_task=`{lesson.source_task_id}` stale=`{stale}`"
+            )
+        )
+        lines.append(f"  - Lesson: {redact_secrets(lesson.lesson) or ''}")
+        if lesson.failure_reason:
+            lines.append(f"  - Failure reason: {redact_secrets(lesson.failure_reason) or ''}")
+        if lesson.follow_up_prompt:
+            lines.append(f"  - Follow-up: {redact_secrets(lesson.follow_up_prompt) or ''}")
+    return lines
+
+
+def _render_reflection_lines(
+    reflections: Sequence[StoredReflectionRecord],
+) -> list[str]:
+    if not reflections:
+        return ["No reflection records recorded."]
+
+    lines: list[str] = []
+    for reflection in reflections:
+        iteration = "none" if reflection.iteration_id is None else str(reflection.iteration_id)
+        lines.append(
+            (
+                f"- `{reflection.reflection_id}`: `{reflection.reflection_type}` "
+                f"iteration=`{iteration}`"
+            )
+        )
+        lines.append(f"  - Failure reason: {redact_secrets(reflection.failure_reason) or ''}")
+        if reflection.failed_checks:
+            checks = json.dumps(reflection.failed_checks, ensure_ascii=False, sort_keys=True)
+            lines.append(f"  - Failed checks: `{redact_secrets(checks) or ''}`")
+        if reflection.follow_up_prompt:
+            lines.append(f"  - Follow-up: {redact_secrets(reflection.follow_up_prompt) or ''}")
+    return lines
+
+
+def _render_memory_influence_lines(
+    memory_influence: Sequence[StoredMemoryInfluence],
+) -> list[str]:
+    if not memory_influence:
+        return ["No memory influence recorded."]
+
+    lines: list[str] = []
+    for influence in memory_influence:
+        iteration = "none" if influence.iteration_id is None else str(influence.iteration_id)
+        injected = "yes" if influence.injected else "no"
+        lines.append(
+            (
+                f"- `{influence.influence_id}`: lesson=`{influence.lesson_id}` "
+                f"iteration=`{iteration}` injected=`{injected}`"
+            )
+        )
+        lines.append(f"  - Reason: {redact_secrets(influence.reason) or ''}")
+    return lines
 
 
 def _verification_verdict_lines(

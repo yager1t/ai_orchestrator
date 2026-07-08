@@ -274,7 +274,7 @@ in `ai_orchestrator/storage/migrations.py`.
 - `docs/BACKLOG.md`: current backlog.
 - `docs/SECURITY.md`: security model and secret handling.
 - `docs/CODEBASE_MEMORY_RESEARCH.md`: optional Codebase Memory integration notes.
-- `docs/review/`: normalized review findings and follow-up notes.
+- `docs/PUBLICATION_POLICY.md`: public/private documentation boundary.
 - `docs/RELEASE.md`: release checklist.
 - `CHANGELOG.md`: project change log.
 

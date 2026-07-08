@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,8 +9,11 @@ from typing import Callable
 
 from ai_orchestrator.agents.base import AgentAdapter, ProgressCallback, SessionRef, TaskContext
 from ai_orchestrator.core.decision import Decision, DecisionEngine
+from ai_orchestrator.policy.engine import PolicyDecision, PolicyEngine
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.tools import ToolBroker, ToolResult, make_verification_tool_call
+from ai_orchestrator.tools.types import ToolResultStatus
 from ai_orchestrator.verification.runner import (
     VerificationCommand,
     VerificationResult,
@@ -44,6 +48,7 @@ class Supervisor:
         progress_callback: ProgressCallback | None = None,
         process_runner: ProcessRunner | None = None,
         clock: Callable[[], float] | None = None,
+        memory_lesson_limit: int = 5,
     ) -> None:
         self.agent = agent
         self.verifier = verifier
@@ -57,6 +62,7 @@ class Supervisor:
         self.progress_callback = progress_callback
         self.process_runner = process_runner or ProcessRunner()
         self.clock = clock or time.monotonic
+        self.memory_lesson_limit = max(0, memory_lesson_limit)
 
     def run_once(
         self,
@@ -152,7 +158,14 @@ class Supervisor:
             progress_callback=self.progress_callback,
         )
         session = self.agent.start_session(context)
-        prompt = self._build_initial_prompt(task=task, planning_context=planning_context)
+        memory_context = self._memory_planning_context(stored_task_id, task)
+        prompt = self._build_initial_prompt(
+            task=task,
+            planning_context=self._merge_planning_contexts(
+                planning_context,
+                memory_context,
+            ),
+        )
         initial_repo_snapshot = self._repo_snapshot(repo) if self.require_repo_change else None
         previous_signature: tuple[str, tuple[str, ...], str] | None = None
         no_change_count = 0
@@ -334,11 +347,24 @@ class Supervisor:
                     exit_reason=result.exit_reason,
                     uncertainty=result.uncertainty,
                 )
-                for verification_result in verification_results:
-                    self.state_store.add_verification_run(
+                for index, verification_result in enumerate(verification_results):
+                    stored_verification = self.state_store.add_verification_run(
                         task_id=stored_task_id,
                         iteration_id=stored_iteration.iteration_id,
                         result=verification_result,
+                    )
+                    command = (
+                        self.verification_commands[index]
+                        if index < len(self.verification_commands)
+                        else None
+                    )
+                    self._record_verification_action(
+                        task_id=stored_task_id,
+                        iteration_id=stored_iteration.iteration_id,
+                        action_index=index + 1,
+                        verification_id=stored_verification.verification_id,
+                        verification_result=verification_result,
+                        verification_command=command,
                     )
                     if verification_result.status == "needs_approval":
                         self._add_verification_approval_request(
@@ -346,6 +372,18 @@ class Supervisor:
                             iteration_id=stored_iteration.iteration_id,
                             verification_result=verification_result,
                         )
+                self._record_replan_decision(
+                    task_id=stored_task_id,
+                    iteration_id=stored_iteration.iteration_id,
+                    decision=decision,
+                    verification_results=verification_results,
+                )
+                self._record_reflections_and_memory(
+                    task_id=stored_task_id,
+                    iteration_id=stored_iteration.iteration_id,
+                    decision=decision,
+                    verification_results=verification_results,
+                )
 
             if decision.status == "done":
                 logger.debug(
@@ -398,6 +436,89 @@ class Supervisor:
         task = self.state_store.get_task(task_id)
         return task is not None and task.status == "cancelled"
 
+    def _memory_planning_context(self, task_id: str | None, task: str) -> str | None:
+        if task_id is None or self.state_store is None:
+            return None
+        lessons = self.state_store.search_memory_lessons(
+            task,
+            limit=self.memory_lesson_limit,
+        )
+        if not lessons:
+            return None
+
+        lines = ["Memory lessons (non-authoritative hints):"]
+        for lesson in lessons:
+            self.state_store.record_memory_influence(
+                task_id=task_id,
+                lesson_id=lesson.lesson_id,
+                reason="ranked active lesson selected for supervisor planning context",
+                injected=True,
+            )
+            lines.append(f"- lesson {lesson.lesson_id}: {lesson.lesson}")
+        return "\n".join(lines)
+
+    def _merge_planning_contexts(
+        self,
+        *contexts: str | None,
+    ) -> str | None:
+        merged = [context.strip() for context in contexts if context and context.strip()]
+        if not merged:
+            return None
+        return "\n\n".join(merged)
+
+    def _record_reflections_and_memory(
+        self,
+        task_id: str,
+        iteration_id: int,
+        decision: Decision,
+        verification_results: list[VerificationResult],
+    ) -> None:
+        if self.state_store is None:
+            return
+
+        failed_checks = [
+            _replan_failed_check_payload(result)
+            for result in verification_results
+            if result.status not in {"passed", "needs_approval", "policy_denied"}
+        ]
+        if failed_checks:
+            self.state_store.add_reflection_record(
+                task_id=task_id,
+                iteration_id=iteration_id,
+                reflection_type="failed_verification",
+                failure_reason=decision.reason,
+                failed_checks=failed_checks,
+                follow_up_prompt=decision.follow_up_prompt,
+            )
+            self.state_store.record_memory_lesson(
+                source_task_id=task_id,
+                source_iteration_id=iteration_id,
+                lesson=_memory_lesson_text("failed verification", decision.reason),
+                outcome_status=decision.status,
+                failure_reason=decision.reason,
+                failed_checks=failed_checks,
+                follow_up_prompt=decision.follow_up_prompt,
+            )
+
+        if decision.status == "blocked":
+            self.state_store.add_reflection_record(
+                task_id=task_id,
+                iteration_id=iteration_id,
+                reflection_type="blocked_run",
+                failure_reason=decision.reason,
+                failed_checks=failed_checks,
+                follow_up_prompt=decision.follow_up_prompt,
+            )
+            self.state_store.record_memory_lesson(
+                source_task_id=task_id,
+                source_iteration_id=iteration_id,
+                lesson=_memory_lesson_text("blocked run", decision.reason),
+                outcome_status=decision.status,
+                failure_reason=decision.reason,
+                failed_checks=failed_checks,
+                follow_up_prompt=decision.follow_up_prompt,
+            )
+
     def _add_verification_approval_request(
         self,
         task_id: str,
@@ -412,6 +533,82 @@ class Supervisor:
             source="verification",
             command_string=verification_result.command_string,
             reason=verification_result.error or "Verification command requires approval",
+        )
+
+    def _record_verification_action(
+        self,
+        task_id: str,
+        iteration_id: int,
+        action_index: int,
+        verification_id: int,
+        verification_result: VerificationResult,
+        verification_command: VerificationCommand | None,
+    ) -> None:
+        if self.state_store is None:
+            return
+
+        command_string = _verification_command_string(
+            verification_command,
+            verification_result,
+        )
+        idempotency_key = (
+            f"task:{task_id}:iteration:{iteration_id}:"
+            f"verification:{action_index}:{verification_result.name}"
+        )
+        tool_call = make_verification_tool_call(
+            name=verification_result.name,
+            idempotency_key=idempotency_key,
+            arguments=_verification_tool_arguments(
+                verification_command,
+                verification_result,
+                verification_id,
+                command_string,
+            ),
+            task_id=task_id,
+            iteration_id=iteration_id,
+        )
+        tool_result = ToolResult(
+            call=tool_call,
+            status=_tool_status_from_verification(verification_result.status),
+            output={
+                "verification_id": verification_id,
+                "status": verification_result.status,
+                "exit_code": verification_result.exit_code,
+                "error": verification_result.error,
+            },
+        )
+        broker = ToolBroker(
+            self.state_store,
+            getattr(self.verifier, "policy_engine", None) or _AllowPolicyEngine(),
+        )
+        broker.record_result(tool_call, tool_result)
+
+    def _record_replan_decision(
+        self,
+        task_id: str,
+        iteration_id: int,
+        decision: Decision,
+        verification_results: list[VerificationResult],
+    ) -> None:
+        if self.state_store is None or decision.status not in {"continue", "blocked"}:
+            return
+
+        failed_checks = [
+            _replan_failed_check_payload(result)
+            for result in verification_results
+            if result.status not in {"passed", "needs_approval", "policy_denied"}
+        ]
+        if not failed_checks:
+            return
+
+        self.state_store.record_replan_decision(
+            task_id=task_id,
+            iteration_id=iteration_id,
+            source="verification",
+            status=decision.status,
+            reason=decision.reason,
+            follow_up_prompt=decision.follow_up_prompt,
+            failed_checks=failed_checks,
         )
 
     def _is_runtime_budget_exhausted(self, started_at: float) -> bool:
@@ -503,3 +700,95 @@ class Supervisor:
     def _progress(self, message: str) -> None:
         if self.progress_callback is not None:
             self.progress_callback(message)
+
+
+def _verification_command_string(
+    verification_command: VerificationCommand | None,
+    verification_result: VerificationResult,
+) -> str | None:
+    if verification_result.command_string:
+        return verification_result.command_string
+    if verification_command is None:
+        return None
+    if verification_command.argv is not None:
+        return subprocess.list2cmdline(verification_command.argv)
+    return verification_command.run
+
+
+def _action_status_from_verification(status: str) -> str:
+    if status == "passed":
+        return "succeeded"
+    if status == "needs_approval":
+        return "needs_approval"
+    if status == "policy_denied":
+        return "policy_denied"
+    return "failed"
+
+
+def _policy_action_from_verification(status: str) -> str | None:
+    if status == "needs_approval":
+        return "ask"
+    if status == "policy_denied":
+        return "deny"
+    return None
+
+
+def _tool_status_from_verification(status: str) -> ToolResultStatus:
+    if status == "passed":
+        return "succeeded"
+    if status == "needs_approval":
+        return "needs_approval"
+    if status == "policy_denied":
+        return "policy_denied"
+    return "failed"
+
+
+def _verification_tool_arguments(
+    verification_command: VerificationCommand | None,
+    verification_result: VerificationResult,
+    verification_id: int,
+    command_string: str | None,
+) -> dict[str, object]:
+    arguments: dict[str, object] = {
+        "name": verification_result.name,
+        "verification_id": verification_id,
+        "timeout_sec": (
+            verification_command.timeout_sec
+            if verification_command is not None
+            else None
+        ),
+    }
+    if verification_command is not None and verification_command.argv is not None:
+        arguments["argv"] = verification_command.argv
+    elif command_string is not None:
+        arguments["command"] = command_string
+    return arguments
+
+
+class _AllowPolicyEngine(PolicyEngine):
+    def __init__(self) -> None:
+        pass
+
+    def evaluate_command(self, command: str) -> PolicyDecision:
+        return PolicyDecision("allow", "No policy engine configured")
+
+    def evaluate_argv(self, argv: list[str]) -> PolicyDecision:
+        return PolicyDecision("allow", "No policy engine configured")
+
+
+def _replan_failed_check_payload(result: VerificationResult) -> dict[str, object]:
+    output = result.stderr or result.stdout or result.error or ""
+    return {
+        "name": result.name,
+        "status": result.status,
+        "exit_code": result.exit_code,
+        "error": result.error,
+        "output_excerpt": output[-1200:] if len(output) > 1200 else output,
+    }
+
+
+def _memory_lesson_text(kind: str, reason: str) -> str:
+    normalized_reason = " ".join(reason.split())
+    if not normalized_reason:
+        normalized_reason = "No failure reason recorded"
+    return f"{kind}: {normalized_reason}"

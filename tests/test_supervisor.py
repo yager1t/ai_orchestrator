@@ -323,6 +323,129 @@ def test_supervisor_blocks_before_verification_when_runtime_budget_exhausted(
     assert task.status == "blocked"
 
 
+def test_supervisor_records_blocked_run_reflection_and_lesson(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    supervisor = Supervisor(
+        agent=BlockedAgent(),
+        verifier=SequencedVerifier(["passed"]),
+        state_store=store,
+        max_iterations=1,
+    )
+
+    result = supervisor.run_once("do risky work", repo=tmp_path)
+
+    reflections = store.list_reflection_records(result.task_id)
+    lessons = [
+        lesson
+        for lesson in store.list_memory_lessons(include_stale=True)
+        if lesson.source_task_id == result.task_id
+    ]
+    assert result.status == "blocked"
+    assert [reflection.reflection_type for reflection in reflections] == ["blocked_run"]
+    assert lessons[0].lesson.startswith("blocked run:")
+    assert lessons[0].outcome_status == "blocked"
+
+
+def test_supervisor_records_failed_verification_reflection_and_lesson(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    supervisor = Supervisor(
+        agent=MockAgentAdapter(),
+        verifier=SequencedVerifier(["failed"]),
+        state_store=store,
+        max_iterations=1,
+    )
+
+    result = supervisor.run_once("fix tests", repo=tmp_path)
+
+    reflections = store.list_reflection_records(result.task_id)
+    lessons = [
+        lesson
+        for lesson in store.list_memory_lessons(include_stale=True)
+        if lesson.source_task_id == result.task_id
+    ]
+    assert result.status == "blocked"
+    assert {reflection.reflection_type for reflection in reflections} == {
+        "blocked_run",
+        "failed_verification",
+    }
+    assert any(lesson.lesson.startswith("failed verification:") for lesson in lessons)
+    assert all(lesson.failed_checks for lesson in lessons)
+
+
+def test_supervisor_injects_active_memory_lessons_as_non_authoritative_context(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    seed_task = store.create_task("seed", repo_path=tmp_path)
+    lesson = store.record_memory_lesson(
+        source_task_id=seed_task.task_id,
+        lesson="Check policy denial before retry",
+        outcome_status="blocked",
+    )
+    agent = PromptRecordingAgent()
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=SequencedVerifier(["passed"]),
+        state_store=store,
+        max_iterations=1,
+    )
+
+    result = supervisor.run_once("use lessons", repo=tmp_path)
+
+    influences = store.list_memory_influence(result.task_id)
+    assert result.status == "done"
+    assert "Planning context (read-only, non-authoritative):" in agent.prompts[0]
+    assert "Check policy denial before retry" in agent.prompts[0]
+    assert [(item.lesson_id, item.injected) for item in influences] == [
+        (lesson.lesson_id, True)
+    ]
+
+
+def test_supervisor_ranks_memory_lessons_by_task_text_and_configured_limit(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    seed_task = store.create_task("seed", repo_path=tmp_path)
+    relevant_lessons = [
+        store.record_memory_lesson(
+            source_task_id=seed_task.task_id,
+            lesson=f"Flaky verifier recovery lesson {index}: write marker before retry",
+            outcome_status="blocked",
+        )
+        for index in range(4)
+    ]
+    for index in range(5):
+        store.record_memory_lesson(
+            source_task_id=seed_task.task_id,
+            lesson=f"Documentation-only release note lesson {index}",
+            outcome_status="blocked",
+        )
+    agent = PromptRecordingAgent()
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=SequencedVerifier(["passed"]),
+        state_store=store,
+        max_iterations=1,
+        memory_lesson_limit=4,
+    )
+
+    result = supervisor.run_once("fix flaky verifier recovery retry", repo=tmp_path)
+
+    influences = store.list_memory_influence(result.task_id)
+    injected_ids = {item.lesson_id for item in influences}
+    assert result.status == "done"
+    assert injected_ids == {lesson.lesson_id for lesson in relevant_lessons}
+    assert "Flaky verifier recovery lesson" in agent.prompts[0]
+    assert "Documentation-only release note lesson" not in agent.prompts[0]
+    assert all(
+        influence.reason
+        == "ranked active lesson selected for supervisor planning context"
+        for influence in influences
+    )
+
+
 def test_supervisor_logs_metadata_without_task_or_output(caplog) -> None:
     secret = "secret-task-token"
     supervisor = Supervisor(
@@ -375,6 +498,44 @@ def test_supervisor_continues_after_failed_verification() -> None:
     assert "Previous verification failed" in agent.continue_prompts[0]
 
 
+def test_supervisor_records_replan_decision_after_failed_verification(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    agent = RetryingAgent()
+    verifier = SequencedVerifier(["failed", "passed"])
+    supervisor = Supervisor(
+        agent=agent,
+        verifier=verifier,
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        state_store=store,
+        max_iterations=2,
+    )
+
+    result = supervisor.run_once(task="demo", repo=tmp_path)
+
+    assert result.status == "done"
+    assert result.task_id is not None
+    decisions = store.list_replan_decisions(result.task_id)
+    assert len(decisions) == 1
+    assert decisions[0].source == "verification"
+    assert decisions[0].status == "continue"
+    assert decisions[0].reason == "Verification failed: unit: failed exit=1"
+    assert decisions[0].failed_checks == [
+        {
+            "name": "unit",
+            "status": "failed",
+            "exit_code": 1,
+            "error": None,
+            "output_excerpt": "assertion failed",
+        }
+    ]
+    assert decisions[0].follow_up_prompt is not None
+    assert "Previous verification failed" in decisions[0].follow_up_prompt
+
+
 def test_supervisor_persists_iterations_and_verification_runs(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     verifier = SequencedVerifier(["passed"])
@@ -399,6 +560,7 @@ def test_supervisor_persists_iterations_and_verification_runs(tmp_path: Path) ->
     task = store.get_task(result.task_id)
     iterations = store.list_iterations(result.task_id)
     verification_runs = store.list_verification_runs(result.task_id)
+    action_records = store.list_action_records(result.task_id)
 
     assert task is not None
     assert task.status == "done"
@@ -409,6 +571,31 @@ def test_supervisor_persists_iterations_and_verification_runs(tmp_path: Path) ->
     assert iterations[0].exit_reason == "success"
     assert iterations[0].uncertainty == "low"
     assert [item.status for item in verification_runs] == ["passed"]
+    assert len(action_records) == 1
+    assert action_records[0].iteration_id == iterations[0].iteration_id
+    assert action_records[0].action_type == "verification_command"
+    assert action_records[0].status == "succeeded"
+    assert action_records[0].command_string == "ignored"
+    assert action_records[0].policy_action == "allow"
+    assert action_records[0].payload["tool_name"] == "verification.run"
+    assert action_records[0].payload["risk_tier"] == "read"
+    assert action_records[0].payload["arguments"] == {
+        "name": "unit",
+        "verification_id": verification_runs[0].verification_id,
+        "timeout_sec": 300,
+        "command": "ignored",
+    }
+    assert action_records[0].result["tool_name"] == "verification.run"
+    assert action_records[0].result["status"] == "succeeded"
+    assert action_records[0].result["output"] == {
+        "verification_id": verification_runs[0].verification_id,
+        "status": "passed",
+        "exit_code": 0,
+        "error": None,
+    }
+    assert action_records[0].idempotency_key.startswith(
+        f"task:{result.task_id}:iteration:{iterations[0].iteration_id}:verification:"
+    )
 
 
 def test_supervisor_persists_verification_approval_request(tmp_path: Path) -> None:

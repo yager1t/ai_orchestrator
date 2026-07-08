@@ -2,6 +2,128 @@
 
 ## Unreleased
 
+- Added durable SQLite `task_events` with append/list state-store APIs and
+  exposed the task timeline in Markdown reports and JSON trace exports.
+
+- Added durable SQLite `action_records` with idempotency keys, completion
+  updates, report/export visibility, and supervisor audit records for
+  verification commands.
+
+- Added action-record leases and heartbeats with TTL-based expiry, reacquire,
+  release, stale-lease listing, and report/export visibility.
+
+- Added dry-run-by-default `ai-orch recover` to find interrupted `running`
+  tasks and expired action leases, with `--apply --reason` recovery that blocks
+  tasks, fails expired actions, clears leases, and writes recovery events.
+
+- Added a replayable task timeline read model, exposed through
+  `StateStore.list_task_timeline()`, `ai-orch timeline`, Markdown reports, and
+  JSON trace exports.
+
+- Added durable PlanGraph storage with graph, node, dependency, status, and
+  attempt APIs as the first Stage 2 foundation slice.
+
+- Added `ai-orch autopilot plan` CLI commands for listing, creating, showing,
+  updating, and extending durable PlanGraphs with JSON output.
+
+- Added durable links from autopilot queue items to PlanGraph roots, including
+  `ai-orch autopilot queue link-plan-graph` dry-run/apply flows and JSON output.
+
+- Added durable replan decisions for failed verification retries, with supervisor
+  persistence plus timeline, Markdown report, and JSON trace export visibility.
+
+- Linked autopilot queue execution to PlanGraph root node lifecycle: execution
+  start marks the node `in_progress` and increments attempts, completion marks
+  it `done` or `blocked`, and unlinked replan decisions are attached to the
+  graph/node references.
+
+- Added idempotent PlanGraph follow-up node creation from linked replan
+  decisions, producing pending `replan-{id}` nodes that depend on the failed
+  root node.
+
+- Added ready PlanGraph node selection with dependency gating and
+  `ai-orch autopilot plan ready` text/JSON output.
+
+- Added dry-run-by-default `ai-orch autopilot plan run-next` to claim a ready
+  PlanGraph node, run it through the supervisor, update node status and
+  attempts, write reports, and materialize replan follow-up nodes.
+
+- Added dry-run-by-default `ai-orch autopilot plan run-batch` to process
+  multiple ready PlanGraph nodes serially, recompute dependency readiness after
+  each success, and stop on the first blocked node.
+
+- Added the first typed tool broker foundation with `ToolSpec`, `ToolCall`,
+  `ToolResult`, explicit risk tiers, stable idempotency keys, and
+  JSON-serializable action payload helpers.
+
+- Added `ToolBroker` to route typed tool calls through `PolicyEngine`, persist
+  policy decisions and tool results in `action_records`, and require approval
+  for non-read risk tiers.
+
+- Routed supervisor verification action audit through `ToolBroker` while
+  preserving durable `verification_command` records and idempotency keys.
+
+- Added durable approval request creation for brokered `needs_approval` tool
+  calls, including `approval_id`/`action_id` correlation in action results while
+  keeping policy denies as hard stops.
+
+- Added approved retry execution for brokered command/argv tool calls through
+  `ai-orch approvals retry`, with separate durable retry action records and
+  deny-rule rechecks before execution.
+
+- Added a typed `ToolExecutorRegistry` with exact and namespace-prefix lookup,
+  plus a reusable process command/argv executor used by brokered approval
+  retries.
+
+- Added concrete `fs.read` and `fs.write` executors with repository-root path
+  containment and registered the `fs.` namespace for approved broker retries.
+
+- Added a brokered `memory.` executor namespace backed by `CodebaseMemoryClient`,
+  including exact-command approval reuse for approved Codebase Memory retries.
+
+- Added typed `ToolCall` factory helpers for `fs.*`, `process.*`, `memory.*`,
+  and verification audit calls, and moved supervisor verification audit to the
+  verification factory.
+
+- Replaced remaining production broker retry `ToolCall` restoration with a
+  typed factory path while preserving durable fs/process/memory action-record
+  and timeline visibility.
+
+- Added durable memory lessons, blocked-run and failed-verification reflection
+  records, stale-memory filtering, memory influence logs, non-authoritative
+  lesson injection into supervisor planning context, report/export/timeline
+  visibility, and read-only `ai-orch memory lessons`, `ai-orch memory
+  influence`, `ai-orch tui memory-lessons`, and `ai-orch tui memory-influence`
+  inspection commands.
+
+- Ranked supervisor memory lesson selection by active task text relevance and
+  added configurable `memory.max_lessons` without introducing new production
+  dependencies.
+
+- Added stable run ids to Markdown reports, replay timelines, and JSON trace
+  exports, extended traces with unsafe action accounting, and added a local
+  golden/chaos/security evaluation suite exposed through `ai-orch eval golden`
+  with text and JSON summaries.
+
+- Made local evaluation suites executable through the supervisor and split them
+  into `ai-orch eval golden`, `eval chaos`, `eval redteam`, and `eval all`
+  commands with text and JSON summaries.
+
+- Added dry-run-by-default `ai-orch autopilot loop` for guarded unattended queue
+  execution with `--execute`, `--max-items`, `--stop-on-risk`, runtime/attempt/
+  action budget ledgers, durable dead-letter records for blocked loop items,
+  and batch summary/report reuse without adding auto-push, auto-merge, deploy,
+  or destructive cleanup behavior.
+
+- Persisted autopilot loop budget ledgers in SQLite with selected/processed
+  item counts, runtime/action/attempt budgets, dead-letter counts, stop reason,
+  result code, selected item ids, and `ai-orch autopilot loop-history`
+  inspection.
+
+- Moved internal review notes, local operator logs, completed autopilot plans,
+  and exploratory research reports out of the public docs tree into the ignored
+  local `.private/docs/` archive, and added `docs/PUBLICATION_POLICY.md`.
+
 - Added `.github/CODEOWNERS` and a local `.pre-commit-config.yaml` with
   `ruff check` and `ruff format` hooks for review and formatting hygiene.
 
@@ -261,7 +383,7 @@
   review.
 - Added `ai-orch autopilot queue sync-backlog` to load open P0/P1/P2 backlog
   bullets directly into the persisted queue without manually copying them into
-  `docs/NEXT_AUTOPILOT_PLAN.md`.
+  a one-off autopilot plan file.
 - Enabled guarded `ai-orch autopilot queue run-batch --execute
   --rotate-worktrees BASE_DIR` execution, selecting one clean pre-created
   worktree per queue item and stopping on approvals/blockers/failures.
@@ -273,7 +395,7 @@
   runs.
 - Show generated task report paths in `ai-orch autopilot queue list/status` for
   queue items with completed reports.
-- Recorded the first guarded real-agent `ai-orch autopilot queue run-batch --execute --max-items 1` smoke result in `docs/AUTOPILOT_BATCH_RUN_LOG.md`.
+- Recorded the first guarded real-agent `ai-orch autopilot queue run-batch --execute --max-items 1` smoke result.
 - Added `ai-orch autopilot queue run-batch` as a guarded serial loop that
   dry-runs by default, executes up to a configurable `--max-items` count, stops
   on approvals/blockers/failures, and writes a Markdown report for each executed
@@ -363,7 +485,7 @@
 - Replaced the legacy mojibake architecture notes with a current component overview.
 - Changed internal ProcessRunner callers to use `RunOptions`.
 - Added Python 3.12/3.13 CI matrix coverage.
-- Added normalized round 2 review notes under `docs/review/`.
+- Added normalized round 2 review notes.
 - Added Ruff linting to the development dependencies and CI.
 - Added `RunOptions` for ProcessRunner runtime controls.
 - Added pip dependency caching to GitHub Actions CI.

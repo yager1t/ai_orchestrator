@@ -223,6 +223,7 @@ memory:
     - "cli"
   project: "demo"
   timeout_sec: 45
+  max_lessons: 7
 """.lstrip(),
         encoding="utf-8",
     )
@@ -233,3 +234,4 @@ memory:
     assert config.memory.command == ["codebase-memory-mcp", "cli"]
     assert config.memory.project == "demo"
     assert config.memory.timeout_sec == 45
+    assert config.memory.max_lessons == 7

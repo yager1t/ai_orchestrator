@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ai_orchestrator import __version__
 from ai_orchestrator.agents.base import AgentAdapter
@@ -35,20 +35,48 @@ from ai_orchestrator.autopilot.worktree_overview import (
 )
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
 from ai_orchestrator.core.supervisor import Supervisor, SupervisorResult
+from ai_orchestrator.evaluation import (
+    run_all_suites,
+    run_chaos_suite,
+    run_golden_suite,
+    run_redteam_suite,
+)
 from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
 from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.reporting.markdown import render_task_report
 from ai_orchestrator.storage.db import (
     StateStore,
+    StoredActionRecord,
     StoredApprovalRequest,
+    StoredAutopilotLoopRun,
     StoredMetricsSummary,
+    StoredPlanGraph,
+    StoredPlanGraphDependency,
+    StoredPlanGraphNode,
     StoredPlanItem,
+    StoredTask,
+    StoredTimelineEntry,
+)
+from ai_orchestrator.tools import (
+    TOOL_RISK_TIERS,
+    ToolBroker,
+    ToolCall,
+    ToolExecutorRegistry,
+    ToolResult,
+    ToolRiskTier,
+    approved_memory_commands_for_call,
+    file_tool_executor,
+    make_tool_call,
+    memory_tool_executor,
+    process_tool_executor,
 )
 from ai_orchestrator.tui.app import (
     render_approvals_view,
     render_current_view,
     render_logs_view,
+    render_memory_influence_view,
+    render_memory_lessons_view,
     render_status_view,
     render_tasks_view,
 )
@@ -57,6 +85,8 @@ from ai_orchestrator.verification.runner import VerificationCommand, Verificatio
 
 
 _QUEUE_STATUSES = ("created", "in_progress", "done", "blocked", "skipped")
+_PLAN_GRAPH_STATUSES = ("active", "done", "blocked", "archived")
+_PLAN_GRAPH_NODE_STATUSES = ("pending", "in_progress", "done", "blocked", "skipped")
 _TERMINAL_QUEUE_STATUSES = {"done", "skipped"}
 _STATE_STORE_CACHE: dict[Path, StateStore] = {}
 
@@ -122,9 +152,30 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("task_id")
     resume.add_argument("--repo", default=".")
 
+    recover = sub.add_parser(
+        "recover",
+        help="Recover interrupted runs and expired action leases",
+    )
+    recover.add_argument("--repo", default=".")
+    recover.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply recovery changes; without this flag the command is a dry run",
+    )
+    recover.add_argument(
+        "--reason",
+        help="Required with --apply; persisted in recovery events and action results",
+    )
+    recover.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
     report = sub.add_parser("report", help="Write a markdown task report")
     report.add_argument("task_id")
     report.add_argument("--repo", default=".")
+
+    timeline = sub.add_parser("timeline", help="Show a replayable task timeline")
+    timeline.add_argument("task_id")
+    timeline.add_argument("--repo", default=".")
+    timeline.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     export = sub.add_parser("export", help="Export a task trace as local JSON")
     export.add_argument("task_id")
@@ -172,6 +223,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     metrics = sub.add_parser("metrics", help="Show local execution metrics")
     metrics.add_argument("--repo", default=".")
+
+    eval_parser = sub.add_parser("eval", help="Run local evaluation suites")
+    eval_sub = eval_parser.add_subparsers(dest="eval_command")
+    eval_golden = eval_sub.add_parser("golden", help="Run the local golden task suite")
+    eval_golden.add_argument("--repo", default=".")
+    eval_golden.add_argument("--json", action="store_true")
+    eval_chaos = eval_sub.add_parser("chaos", help="Run local chaos evaluation scenarios")
+    eval_chaos.add_argument("--repo", default=".")
+    eval_chaos.add_argument("--json", action="store_true")
+    eval_redteam = eval_sub.add_parser(
+        "redteam",
+        help="Run local security red-team evaluation scenarios",
+    )
+    eval_redteam.add_argument("--repo", default=".")
+    eval_redteam.add_argument("--json", action="store_true")
+    eval_all = eval_sub.add_parser("all", help="Run all local evaluation suites")
+    eval_all.add_argument("--repo", default=".")
+    eval_all.add_argument("--json", action="store_true")
 
     approvals = sub.add_parser("approvals", help="Manage persisted approval requests")
     approvals_sub = approvals.add_subparsers(dest="approvals_command")
@@ -236,6 +305,77 @@ def build_parser() -> argparse.ArgumentParser:
             "Relative paths are resolved from --repo."
         ),
     )
+    autopilot_loop = autopilot_sub.add_parser(
+        "loop",
+        help="Run a guarded unattended autopilot queue loop",
+    )
+    autopilot_loop.add_argument("--repo", default=".")
+    autopilot_loop.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_loop.add_argument(
+        "--max-items",
+        type=int,
+        default=1,
+        help="Maximum number of queue items to process (default: 1)",
+    )
+    autopilot_loop.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually process queued items; without this flag the loop is a dry run",
+    )
+    autopilot_loop.add_argument(
+        "--stop-on-risk",
+        action="store_true",
+        help="Stop before processing when preflight reports queue risk",
+    )
+    autopilot_loop.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow execution when the repository has uncommitted changes",
+    )
+    autopilot_loop.add_argument(
+        "--allow-mock-agent",
+        action="store_true",
+        help="Allow execution with the mock agent for smoke tests",
+    )
+    _add_max_runtime_sec_argument(autopilot_loop)
+    autopilot_loop.add_argument(
+        "--max-attempts",
+        type=int,
+        default=1,
+        help="Maximum attempts before a blocked item is recorded as dead-letter",
+    )
+    autopilot_loop.add_argument(
+        "--max-actions",
+        type=int,
+        default=100,
+        help="Maximum queue item actions allowed in this loop run (default: 100)",
+    )
+    autopilot_loop.add_argument(
+        "--summary-json",
+        dest="summary_json",
+        metavar="PATH",
+        help="Write the underlying batch summary as a machine-readable JSON artifact",
+    )
+    autopilot_loop.add_argument(
+        "--batch-report",
+        dest="batch_report",
+        metavar="PATH",
+        help="Write the underlying batch summary as an operator-facing Markdown artifact",
+    )
+
+    autopilot_loop_history = autopilot_sub.add_parser(
+        "loop-history",
+        help="Show persisted autopilot loop budget ledger runs",
+    )
+    autopilot_loop_history.add_argument("--repo", default=".")
+    autopilot_loop_history.add_argument("--plan", default="docs/POST_MVP_ROADMAP.md")
+    autopilot_loop_history.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum number of loop runs to show (default: 10)",
+    )
+    autopilot_loop_history.add_argument("--json", action="store_true")
 
     autopilot_worktree_overview = autopilot_sub.add_parser(
         "worktree-overview",
@@ -292,6 +432,208 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit the read-only worktree overview as machine-readable JSON",
+    )
+
+    autopilot_plan = autopilot_sub.add_parser(
+        "plan",
+        help="Manage durable PlanGraph state",
+    )
+    autopilot_plan_sub = autopilot_plan.add_subparsers(dest="autopilot_plan_command")
+    autopilot_plan_list = autopilot_plan_sub.add_parser(
+        "list",
+        help="List persisted plan graphs",
+    )
+    autopilot_plan_list.add_argument("--repo", default=".")
+    autopilot_plan_list.add_argument("--task-id")
+    autopilot_plan_list.add_argument("--status", choices=_PLAN_GRAPH_STATUSES)
+    autopilot_plan_list.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of text",
+    )
+    autopilot_plan_create = autopilot_plan_sub.add_parser(
+        "create",
+        help="Create a persisted plan graph",
+    )
+    autopilot_plan_create.add_argument("--repo", default=".")
+    autopilot_plan_create.add_argument("--title", required=True)
+    autopilot_plan_create.add_argument("--task-id")
+    autopilot_plan_create.add_argument(
+        "--status",
+        choices=_PLAN_GRAPH_STATUSES,
+        default="active",
+    )
+    autopilot_plan_create.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of text",
+    )
+    autopilot_plan_show = autopilot_plan_sub.add_parser(
+        "show",
+        help="Show a plan graph with nodes and dependencies",
+    )
+    autopilot_plan_show.add_argument("graph_id", type=int)
+    autopilot_plan_show.add_argument("--repo", default=".")
+    autopilot_plan_show.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of text",
+    )
+    autopilot_plan_ready = autopilot_plan_sub.add_parser(
+        "ready",
+        help="Show pending PlanGraph nodes whose dependencies are done",
+    )
+    autopilot_plan_ready.add_argument("graph_id", type=int)
+    autopilot_plan_ready.add_argument("--repo", default=".")
+    autopilot_plan_ready.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Show at most N ready nodes; 0 means all ready nodes (default: 0)",
+    )
+    autopilot_plan_ready.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of text",
+    )
+    autopilot_plan_run_next = autopilot_plan_sub.add_parser(
+        "run-next",
+        help="Claim and run the next ready PlanGraph node",
+    )
+    autopilot_plan_run_next.add_argument("graph_id", type=int)
+    autopilot_plan_run_next.add_argument("--repo", default=".")
+    autopilot_plan_run_next.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually run the selected ready node; without this flag the command is a dry run",
+    )
+    autopilot_plan_run_next.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow execution when the repository has uncommitted changes",
+    )
+    autopilot_plan_run_next.add_argument(
+        "--allow-mock-agent",
+        action="store_true",
+        help="Allow execution with the mock agent for smoke tests",
+    )
+    autopilot_plan_run_next.add_argument(
+        "--worktree",
+        help=(
+            "Run the PlanGraph node in an existing separate git worktree. "
+            "Relative paths are resolved from --repo."
+        ),
+    )
+    _add_max_runtime_sec_argument(autopilot_plan_run_next)
+    autopilot_plan_run_batch = autopilot_plan_sub.add_parser(
+        "run-batch",
+        help="Run multiple ready PlanGraph nodes serially",
+    )
+    autopilot_plan_run_batch.add_argument("graph_id", type=int)
+    autopilot_plan_run_batch.add_argument("--repo", default=".")
+    autopilot_plan_run_batch.add_argument(
+        "--max-items",
+        type=int,
+        default=1,
+        help="Maximum number of ready PlanGraph nodes to process (default: 1)",
+    )
+    autopilot_plan_run_batch.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually run ready nodes; without this flag the command is a dry run",
+    )
+    autopilot_plan_run_batch.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow execution when the repository has uncommitted changes",
+    )
+    autopilot_plan_run_batch.add_argument(
+        "--allow-mock-agent",
+        action="store_true",
+        help="Allow execution with the mock agent for smoke tests",
+    )
+    autopilot_plan_run_batch.add_argument(
+        "--worktree",
+        help=(
+            "Run the PlanGraph nodes in an existing separate git worktree. "
+            "Relative paths are resolved from --repo."
+        ),
+    )
+    _add_max_runtime_sec_argument(autopilot_plan_run_batch)
+    autopilot_plan_update = autopilot_plan_sub.add_parser(
+        "update",
+        help="Update a plan graph status",
+    )
+    autopilot_plan_update.add_argument("graph_id", type=int)
+    autopilot_plan_update.add_argument("--repo", default=".")
+    autopilot_plan_update.add_argument("--status", choices=_PLAN_GRAPH_STATUSES, required=True)
+    autopilot_plan_update.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of text",
+    )
+    autopilot_plan_add_node = autopilot_plan_sub.add_parser(
+        "add-node",
+        help="Add a node to a plan graph",
+    )
+    autopilot_plan_add_node.add_argument("graph_id", type=int)
+    autopilot_plan_add_node.add_argument("--repo", default=".")
+    autopilot_plan_add_node.add_argument("--key", required=True)
+    autopilot_plan_add_node.add_argument("--title", required=True)
+    autopilot_plan_add_node.add_argument(
+        "--status",
+        choices=_PLAN_GRAPH_NODE_STATUSES,
+        default="pending",
+    )
+    autopilot_plan_add_node.add_argument("--attempts", type=int, default=0)
+    autopilot_plan_add_node.add_argument(
+        "--depends-on",
+        dest="depends_on_node_ids",
+        action="append",
+        type=int,
+        help="Node id this node depends on; repeat for multiple dependencies",
+    )
+    autopilot_plan_add_node.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of text",
+    )
+    autopilot_plan_update_node = autopilot_plan_sub.add_parser(
+        "update-node",
+        help="Update a plan graph node status and attempt count",
+    )
+    autopilot_plan_update_node.add_argument("node_id", type=int)
+    autopilot_plan_update_node.add_argument("--repo", default=".")
+    autopilot_plan_update_node.add_argument(
+        "--status",
+        choices=_PLAN_GRAPH_NODE_STATUSES,
+        required=True,
+    )
+    attempts_group = autopilot_plan_update_node.add_mutually_exclusive_group()
+    attempts_group.add_argument("--attempts", type=int)
+    attempts_group.add_argument("--increment-attempts", action="store_true")
+    autopilot_plan_update_node.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of text",
+    )
+    autopilot_plan_add_dependency = autopilot_plan_sub.add_parser(
+        "add-dependency",
+        help="Add a dependency edge between two plan graph nodes",
+    )
+    autopilot_plan_add_dependency.add_argument("graph_id", type=int)
+    autopilot_plan_add_dependency.add_argument("--repo", default=".")
+    autopilot_plan_add_dependency.add_argument("--node-id", type=int, required=True)
+    autopilot_plan_add_dependency.add_argument(
+        "--depends-on-node-id",
+        type=int,
+        required=True,
+    )
+    autopilot_plan_add_dependency.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of text",
     )
 
     autopilot_queue = autopilot_sub.add_parser(
@@ -641,6 +983,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print selected queue item details as machine-readable JSON",
     )
 
+    autopilot_queue_link_plan_graph = autopilot_queue_sub.add_parser(
+        "link-plan-graph",
+        help="Link a queue item to a durable PlanGraph root",
+    )
+    autopilot_queue_link_plan_graph.add_argument(
+        "plan_item_id",
+        type=int,
+        help="Persisted queue item id to link",
+    )
+    autopilot_queue_link_plan_graph.add_argument("--repo", default=".")
+    autopilot_queue_link_plan_graph.add_argument(
+        "--plan",
+        help=(
+            "Optional plan path for compatibility with queue history commands. "
+            "When given, the item is linked only if it belongs to this plan."
+        ),
+    )
+    autopilot_queue_link_plan_graph.add_argument(
+        "--graph-id",
+        type=int,
+        required=True,
+        help="PlanGraph id to attach to the queue item",
+    )
+    autopilot_queue_link_plan_graph.add_argument(
+        "--root-node-id",
+        type=int,
+        help="Optional PlanGraph node id representing the queue item's root step",
+    )
+    autopilot_queue_link_plan_graph.add_argument(
+        "--apply",
+        action="store_true",
+        help="Persist the link; without this flag the command is a dry run",
+    )
+    autopilot_queue_link_plan_graph.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the link dry-run or apply result as machine-readable JSON",
+    )
+
     autopilot_queue_requeue = autopilot_queue_sub.add_parser(
         "requeue",
         help="Move a blocked queue item back to created after operator review",
@@ -739,6 +1120,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Approve one exact Codebase Memory command string",
     )
+    memory_lessons = memory_sub.add_parser("lessons", help="List stored memory lessons")
+    memory_lessons.add_argument("--repo", default=".")
+    memory_lessons.add_argument("--include-stale", action="store_true")
+    memory_lessons.add_argument("--limit", type=int, default=20)
+    memory_influence = memory_sub.add_parser("influence", help="List memory influence logs")
+    memory_influence.add_argument("--repo", default=".")
+    memory_influence.add_argument("--task-id")
 
     tui = sub.add_parser("tui", help="Read-only text UI helpers")
     tui_sub = tui.add_subparsers(dest="tui_command")
@@ -750,6 +1138,12 @@ def build_parser() -> argparse.ArgumentParser:
     tui_logs = tui_sub.add_parser("logs", help="Render task iteration logs")
     tui_logs.add_argument("task_id")
     tui_logs.add_argument("--repo", default=".")
+    tui_memory_lessons = tui_sub.add_parser("memory-lessons", help="Render stored memory lessons")
+    tui_memory_lessons.add_argument("--repo", default=".")
+    tui_memory_lessons.add_argument("--include-stale", action="store_true")
+    tui_memory_influence = tui_sub.add_parser("memory-influence", help="Render memory influence logs")
+    tui_memory_influence.add_argument("--repo", default=".")
+    tui_memory_influence.add_argument("--task-id")
     tui_tasks = tui_sub.add_parser("tasks", help="Render a read-only task list")
     tui_tasks.add_argument("--repo", default=".")
     tui_status = tui_sub.add_parser("status", help="Render a read-only task status view")
@@ -799,6 +1193,24 @@ def main(argv: list[str] | None = None) -> int:
         store = _state_store_for_repo(Path(args.repo))
         print(_format_metrics_summary(store.metrics_summary()), end="")
         return 0
+
+    if args.command == "eval":
+        eval_runners = {
+            "golden": run_golden_suite,
+            "chaos": run_chaos_suite,
+            "redteam": run_redteam_suite,
+            "all": run_all_suites,
+        }
+        eval_runner = eval_runners.get(args.eval_command)
+        if eval_runner is not None:
+            summary = eval_runner(Path(args.repo))
+            if args.json:
+                print(json.dumps(asdict(summary), indent=2, sort_keys=True))
+            else:
+                print(_format_evaluation_summary(summary), end="")
+            return 0 if summary.unsafe_action_count == 0 and summary.passed == summary.total else 1
+        parser.print_help()
+        return 1
 
     if args.command == "verify":
         repo = Path(args.repo)
@@ -888,6 +1300,20 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print(view, end="")
             return 0
+        if args.tui_command == "memory-lessons":
+            store = _state_store_for_repo(Path(args.repo))
+            print(
+                render_memory_lessons_view(
+                    store,
+                    include_stale=args.include_stale,
+                ),
+                end="",
+            )
+            return 0
+        if args.tui_command == "memory-influence":
+            store = _state_store_for_repo(Path(args.repo))
+            print(render_memory_influence_view(store, task_id=args.task_id), end="")
+            return 0
         if args.tui_command == "tasks":
             store = _state_store_for_repo(Path(args.repo))
             print(render_tasks_view(store), end="")
@@ -925,6 +1351,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{task_prefix}{supervisor_result.summary}")
         return 0 if supervisor_result.status == "done" else 1
 
+    if args.command == "recover":
+        repo = Path(args.repo)
+        store = _state_store_for_repo(repo)
+        return _run_recover(args, store)
+
     if args.command == "report":
         repo = Path(args.repo)
         store = _state_store_for_repo(repo)
@@ -934,6 +1365,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"Report: {report_path}")
         return 0
+
+    if args.command == "timeline":
+        store = _state_store_for_repo(Path(args.repo))
+        return _run_timeline(args, store)
 
     if args.command == "export":
         repo = Path(args.repo)
@@ -1023,10 +1458,11 @@ def _export_task_trace(
 ) -> Path | None:
     """Export the stored task trace for *task_id* to local JSON.
 
-    Includes the task summary, iteration details, verification results,
-    approval requests, and top-level metadata (schema version, exported
-    timestamp, task id, redaction mode) without changing supervisor execution
-    semantics or stored task state.
+    Includes the task summary, replay timeline, task events, action records,
+    replan decisions, iteration details, verification results, approval requests,
+    and top-level metadata (schema version, exported timestamp, task id,
+    redaction mode) without changing supervisor execution semantics or stored
+    task state.
 
     When *redact* is ``True``, bulky fields such as raw agent output and
     verification stdout/stderr are omitted from the exported JSON. The stored
@@ -1038,9 +1474,14 @@ def _export_task_trace(
     if task is None:
         return None
 
+    run_id = store.run_id_for_task(task.task_id)
     iterations = [asdict(iteration) for iteration in store.list_iteration_details(task_id)]
     verification_runs = [
         asdict(run) for run in store.list_verification_details(task_id)
+    ]
+    action_records = [
+        _trace_record_with_run_id(asdict(action), run_id)
+        for action in store.list_action_records(task_id=task_id)
     ]
 
     if redact:
@@ -1055,12 +1496,45 @@ def _export_task_trace(
             "schema_version": TRACE_SCHEMA_VERSION,
             "exported_at": datetime.now(UTC).isoformat(),
             "task_id": task.task_id,
+            "run_id": run_id,
             "redaction_mode": "redacted" if redact else "none",
+            "unsafe_action_count": _unsafe_action_count(action_records),
         },
-        "task": asdict(task),
-        "iterations": iterations,
-        "verification_runs": verification_runs,
-        "approvals": [asdict(approval) for approval in store.list_approval_requests(task_id=task_id)],
+        "task": _trace_record_with_run_id(asdict(task), run_id),
+        "timeline": [
+            _trace_record_with_run_id(asdict(entry), run_id)
+            for entry in store.list_task_timeline(task_id=task_id)
+        ],
+        "task_events": [
+            _trace_record_with_run_id(asdict(event), run_id)
+            for event in store.list_task_events(task_id=task_id)
+        ],
+        "action_records": action_records,
+        "replan_decisions": [
+            _trace_record_with_run_id(asdict(decision), run_id)
+            for decision in store.list_replan_decisions(task_id=task_id)
+        ],
+        "memory_lessons": [
+            _trace_record_with_run_id(asdict(lesson), run_id)
+            for lesson in store.list_memory_lessons(include_stale=True)
+            if lesson.source_task_id == task_id
+        ],
+        "reflection_records": [
+            _trace_record_with_run_id(asdict(reflection), run_id)
+            for reflection in store.list_reflection_records(task_id=task_id)
+        ],
+        "memory_influence": [
+            _trace_record_with_run_id(asdict(influence), run_id)
+            for influence in store.list_memory_influence(task_id=task_id)
+        ],
+        "iterations": [_trace_record_with_run_id(iteration, run_id) for iteration in iterations],
+        "verification_runs": [
+            _trace_record_with_run_id(run, run_id) for run in verification_runs
+        ],
+        "approvals": [
+            _trace_record_with_run_id(asdict(approval), run_id)
+            for approval in store.list_approval_requests(task_id=task_id)
+        ],
     }
 
     destination = output_path or repo / ".ai-orch" / "traces" / f"{task_id}.json"
@@ -1070,6 +1544,171 @@ def _export_task_trace(
         encoding="utf-8",
     )
     return destination
+
+
+def _trace_record_with_run_id(record: dict[str, object], run_id: str) -> dict[str, object]:
+    return {**record, "run_id": run_id}
+
+
+def _unsafe_action_count(action_records: list[dict[str, object]]) -> int:
+    count = 0
+    for action in action_records:
+        payload = action.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        risk_tier = payload.get("risk_tier")
+        policy_action = action.get("policy_action")
+        status = action.get("status")
+        if risk_tier in {"network", "destructive"} and policy_action != "deny":
+            if status not in {"policy_denied", "needs_approval"}:
+                count += 1
+    return count
+
+
+def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
+    running_tasks = [task for task in store.list_tasks() if task.status == "running"]
+    expired_actions = store.list_expired_action_leases()
+
+    if args.apply and not args.reason:
+        print("--reason is required when --apply is set")
+        return 1
+
+    blocked_tasks = 0
+    failed_actions = 0
+    if args.apply:
+        for task in running_tasks:
+            store.update_task_status(task.task_id, "blocked")
+            store.append_task_event(
+                task.task_id,
+                "task.recovered",
+                {
+                    "previous_status": "running",
+                    "status": "blocked",
+                    "reason": args.reason,
+                },
+            )
+            blocked_tasks += 1
+        for action in expired_actions:
+            completed = store.complete_action_record(
+                action.action_id,
+                "failed",
+                result={
+                    "recovered": True,
+                    "reason": args.reason,
+                    "previous_status": action.status,
+                    "lease_owner": action.lease_owner,
+                    "lease_expires_at": action.lease_expires_at,
+                },
+            )
+            if completed is not None:
+                failed_actions += 1
+
+    if args.json:
+        _print_recover_json(
+            running_tasks=running_tasks,
+            expired_actions=expired_actions,
+            apply=bool(args.apply),
+            reason=args.reason if args.apply else None,
+            blocked_tasks=blocked_tasks,
+            failed_actions=failed_actions,
+        )
+        return 0
+
+    print("Recovery")
+    print(f"  running_tasks: {len(running_tasks)}")
+    print(f"  expired_action_leases: {len(expired_actions)}")
+    if args.apply:
+        print(f"  blocked_tasks: {blocked_tasks}")
+        print(f"  failed_actions: {failed_actions}")
+        print(f"  reason: {args.reason}")
+    else:
+        print("  dry_run: use --apply --reason '...' to recover")
+    if not running_tasks and not expired_actions:
+        print("  No interrupted runs or expired action leases found.")
+        return 0
+
+    for task in running_tasks:
+        print(f"  [running_task] {task.task_id}: {task.task}")
+    for action in expired_actions:
+        owner = action.lease_owner or "none"
+        expires = action.lease_expires_at or "none"
+        print(
+            (
+                f"  [expired_action] {action.action_id}: "
+                f"{action.action_type} task={action.task_id} "
+                f"owner={owner} expires={expires}"
+            )
+        )
+    return 0
+
+
+def _print_recover_json(
+    *,
+    running_tasks: list[StoredTask],
+    expired_actions: list[StoredActionRecord],
+    apply: bool,
+    reason: str | None,
+    blocked_tasks: int,
+    failed_actions: int,
+) -> None:
+    payload = {
+        "apply": apply,
+        "dry_run": not apply,
+        "reason": reason,
+        "running_tasks": {
+            "count": len(running_tasks),
+            "items": [asdict(task) for task in running_tasks],
+        },
+        "expired_action_leases": {
+            "count": len(expired_actions),
+            "items": [asdict(action) for action in expired_actions],
+        },
+        "recovered": {
+            "blocked_tasks": blocked_tasks,
+            "failed_actions": failed_actions,
+        },
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+
+
+def _run_timeline(args: argparse.Namespace, store: StateStore) -> int:
+    task = store.get_task(args.task_id)
+    if task is None:
+        print(f"Task not found: {args.task_id}")
+        return 1
+
+    timeline = store.list_task_timeline(task.task_id)
+    if args.json:
+        _print_timeline_json(task=task, timeline=timeline)
+        return 0
+
+    print(f"Timeline: {task.task_id}")
+    print(f"  entries: {len(timeline)}")
+    if not timeline:
+        print("  No timeline entries recorded.")
+        return 0
+    for entry in timeline:
+        status = f" status={entry.status}" if entry.status else ""
+        print(
+            (
+                f"  [{entry.timeline_index}] {entry.occurred_at} "
+                f"{entry.source}:{entry.source_id} {entry.event_type}{status}"
+            )
+        )
+        print(f"    {entry.summary}")
+    return 0
+
+
+def _print_timeline_json(
+    *,
+    task: StoredTask,
+    timeline: list[StoredTimelineEntry],
+) -> None:
+    payload = {
+        "task": asdict(task),
+        "timeline": [asdict(entry) for entry in timeline],
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
 def _task_report_path(repo: Path, task_id: str | None) -> Path | None:
@@ -1090,9 +1729,15 @@ def _queue_item_refs(repo: Path, item: StoredPlanItem) -> str:
         f" worktree={item.selected_worktree_path}" if item.selected_worktree_path else ""
     )
     blocked_reason_ref = f" reason={item.blocked_reason}" if item.blocked_reason else ""
+    graph_ref = f" graph={item.plan_graph_id}" if item.plan_graph_id is not None else ""
+    root_ref = (
+        f" root_node={item.plan_graph_root_node_id}"
+        if item.plan_graph_root_node_id is not None
+        else ""
+    )
     report_path = _task_report_path(repo, item.task_id)
     report_ref = f" report={report_path}" if report_path else ""
-    return f"{task_ref}{worktree_ref}{blocked_reason_ref}{report_ref}"
+    return f"{task_ref}{worktree_ref}{blocked_reason_ref}{graph_ref}{root_ref}{report_ref}"
 
 
 _RUNTIME_BUDGET_EXHAUSTED_SUMMARY = "Runtime budget exhausted"
@@ -1102,6 +1747,38 @@ def _runtime_budget_exhausted_reason(result: SupervisorResult) -> str | None:
     if result.status == "blocked" and result.summary == _RUNTIME_BUDGET_EXHAUSTED_SUMMARY:
         return _RUNTIME_BUDGET_EXHAUSTED_SUMMARY
     return None
+
+
+def _mark_plan_graph_node_started(store: StateStore, item: StoredPlanItem) -> None:
+    if item.plan_graph_root_node_id is None:
+        return
+    store.update_plan_graph_node_status(
+        item.plan_graph_root_node_id,
+        "in_progress",
+        increment_attempts=True,
+    )
+
+
+def _finish_plan_graph_node_for_queue_result(
+    store: StateStore,
+    item: StoredPlanItem,
+    item_status: str,
+    task_id: str | None,
+) -> None:
+    if item.plan_graph_id is None or item.plan_graph_root_node_id is None:
+        return
+    node_status = "done" if item_status == "done" else "blocked"
+    store.update_plan_graph_node_status(
+        item.plan_graph_root_node_id,
+        node_status,
+    )
+    if task_id is not None:
+        store.link_replan_decisions_to_plan_graph(
+            task_id,
+            item.plan_graph_id,
+            plan_graph_node_id=item.plan_graph_root_node_id,
+        )
+        store.create_replan_follow_up_nodes(task_id, item.plan_graph_id)
 
 
 def _validate_max_runtime_sec(args: argparse.Namespace) -> bool:
@@ -1192,6 +1869,35 @@ def _format_metrics_summary(summary: StoredMetricsSummary) -> str:
     ) + "\n"
 
 
+def _format_evaluation_summary(summary: Any) -> str:
+    lines = [
+        f"{summary.suite.title()} evaluation",
+        f"  total: {summary.total}",
+        f"  executed: {summary.executed_count}",
+        f"  passed: {summary.passed}",
+        f"  pass_rate: {summary.pass_rate:.1%}",
+        (
+            "  recovery: "
+            f"passed={summary.recovery_passed} "
+            f"total={summary.recovery_total} "
+            f"rate={summary.recovery_rate:.1%}"
+        ),
+        f"  blocked_count: {summary.blocked_count}",
+        f"  unsafe_action_count: {summary.unsafe_action_count}",
+        f"  chaos_scenarios: {summary.chaos_count}",
+        f"  security_red_team_scenarios: {summary.security_red_team_count}",
+    ]
+    for result in summary.results:
+        status = "pass" if result.passed else "fail"
+        lines.append(
+            "  "
+            f"- {result.task_id}: {status} "
+            f"expected={result.expected_status} actual={result.actual_status} "
+            f"run_id={result.run_id or 'none'}"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _build_supervisor(state_store: StateStore, config: ProjectConfig) -> Supervisor:
     policy_engine = _policy_engine(config)
     return Supervisor(
@@ -1202,6 +1908,7 @@ def _build_supervisor(state_store: StateStore, config: ProjectConfig) -> Supervi
         max_iterations=config.max_iterations,
         max_no_change_iterations=config.max_no_change_iterations,
         max_runtime_sec=config.max_runtime_sec,
+        memory_lesson_limit=config.memory.max_lessons,
     )
 
 
@@ -1401,6 +2108,9 @@ def _retry_approval_request(
         print(f"Task not found for approval request: {approval.task_id}")
         return 1
 
+    if approval.source == "tool_broker":
+        return _retry_tool_broker_approval_request(store, approval, task)
+
     repo = Path(task.repo_path)
     config = load_project_config(repo)
     runner = _verification_runner(
@@ -1437,12 +2147,179 @@ def _retry_approval_request(
     return 0 if result.status == "passed" else 1
 
 
+def _retry_tool_broker_approval_request(
+    store: StateStore,
+    approval: StoredApprovalRequest,
+    task: StoredTask,
+) -> int:
+    action = _find_tool_broker_action_for_approval(store, approval)
+    if action is None:
+        print(f"Tool action not found for approval request: {approval.approval_id}")
+        return 1
+
+    call = _tool_call_from_action(action)
+    if call is None:
+        print(f"Tool action payload is invalid for approval request: {approval.approval_id}")
+        return 1
+
+    repo = Path(task.repo_path)
+    config = load_project_config(repo)
+    broker = ToolBroker(store, _policy_engine(config))
+    registry = _tool_executor_registry(repo, config=config, approved_call=call)
+    executor = registry.get(call.spec.name)
+    if executor is None:
+        print(f"No executor registered for tool: {call.spec.name}")
+        return 1
+
+    result = broker.run_approved(
+        call,
+        executor,
+        approval_id=approval.approval_id,
+    )
+    retry_status = _tool_retry_status(result)
+    exit_code = _tool_retry_exit_code(result)
+    updated_approval = store.record_approval_retry(
+        approval_id=approval.approval_id,
+        status=retry_status,
+        exit_code=exit_code,
+        error=result.error or _tool_retry_stderr(result),
+    )
+    print(f"retry: {retry_status} exit={exit_code}")
+    if updated_approval is not None:
+        print(
+            "retry history: "
+            f"count={updated_approval.retry_count} "
+            f"last_status={updated_approval.last_retry_status} "
+            f"last_exit={updated_approval.last_retry_exit_code}"
+        )
+    if result.error:
+        print(f"error: {result.error}")
+    stdout = _tool_retry_stdout(result)
+    stderr = _tool_retry_stderr(result)
+    if stdout:
+        print(stdout, end="" if stdout.endswith("\n") else "\n")
+    if stderr:
+        print(stderr, end="" if stderr.endswith("\n") else "\n")
+    return 0 if retry_status == "passed" else 1
+
+
+def _tool_executor_registry(
+    repo: Path,
+    *,
+    config: ProjectConfig | None = None,
+    approved_call: ToolCall | None = None,
+) -> ToolExecutorRegistry:
+    registry = (
+        ToolExecutorRegistry()
+        .register_prefix("process.", process_tool_executor(repo))
+        .register_prefix("fs.", file_tool_executor(repo))
+    )
+    if config is None:
+        return registry
+
+    approved_commands: set[str] = set()
+    command_client = _memory_client(config)
+    if approved_call is not None:
+        approved_commands.update(
+            approved_memory_commands_for_call(command_client, approved_call)
+        )
+    memory_client = _memory_client(config, approved_commands=approved_commands)
+    return (
+        registry.register_prefix("memory.", memory_tool_executor(memory_client, cwd=repo))
+    )
+
+
+def _find_tool_broker_action_for_approval(
+    store: StateStore,
+    approval: StoredApprovalRequest,
+) -> StoredActionRecord | None:
+    actions = store.list_action_records(
+        approval.task_id,
+        iteration_id=approval.iteration_id,
+    )
+    for action in actions:
+        if _approval_id_from_action_result(action) == approval.approval_id:
+            return action
+    return None
+
+
+def _approval_id_from_action_result(action: StoredActionRecord) -> int | None:
+    output = action.result.get("output")
+    if not isinstance(output, dict):
+        return None
+    approval_id = output.get("approval_id")
+    if isinstance(approval_id, int):
+        return approval_id
+    return None
+
+
+def _tool_call_from_action(action: StoredActionRecord) -> ToolCall | None:
+    tool_name = action.payload.get("tool_name")
+    risk_tier = action.payload.get("risk_tier")
+    arguments = action.payload.get("arguments")
+    if not isinstance(tool_name, str):
+        return None
+    if not isinstance(risk_tier, str) or risk_tier not in TOOL_RISK_TIERS:
+        return None
+    if not isinstance(arguments, dict):
+        return None
+    if not all(isinstance(key, str) for key in arguments):
+        return None
+
+    return make_tool_call(
+        tool_name=tool_name,
+        risk_tier=cast(ToolRiskTier, risk_tier),
+        action_type=action.action_type,
+        idempotency_key=action.idempotency_key,
+        arguments=cast(dict[str, object], arguments),
+        task_id=action.task_id,
+        iteration_id=action.iteration_id,
+    )
+
+
+def _tool_retry_status(result: ToolResult) -> str:
+    if result.status == "succeeded":
+        return "passed"
+    return result.status
+
+
+def _tool_retry_output(result: ToolResult) -> dict[str, object]:
+    output = result.output.get("tool_output")
+    if isinstance(output, dict):
+        return output
+    return {}
+
+
+def _tool_retry_exit_code(result: ToolResult) -> int | None:
+    exit_code = _tool_retry_output(result).get("exit_code")
+    if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+        return exit_code
+    return None
+
+
+def _tool_retry_stdout(result: ToolResult) -> str:
+    stdout = _tool_retry_output(result).get("stdout")
+    if isinstance(stdout, str):
+        return stdout
+    return ""
+
+
+def _tool_retry_stderr(result: ToolResult) -> str:
+    stderr = _tool_retry_output(result).get("stderr")
+    if isinstance(stderr, str):
+        return stderr
+    return ""
+
+
 def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.autopilot_command is None:
         parser.print_help()
         return 1
 
     repo = Path(args.repo)
+    if args.autopilot_command == "plan":
+        return _run_autopilot_plan_command(args, parser)
+
     if args.autopilot_command == "queue":
         return _run_autopilot_queue_command(args, parser)
 
@@ -1450,11 +2327,18 @@ def _run_autopilot_command(args: argparse.Namespace, parser: argparse.ArgumentPa
         return _run_autopilot_worktree_overview(args)
 
     plan_path = _resolve_plan_path(repo, Path(args.plan))
+    if args.autopilot_command == "loop-history":
+        store = _state_store_for_repo(repo)
+        return _run_autopilot_loop_history(args, plan_path, store)
+
     if not plan_path.exists():
         print(f"Plan not found: {plan_path}")
         return 1
 
     store = _state_store_for_repo(repo)
+
+    if args.autopilot_command == "loop":
+        return _run_autopilot_loop(args, repo, plan_path, store)
 
     tasks = load_plan_tasks(plan_path)
     selected = next_task(tasks, store)
@@ -1582,6 +2466,54 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_autopilot_loop_history(
+    args: argparse.Namespace,
+    plan_path: Path,
+    store: StateStore,
+) -> int:
+    if args.limit < 0:
+        print("--limit cannot be negative")
+        return 1
+    limit = args.limit if args.limit > 0 else None
+    runs = store.list_autopilot_loop_runs(plan_path=plan_path, limit=limit)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "plan": str(plan_path),
+                    "count": len(runs),
+                    "runs": [asdict(run) for run in runs],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    print(_format_autopilot_loop_history(plan_path, runs), end="")
+    return 0
+
+
+def _format_autopilot_loop_history(
+    plan_path: Path,
+    runs: list[StoredAutopilotLoopRun],
+) -> str:
+    lines = [
+        "=== Autopilot loop history ===",
+        f"plan: {plan_path}",
+        f"count: {len(runs)}",
+    ]
+    if not runs:
+        lines.append("No loop runs recorded.")
+        return "\n".join(lines) + "\n"
+    for run in runs:
+        lines.append(
+            f"#{run.loop_run_id} mode={run.mode} result={run.result_code} "
+            f"selected={run.selected_count} processed={run.processed_count} "
+            f"dead_letters={run.dead_letter_count} stop={run.stop_reason}"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _run_autopilot_task(
     task: AutopilotTask,
     repo: Path,
@@ -1645,6 +2577,7 @@ def _run_autopilot_task(
         max_runtime_sec=runtime_budget,
         require_repo_change=True,
         progress_callback=_print_progress,
+        memory_lesson_limit=config.memory.max_lessons,
     )
     result = supervisor.run_once(task=task.to_prompt(), repo=execution_repo)
     task_prefix = f"{result.task_id}: " if result.task_id else ""
@@ -2127,6 +3060,8 @@ def _queue_item_readiness_ref(repo: Path, item: StoredPlanItem) -> dict[str, obj
         "task_id": item.task_id,
         "selected_worktree_path": item.selected_worktree_path,
         "blocked_reason": item.blocked_reason,
+        "plan_graph_id": item.plan_graph_id,
+        "plan_graph_root_node_id": item.plan_graph_root_node_id,
         "report_path": str(report_path) if report_path else None,
     }
 
@@ -2459,6 +3394,8 @@ def _run_autopilot_queue_show(
             "report_path": str(report_path) if report_path else None,
             "selected_worktree": item.selected_worktree_path,
             "reason": item.blocked_reason,
+            "plan_graph_id": item.plan_graph_id,
+            "plan_graph_root_node_id": item.plan_graph_root_node_id,
         }
         print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
         return 0
@@ -2471,6 +3408,111 @@ def _run_autopilot_queue_show(
     print(f"  report_path: {report_path or 'none'}")
     print(f"  selected_worktree: {item.selected_worktree_path or 'none'}")
     print(f"  reason: {item.blocked_reason or 'none'}")
+    print(f"  plan_graph_id: {item.plan_graph_id or 'none'}")
+    print(f"  plan_graph_root_node_id: {item.plan_graph_root_node_id or 'none'}")
+    return 0
+
+
+def _run_autopilot_queue_link_plan_graph(
+    args: argparse.Namespace,
+    repo: Path,
+    store: StateStore,
+) -> int:
+    """Link a queue item to a durable PlanGraph root.
+
+    The command is dry-run by default so an operator can verify the queue item,
+    graph, and root node references before mutating persisted state.
+    """
+    item = store.get_plan_item(args.plan_item_id)
+    if item is None:
+        print(f"Queue item not found: {args.plan_item_id}")
+        return 1
+
+    validation_error = _validate_queue_item_plan(
+        repo, args.plan_item_id, getattr(args, "plan", None), item.plan_path
+    )
+    if validation_error is not None:
+        return validation_error
+
+    graph = store.get_plan_graph(args.graph_id)
+    if graph is None:
+        print(f"PlanGraph not found: {args.graph_id}")
+        return 1
+
+    root_node = None
+    if args.root_node_id is not None:
+        root_node = store.get_plan_graph_node(args.root_node_id)
+        if root_node is None or root_node.graph_id != graph.graph_id:
+            print(
+                "PlanGraph root node not found in graph "
+                f"{graph.graph_id}: {args.root_node_id}"
+            )
+            return 1
+
+    plan_scope = {
+        "requested_plan": (
+            str(_resolve_plan_path(repo, Path(args.plan))) if args.plan else None
+        ),
+        "item_plan": item.plan_path,
+        "validated": bool(args.plan),
+    }
+    link = {
+        "graph_id": graph.graph_id,
+        "graph_title": graph.title,
+        "root_node_id": root_node.node_id if root_node else None,
+        "root_node_key": root_node.node_key if root_node else None,
+        "root_node_title": root_node.title if root_node else None,
+    }
+
+    if not args.apply:
+        if args.json:
+            payload = {
+                "plan_item": _queue_item_readiness_ref(repo, item),
+                "plan_scope": plan_scope,
+                "link": link,
+                "mode": "dry_run",
+                "applied": False,
+            }
+            print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+            return 0
+        print(f"Link queue item {item.plan_item_id} to PlanGraph {graph.graph_id}")
+        print(f"  source: {item.plan_path}:{item.line_number}")
+        print(f"  task: {item.text}")
+        print(f"  graph_title: {graph.title}")
+        print(f"  root_node_id: {link['root_node_id'] or 'none'}")
+        print("  dry_run: use --apply to persist this link")
+        return 0
+
+    try:
+        linked = store.link_plan_item_to_plan_graph(
+            item.plan_item_id,
+            graph.graph_id,
+            plan_graph_root_node_id=root_node.node_id if root_node else None,
+        )
+    except ValueError as exc:
+        print(f"PlanGraph link error: {exc}")
+        return 1
+    if linked is None:
+        print(f"Queue item not found: {item.plan_item_id}")
+        return 1
+
+    if args.json:
+        payload = {
+            "plan_item": _queue_item_readiness_ref(repo, linked),
+            "plan_scope": plan_scope,
+            "link": link,
+            "mode": "apply",
+            "applied": True,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return 0
+
+    print(f"Link queue item {item.plan_item_id} to PlanGraph {graph.graph_id}")
+    print(f"  source: {item.plan_path}:{item.line_number}")
+    print(f"  task: {item.text}")
+    print(f"  graph_title: {graph.title}")
+    print(f"  root_node_id: {link['root_node_id'] or 'none'}")
+    print("  status: linked")
     return 0
 
 
@@ -2653,6 +3695,397 @@ def _run_autopilot_queue_skip(
 
     print("  status: skipped")
     return 0
+
+
+def _plan_graph_payload(store: StateStore, graph: StoredPlanGraph) -> dict[str, object]:
+    nodes = store.list_plan_graph_nodes(graph.graph_id)
+    dependencies = store.list_plan_graph_dependencies(graph.graph_id)
+    return {
+        "graph": asdict(graph),
+        "nodes": [asdict(node) for node in nodes],
+        "dependencies": [asdict(dependency) for dependency in dependencies],
+    }
+
+
+def _plan_graph_list_payload(graphs: list[StoredPlanGraph]) -> dict[str, object]:
+    return {
+        "total": len(graphs),
+        "graphs": [asdict(graph) for graph in graphs],
+    }
+
+
+def _ready_plan_graph_nodes_payload(
+    graph: StoredPlanGraph,
+    nodes: list[StoredPlanGraphNode],
+) -> dict[str, object]:
+    return {
+        "graph": asdict(graph),
+        "ready_count": len(nodes),
+        "nodes": [asdict(node) for node in nodes],
+    }
+
+
+def _print_plan_graph_text(
+    store: StateStore,
+    graph: StoredPlanGraph,
+    *,
+    prefix: str = "PlanGraph",
+) -> None:
+    nodes = store.list_plan_graph_nodes(graph.graph_id)
+    dependencies = store.list_plan_graph_dependencies(graph.graph_id)
+    dependencies_by_node: dict[int, list[StoredPlanGraphDependency]] = {}
+    for dependency in dependencies:
+        dependencies_by_node.setdefault(dependency.node_id, []).append(dependency)
+
+    print(f"{prefix}: {graph.graph_id}")
+    print(f"  title: {graph.title}")
+    print(f"  status: {graph.status}")
+    print(f"  task_id: {graph.task_id or 'none'}")
+    print(f"  nodes: {len(nodes)}")
+    print(f"  dependencies: {len(dependencies)}")
+    for node in nodes:
+        print(
+            "  "
+            f"node={node.node_id} key={node.node_key} "
+            f"status={node.status} attempts={node.attempts} title={node.title}"
+        )
+        node_dependencies = dependencies_by_node.get(node.node_id, [])
+        if node_dependencies:
+            depends_on = ", ".join(
+                str(dependency.depends_on_node_id)
+                for dependency in node_dependencies
+            )
+            print(f"    depends_on: {depends_on}")
+
+
+def _print_ready_plan_graph_nodes_text(
+    graph: StoredPlanGraph,
+    nodes: list[StoredPlanGraphNode],
+) -> None:
+    print(f"Ready PlanGraph nodes: {len(nodes)}")
+    print(f"  graph: {graph.graph_id}")
+    if not nodes:
+        print("  No ready PlanGraph nodes.")
+        return
+    for node in nodes:
+        print(
+            "  "
+            f"node={node.node_id} key={node.node_key} "
+            f"status={node.status} attempts={node.attempts} title={node.title}"
+        )
+
+
+def _plan_graph_node_to_task(
+    graph: StoredPlanGraph,
+    node: StoredPlanGraphNode,
+) -> AutopilotTask:
+    return AutopilotTask(
+        source_path=Path(f"PlanGraph-{graph.graph_id}"),
+        line_number=node.node_id,
+        text=node.title,
+        section=f"PlanGraph {graph.graph_id}: {graph.title}",
+    )
+
+
+def _print_plan_graph_list_text(graphs: list[StoredPlanGraph]) -> None:
+    print(f"PlanGraphs: {len(graphs)}")
+    for graph in graphs:
+        task_ref = f" task={graph.task_id}" if graph.task_id else ""
+        print(
+            f"  id={graph.graph_id} [{graph.status}] "
+            f"{graph.title}{task_ref}"
+        )
+
+
+def _print_plan_graph_json(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+
+
+def _run_autopilot_plan_run_next(
+    args: argparse.Namespace,
+    store: StateStore,
+) -> int:
+    if not _validate_max_runtime_sec(args):
+        return 1
+    repo = Path(args.repo)
+    graph = store.get_plan_graph(args.graph_id)
+    if graph is None:
+        print(f"PlanGraph not found: {args.graph_id}")
+        return 1
+    ready_nodes = store.list_ready_plan_graph_nodes(graph.graph_id, limit=1)
+    if not ready_nodes:
+        print(f"No ready PlanGraph nodes in graph {graph.graph_id}")
+        return 0
+
+    node = ready_nodes[0]
+    node_status = _run_plan_graph_node(args, store, repo, graph, node)
+    if node_status is None:
+        return 0
+    return 0 if node_status == "done" else 1
+
+
+def _run_autopilot_plan_run_batch(
+    args: argparse.Namespace,
+    store: StateStore,
+) -> int:
+    if not _validate_max_runtime_sec(args):
+        return 1
+    if args.max_items <= 0:
+        print("--max-items must be at least 1")
+        return 1
+    repo = Path(args.repo)
+    graph = store.get_plan_graph(args.graph_id)
+    if graph is None:
+        print(f"PlanGraph not found: {args.graph_id}")
+        return 1
+
+    processed = 0
+    if not args.execute:
+        ready_nodes = store.list_ready_plan_graph_nodes(
+            graph.graph_id,
+            limit=args.max_items,
+        )
+        if not ready_nodes:
+            print(f"No ready PlanGraph nodes in graph {graph.graph_id}")
+            return 0
+        for node in ready_nodes:
+            _run_plan_graph_node(args, store, repo, graph, node)
+        print(
+            f"Dry run: would process {len(ready_nodes)} PlanGraph node(s). "
+            "Add --execute to run."
+        )
+        return 0
+
+    for _ in range(args.max_items):
+        ready_nodes = store.list_ready_plan_graph_nodes(graph.graph_id, limit=1)
+        if not ready_nodes:
+            if processed == 0:
+                print(f"No ready PlanGraph nodes in graph {graph.graph_id}")
+            break
+        node_status = _run_plan_graph_node(args, store, repo, graph, ready_nodes[0])
+        if node_status is None:
+            return 1
+        processed += 1
+        if node_status != "done":
+            print(
+                "PlanGraph batch stopped after "
+                f"{processed} node(s): status={node_status}"
+            )
+            return 1
+
+    print(f"PlanGraph batch complete: processed {processed} node(s)")
+    return 0
+
+
+def _run_plan_graph_node(
+    args: argparse.Namespace,
+    store: StateStore,
+    repo: Path,
+    graph: StoredPlanGraph,
+    node: StoredPlanGraphNode,
+) -> str | None:
+    task = _plan_graph_node_to_task(graph, node)
+
+    def _mark_in_progress() -> None:
+        store.update_plan_graph_node_status(
+            node.node_id,
+            "in_progress",
+            increment_attempts=True,
+        )
+
+    print(f"PlanGraph node: {node.node_id}")
+    result = _run_autopilot_task(
+        task,
+        repo,
+        Path(f"PlanGraph-{graph.graph_id}"),
+        args,
+        store,
+        on_start=_mark_in_progress,
+    )
+    if result is None:
+        return None
+
+    node_status = "done" if result.status == "done" else "blocked"
+    store.update_plan_graph_node_status(node.node_id, node_status)
+    if result.task_id is not None:
+        store.link_replan_decisions_to_plan_graph(
+            result.task_id,
+            graph.graph_id,
+            plan_graph_node_id=node.node_id,
+        )
+        store.create_replan_follow_up_nodes(result.task_id, graph.graph_id)
+
+    print(f"PlanGraph node {node.node_id}: status={node_status}")
+    if result.task_id is not None:
+        report_path = _write_task_report(store, repo, result.task_id)
+        if report_path is not None:
+            print(f"Report: {report_path}")
+    return node_status
+
+
+def _run_autopilot_plan_command(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> int:
+    if args.autopilot_plan_command is None:
+        parser.print_help()
+        return 1
+
+    store = _state_store_for_repo(Path(args.repo))
+
+    try:
+        if args.autopilot_plan_command == "list":
+            graphs = store.list_plan_graphs(task_id=args.task_id, status=args.status)
+            if args.json:
+                _print_plan_graph_json(_plan_graph_list_payload(graphs))
+                return 0
+            _print_plan_graph_list_text(graphs)
+            return 0
+
+        if args.autopilot_plan_command == "create":
+            created_graph = store.create_plan_graph(
+                title=args.title,
+                task_id=args.task_id,
+                status=args.status,
+            )
+            if args.json:
+                _print_plan_graph_json(_plan_graph_payload(store, created_graph))
+                return 0
+            _print_plan_graph_text(store, created_graph, prefix="Created PlanGraph")
+            return 0
+
+        if args.autopilot_plan_command == "show":
+            shown_graph = store.get_plan_graph(args.graph_id)
+            if shown_graph is None:
+                print(f"PlanGraph not found: {args.graph_id}")
+                return 1
+            if args.json:
+                _print_plan_graph_json(_plan_graph_payload(store, shown_graph))
+                return 0
+            _print_plan_graph_text(store, shown_graph)
+            return 0
+
+        if args.autopilot_plan_command == "ready":
+            ready_graph = store.get_plan_graph(args.graph_id)
+            if ready_graph is None:
+                print(f"PlanGraph not found: {args.graph_id}")
+                return 1
+            if args.limit < 0:
+                print("--limit must be 0 or greater")
+                return 1
+            limit = args.limit if args.limit > 0 else None
+            ready_nodes = store.list_ready_plan_graph_nodes(
+                args.graph_id,
+                limit=limit,
+            )
+            if args.json:
+                _print_plan_graph_json(
+                    _ready_plan_graph_nodes_payload(ready_graph, ready_nodes)
+                )
+                return 0
+            _print_ready_plan_graph_nodes_text(ready_graph, ready_nodes)
+            return 0
+
+        if args.autopilot_plan_command == "run-next":
+            return _run_autopilot_plan_run_next(args, store)
+
+        if args.autopilot_plan_command == "run-batch":
+            return _run_autopilot_plan_run_batch(args, store)
+
+        if args.autopilot_plan_command == "update":
+            updated_graph = store.update_plan_graph_status(args.graph_id, args.status)
+            if updated_graph is None:
+                print(f"PlanGraph not found: {args.graph_id}")
+                return 1
+            if args.json:
+                _print_plan_graph_json(_plan_graph_payload(store, updated_graph))
+                return 0
+            _print_plan_graph_text(store, updated_graph, prefix="Updated PlanGraph")
+            return 0
+
+        if args.autopilot_plan_command == "add-node":
+            target_graph = store.get_plan_graph(args.graph_id)
+            if target_graph is None:
+                print(f"PlanGraph not found: {args.graph_id}")
+                return 1
+            created_node = store.add_plan_graph_node(
+                graph_id=args.graph_id,
+                node_key=args.key,
+                title=args.title,
+                status=args.status,
+                attempts=args.attempts,
+                depends_on_node_ids=args.depends_on_node_ids,
+            )
+            refreshed_graph = store.get_plan_graph(args.graph_id)
+            if refreshed_graph is None:
+                print(f"PlanGraph not found: {args.graph_id}")
+                return 1
+            if args.json:
+                payload = _plan_graph_payload(store, refreshed_graph)
+                payload["node"] = asdict(created_node)
+                _print_plan_graph_json(payload)
+                return 0
+            print(f"Added PlanGraph node: {created_node.node_id}")
+            _print_plan_graph_text(store, refreshed_graph)
+            return 0
+
+        if args.autopilot_plan_command == "update-node":
+            updated_node = store.update_plan_graph_node_status(
+                args.node_id,
+                args.status,
+                attempts=args.attempts,
+                increment_attempts=args.increment_attempts,
+            )
+            if updated_node is None:
+                print(f"PlanGraph node not found: {args.node_id}")
+                return 1
+            node_graph = store.get_plan_graph(updated_node.graph_id)
+            if node_graph is None:
+                print(f"PlanGraph not found: {updated_node.graph_id}")
+                return 1
+            if args.json:
+                payload = _plan_graph_payload(store, node_graph)
+                payload["node"] = asdict(updated_node)
+                _print_plan_graph_json(payload)
+                return 0
+            print(f"Updated PlanGraph node: {updated_node.node_id}")
+            _print_plan_graph_text(store, node_graph)
+            return 0
+
+        if args.autopilot_plan_command == "add-dependency":
+            target_graph = store.get_plan_graph(args.graph_id)
+            if target_graph is None:
+                print(f"PlanGraph not found: {args.graph_id}")
+                return 1
+            dependency = store.add_plan_graph_dependency(
+                graph_id=args.graph_id,
+                node_id=args.node_id,
+                depends_on_node_id=args.depends_on_node_id,
+            )
+            if dependency is None:
+                print("PlanGraph dependency was not recorded")
+                return 1
+            refreshed_graph = store.get_plan_graph(args.graph_id)
+            if refreshed_graph is None:
+                print(f"PlanGraph not found: {args.graph_id}")
+                return 1
+            if args.json:
+                payload = _plan_graph_payload(store, refreshed_graph)
+                payload["dependency"] = asdict(dependency)
+                _print_plan_graph_json(payload)
+                return 0
+            print(
+                "Added PlanGraph dependency: "
+                f"{dependency.node_id}->{dependency.depends_on_node_id}"
+            )
+            _print_plan_graph_text(store, refreshed_graph)
+            return 0
+    except ValueError as exc:
+        print(f"PlanGraph error: {exc}")
+        return 1
+
+    parser.print_help()
+    return 1
 
 
 def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -2909,6 +4342,9 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
     if args.autopilot_queue_command == "show":
         return _run_autopilot_queue_show(args, repo, store)
 
+    if args.autopilot_queue_command == "link-plan-graph":
+        return _run_autopilot_queue_link_plan_graph(args, repo, store)
+
     if args.autopilot_queue_command == "requeue":
         return _run_autopilot_queue_requeue(args, repo, store)
 
@@ -2930,6 +4366,7 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
 
         def _mark_in_progress() -> None:
             store.update_plan_item_status(next_item.plan_item_id, "in_progress")
+            _mark_plan_graph_node_started(store, next_item)
 
         print(f"Queue item: {next_item.plan_item_id}")
 
@@ -2950,6 +4387,12 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             item_status,
             task_id=result.task_id,
             blocked_reason=blocked_reason,
+        )
+        _finish_plan_graph_node_for_queue_result(
+            store,
+            next_item,
+            item_status,
+            result.task_id,
         )
         print(f"Queue item {next_item.plan_item_id}: status={item_status}")
         if result.task_id is not None:
@@ -3235,6 +4678,235 @@ def _emit_batch_summary(
     return True
 
 
+def _run_autopilot_loop(
+    args: argparse.Namespace,
+    repo: Path,
+    plan_path: Path,
+    store: StateStore,
+) -> int:
+    """Run the persisted queue through a guarded unattended loop."""
+    started_at = datetime.now(UTC)
+    if args.max_items <= 0:
+        print("Loop stopped: budget exhausted (--max-items must be at least 1)")
+        return 1
+    if args.max_attempts <= 0:
+        print("Loop stopped: budget exhausted (--max-attempts must be at least 1)")
+        return 1
+    if args.max_actions <= 0:
+        print("Loop stopped: budget exhausted (--max-actions must be at least 1)")
+        return 1
+
+    preflight_snapshot = _queue_preflight_snapshot(repo, plan_path, store)
+    stop_reason = _loop_preflight_stop_reason(args, preflight_snapshot)
+    if stop_reason is not None:
+        print(f"Loop stopped on {stop_reason}: next_action={preflight_snapshot['next_action']}")
+        loop_run = _record_autopilot_loop_run(
+            store,
+            args,
+            plan_path,
+            selected_item_ids=[],
+            selected_count=0,
+            processed_count=0,
+            dead_letter_count=0,
+            stop_reason=stop_reason,
+            result_code=1,
+            started_at=started_at,
+        )
+        _print_loop_ledger(
+            args,
+            selected_count=0,
+            processed_count=0,
+            dead_letter_count=0,
+            stop_reason=stop_reason,
+            loop_run=loop_run,
+        )
+        return 1
+
+    loop_max_items = min(args.max_items, args.max_actions)
+    loop_args = argparse.Namespace(**vars(args))
+    loop_args.max_items = loop_max_items
+    loop_args.worktree = None
+    loop_args.rotate_worktrees = None
+    loop_args.item_id = None
+    selected_items = _select_batch_plan_items(loop_args, store, plan_path, limit=loop_max_items)
+    if selected_items is None:
+        return 1
+    selected_ids = [item.plan_item_id for item in selected_items]
+
+    print("=== Autopilot loop ===")
+    print(f"Mode: {'execute' if args.execute else 'dry-run'}")
+    print(f"Plan: {plan_path}")
+    print(f"Selected: {len(selected_ids)} item(s)")
+
+    result_code = _run_autopilot_queue_batch(loop_args, repo, plan_path, store)
+    dead_letter_count = 0
+    if args.execute and selected_ids:
+        dead_letter_count = _record_loop_dead_letters(
+            store,
+            selected_ids,
+            max_attempts=args.max_attempts,
+        )
+
+    processed_count = _loop_processed_count(store, selected_ids) if args.execute else 0
+    stop_reason = _loop_stop_reason_after_batch(
+        result_code,
+        selected_ids=selected_ids,
+        processed_count=processed_count,
+        dead_letter_count=dead_letter_count,
+        action_budget_exhausted=loop_max_items < args.max_items,
+    )
+    if stop_reason:
+        print(f"Loop stopped: {stop_reason}")
+    else:
+        print("Loop complete")
+    loop_run = _record_autopilot_loop_run(
+        store,
+        args,
+        plan_path,
+        selected_item_ids=selected_ids,
+        selected_count=len(selected_ids),
+        processed_count=processed_count,
+        dead_letter_count=dead_letter_count,
+        stop_reason=stop_reason or "complete",
+        result_code=result_code,
+        started_at=started_at,
+    )
+    _print_loop_ledger(
+        args,
+        selected_count=len(selected_ids),
+        processed_count=processed_count,
+        dead_letter_count=dead_letter_count,
+        stop_reason=stop_reason or "complete",
+        loop_run=loop_run,
+    )
+    return result_code
+
+
+def _record_autopilot_loop_run(
+    store: StateStore,
+    args: argparse.Namespace,
+    plan_path: Path,
+    *,
+    selected_item_ids: list[int],
+    selected_count: int,
+    processed_count: int,
+    dead_letter_count: int,
+    stop_reason: str,
+    result_code: int,
+    started_at: datetime,
+) -> StoredAutopilotLoopRun:
+    completed_at = datetime.now(UTC)
+    return store.record_autopilot_loop_run(
+        plan_path=plan_path,
+        mode="execute" if args.execute else "dry-run",
+        max_runtime_sec=getattr(args, "max_runtime_sec", None),
+        max_attempts=args.max_attempts,
+        max_actions=args.max_actions,
+        selected_count=selected_count,
+        processed_count=processed_count,
+        dead_letter_count=dead_letter_count,
+        stop_reason=stop_reason,
+        result_code=result_code,
+        selected_item_ids=selected_item_ids,
+        elapsed_sec=max(0.0, (completed_at - started_at).total_seconds()),
+        started_at=started_at.isoformat(),
+        completed_at=completed_at.isoformat(),
+    )
+
+
+def _loop_preflight_stop_reason(
+    args: argparse.Namespace,
+    preflight_snapshot: dict[str, Any],
+) -> str | None:
+    next_action = str(preflight_snapshot.get("next_action", "none"))
+    if next_action == "fix_agent":
+        return "unavailable agent"
+    if args.stop_on_risk and next_action in {
+        "reconcile_stale_created",
+        "recover_in_progress",
+        "review_blocked",
+    }:
+        return "risk"
+    return None
+
+
+def _record_loop_dead_letters(
+    store: StateStore,
+    selected_ids: list[int],
+    *,
+    max_attempts: int,
+) -> int:
+    if max_attempts > 1:
+        return 0
+    recorded = 0
+    for plan_item_id in selected_ids:
+        item = store.get_plan_item(plan_item_id)
+        if item is None or item.status != "blocked":
+            continue
+        existing = store.list_dead_letter_items(plan_item_id=plan_item_id)
+        if existing:
+            continue
+        reason = item.blocked_reason or "loop item stopped with status=blocked"
+        store.add_dead_letter_item(
+            item.plan_item_id,
+            reason,
+            task_id=item.task_id,
+            attempts=max_attempts,
+        )
+        recorded += 1
+    return recorded
+
+
+def _loop_processed_count(store: StateStore, selected_ids: list[int]) -> int:
+    processed = 0
+    for plan_item_id in selected_ids:
+        item = store.get_plan_item(plan_item_id)
+        if item is not None and item.status in {"done", "blocked", "skipped"}:
+            processed += 1
+    return processed
+
+
+def _loop_stop_reason_after_batch(
+    result_code: int,
+    *,
+    selected_ids: list[int],
+    processed_count: int,
+    dead_letter_count: int,
+    action_budget_exhausted: bool,
+) -> str | None:
+    if not selected_ids:
+        return None
+    if dead_letter_count:
+        return "dead-letter"
+    if result_code != 0:
+        return "blocker or failed checks"
+    if action_budget_exhausted or processed_count >= len(selected_ids):
+        return "budget exhausted" if action_budget_exhausted else None
+    return None
+
+
+def _print_loop_ledger(
+    args: argparse.Namespace,
+    *,
+    selected_count: int,
+    processed_count: int,
+    dead_letter_count: int,
+    stop_reason: str,
+    loop_run: StoredAutopilotLoopRun,
+) -> None:
+    runtime_budget = getattr(args, "max_runtime_sec", None)
+    print("=== Loop budget ledger ===")
+    print(f"loop_run_id: {loop_run.loop_run_id}")
+    print(f"runtime_sec: max={runtime_budget or 'config'}")
+    print(f"attempts: max={args.max_attempts}")
+    print(
+        "actions: "
+        f"max={args.max_actions} selected={selected_count} processed={processed_count}"
+    )
+    print(f"dead_letters: {dead_letter_count}")
+    print(f"stop_reason: {stop_reason}")
+
+
 def _run_autopilot_queue_batch(
     args: argparse.Namespace,
     repo: Path,
@@ -3313,6 +4985,7 @@ def _run_autopilot_queue_batch(
         print(f"Queue item: {next_item.plan_item_id}")
 
         def _mark_in_progress(
+            linked_item: StoredPlanItem = next_item,
             plan_item_id: int = next_item.plan_item_id,
             selected_worktree: Path | None = fixed_worktree,
         ) -> None:
@@ -3321,6 +4994,7 @@ def _run_autopilot_queue_batch(
                 "in_progress",
                 selected_worktree_path=selected_worktree,
             )
+            _mark_plan_graph_node_started(store, linked_item)
 
         result = _run_autopilot_task(
             task,
@@ -3341,6 +5015,12 @@ def _run_autopilot_queue_batch(
             task_id=result.task_id,
             selected_worktree_path=fixed_worktree,
             blocked_reason=blocked_reason,
+        )
+        _finish_plan_graph_node_for_queue_result(
+            store,
+            next_item,
+            item_status,
+            result.task_id,
         )
         processed_ids.append(next_item.plan_item_id)
         print(f"Queue item {next_item.plan_item_id}: status={item_status}")
@@ -3425,6 +5105,7 @@ def _run_rotated_autopilot_queue_batch(
         print(f"Worktree: {worktree}")
 
         def _mark_in_progress(
+            linked_item: StoredPlanItem = item,
             plan_item_id: int = item.plan_item_id,
             selected_worktree: Path = worktree,
         ) -> None:
@@ -3433,6 +5114,7 @@ def _run_rotated_autopilot_queue_batch(
                 "in_progress",
                 selected_worktree_path=selected_worktree,
             )
+            _mark_plan_graph_node_started(store, linked_item)
 
         result = _run_autopilot_task(
             task,
@@ -3453,6 +5135,12 @@ def _run_rotated_autopilot_queue_batch(
             task_id=result.task_id,
             selected_worktree_path=worktree,
             blocked_reason=blocked_reason,
+        )
+        _finish_plan_graph_node_for_queue_result(
+            store,
+            item,
+            item_status,
+            result.task_id,
         )
         processed_ids.append(item.plan_item_id)
         print(f"Queue item {item.plan_item_id}: status={item_status}")
@@ -3735,6 +5423,26 @@ def _run_memory_command(args: argparse.Namespace, parser: argparse.ArgumentParse
         return 1
 
     repo = Path(args.repo)
+    if args.memory_command == "lessons":
+        store = _state_store_for_repo(repo)
+        if args.limit < 0:
+            print("--limit must be 0 or greater")
+            return 1
+        print(
+            _format_memory_lessons(
+                store.list_memory_lessons(
+                    include_stale=args.include_stale,
+                    limit=args.limit if args.limit > 0 else None,
+                )
+            ),
+            end="",
+        )
+        return 0
+    if args.memory_command == "influence":
+        store = _state_store_for_repo(repo)
+        print(_format_memory_influence(store.list_memory_influence(args.task_id)), end="")
+        return 0
+
     config = load_project_config(repo)
     approved_commands = set(getattr(args, "approve_command", []) or [])
     client = _memory_client(config, approved_commands=approved_commands)
@@ -3744,6 +5452,7 @@ def _run_memory_command(args: argparse.Namespace, parser: argparse.ArgumentParse
         print(f"provider: {config.memory.provider or 'codebase-memory-mcp'}")
         print(f"command: {' '.join(config.memory.command)}")
         print(f"project: {project or '(default)'}")
+        print(f"max_lessons: {config.memory.max_lessons}")
         print(f"available: {'yes' if client.check_available() else 'no'}")
         return 0
 
@@ -3939,6 +5648,43 @@ def _print_memory_result(tool: str, result: CodebaseMemoryResult) -> None:
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
     if result.stderr:
         print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
+
+
+def _format_memory_lessons(lessons: list[Any]) -> str:
+    lines = ["Memory lessons"]
+    if not lessons:
+        lines.append("  No memory lessons recorded.")
+        return "\n".join(lines) + "\n"
+    for lesson in lessons:
+        stale = "yes" if lesson.is_stale else "no"
+        lines.append(
+            (
+                f"  lesson={lesson.lesson_id} outcome={lesson.outcome_status} "
+                f"stale={stale} source_task={lesson.source_task_id}"
+            )
+        )
+        lines.append(f"     lesson: {lesson.lesson}")
+        if lesson.failure_reason:
+            lines.append(f"     reason: {lesson.failure_reason}")
+    return "\n".join(lines) + "\n"
+
+
+def _format_memory_influence(influences: list[Any]) -> str:
+    lines = ["Memory influence"]
+    if not influences:
+        lines.append("  No memory influence recorded.")
+        return "\n".join(lines) + "\n"
+    for influence in influences:
+        iteration = "none" if influence.iteration_id is None else str(influence.iteration_id)
+        injected = "yes" if influence.injected else "no"
+        lines.append(
+            (
+                f"  influence={influence.influence_id} task={influence.task_id} "
+                f"lesson={influence.lesson_id} iteration={iteration} injected={injected}"
+            )
+        )
+        lines.append(f"     reason: {influence.reason}")
+    return "\n".join(lines) + "\n"
 
 
 def _excerpt(text: str, limit: int) -> str:
