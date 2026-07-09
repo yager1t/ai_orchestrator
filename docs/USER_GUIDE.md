@@ -43,10 +43,36 @@ If it says Python is missing:
 INSTALL_WINDOWS.cmd /install-python
 ```
 
+The installer also offers this interactively in the same window.
+
 The Windows installer refreshes `.ai-orch/config.yaml` for the current machine
 creates local state directories, writes an install log, and creates
 `ai-orch.cmd` in the project root. See `docs/WINDOWS_INSTALL.md` for PowerShell
 options, including `-KeepConfig`, and troubleshooting.
+
+On Ubuntu/Linux:
+
+```bash
+bash INSTALL_LINUX.sh
+```
+
+If it says Python is missing:
+
+```bash
+bash INSTALL_LINUX.sh --install-python
+```
+
+After installation:
+
+```bash
+./ai-orch
+```
+
+The Linux installer regenerates local config for the current machine, creates
+state directories, writes an install log, and falls back to `mock` when Codex or
+other real worker CLIs are unavailable. The `./ai-orch` launcher adds `.venv/bin`
+to `PATH`, so you do not need to activate the virtual environment before running
+normal commands.
 
 ## 2. Initialize Local State
 
@@ -89,7 +115,13 @@ and verification commands are ready:
 ```bash
 ai-orch doctor
 ai-orch doctor --json
+ai-orch doctor agents
+ai-orch doctor agents --json
 ```
+
+Use `doctor agents` when you need to see every known worker connector, whether
+it is configured/enabled, whether the CLI command is available on this machine,
+how authentication is expected to work, and whether a native API adapter exists.
 
 The lower-level initializer is still available when you only want state
 directories and plan to manage config yourself:
@@ -105,7 +137,7 @@ On Windows after running `scripts\install_windows.cmd`, use the root launcher:
 
 ```cmd
 .\ai-orch.cmd doctor
-.\ai-orch.cmd agents --check
+.\ai-orch.cmd doctor agents
 .\ai-orch.cmd start --task "Check setup"
 ```
 
@@ -196,7 +228,22 @@ Check configured agents:
 
 ```bash
 ai-orch agents --repo . --check
+ai-orch doctor agents --repo .
 ```
+
+Connector support in `0.2.4`:
+
+| Connector | CLI/headless support | Native API adapter | Credential model |
+| --- | --- | --- | --- |
+| Codex | yes, via `codex exec` | not implemented | native Codex CLI auth |
+| Claude | yes, via `claude -p` | not implemented | native Claude CLI auth |
+| Gemini | yes, via `gemini -p` | not implemented | native Gemini CLI auth |
+| Kimi | yes, via `kimi` | not implemented | native Kimi CLI auth |
+| Generic | yes, wrapper command | wrapper-owned | external env/secret store |
+| Mock | yes, smoke-test only | not applicable | none |
+
+If you need a provider API today, wrap that API call in a local script and run
+it through `generic_cli`. Keep API keys outside `.ai-orch/config.yaml`.
 
 ## 4. Run One Task
 
@@ -205,6 +252,11 @@ Start a task:
 ```bash
 ai-orch start --task "Implement a small bounded change" --repo .
 ```
+
+`start` and `resume` print a live run header, progress milestones, the selected
+agent, verification commands, and next commands. If the selected agent is
+`mock`, the output says that this is smoke-test mode and does not perform real
+AI work.
 
 Inspect status:
 
@@ -370,6 +422,7 @@ ai-orch autopilot run --repo . --plan docs/POST_MVP_ROADMAP.md --execute --allow
 Use the persisted queue:
 
 ```bash
+ai-orch doctor agents --repo .
 ai-orch autopilot queue sync --repo . --plan docs/BACKLOG.md
 ai-orch autopilot queue status --repo . --plan docs/BACKLOG.md
 ai-orch autopilot queue readiness --repo . --plan docs/BACKLOG.md

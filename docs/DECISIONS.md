@@ -1,5 +1,56 @@
 # Architectural Decisions
 
+## ADR-0006: Native Provider API Adapters Are Post-0.2.4 Work
+
+Date: 2026-07-09
+
+### Context
+
+`ai-orch` now supports practical local operation through CLI/headless worker
+adapters for Codex, Claude, Gemini, Kimi, a generic wrapper command, and a mock
+smoke-test adapter. Users also ask whether provider API keys can be connected
+directly during setup.
+
+Raw provider API credentials have a larger security and support surface than
+CLI/headless adapters: key collection, secret storage, rotation, provider SDK or
+HTTP compatibility, retry semantics, model selection, streaming, rate limits,
+and provider-specific error handling.
+
+### Decision
+
+Keep the `0.2.4` production surface focused on CLI/headless adapters and
+`generic_cli` wrappers. Do not advertise native provider API adapters as ready
+until they have explicit adapter contracts, tests, credential guidance, and
+release documentation.
+
+Provider API usage is still possible through `generic_cli`: users can wrap an
+API call in their own local script and inject credentials from the shell, OS/user
+secret store, service manager, or CI secrets. `ai-orch` stores commands, policy,
+timeouts, and state; it does not collect or persist raw API keys.
+
+### Consequences
+
+Pros:
+
+- keeps first-run setup simple and avoids collecting secrets;
+- matches the current adapter implementation and tests;
+- lets users keep provider auth in each CLI or external secret system;
+- avoids adding production SDK dependencies before the API contract is stable.
+
+Cons:
+
+- native OpenAI/Anthropic/Gemini/Kimi API adapters are not yet first-class;
+- users who need direct APIs must provide a wrapper command;
+- provider-specific API errors are opaque to `ai-orch` until native adapters are
+  implemented.
+
+### Revisit When
+
+- users need direct API workers without installing provider CLIs;
+- a stable credential story exists for local, CI, and service-manager use;
+- provider-specific retry, model selection, and rate-limit handling are
+  specified and tested.
+
 ## ADR-0005: Optional Per-Task Worktree Rotation In Autopilot Batch Runs
 
 Date: 2026-07-03

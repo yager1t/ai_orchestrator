@@ -47,6 +47,26 @@ run `ai-orch.cmd` from the repository root to see common next commands. If
 Python is missing, run `INSTALL_WINDOWS.cmd /install-python` to let the
 installer try installing Python 3.12 through winget.
 
+## Linux Installer
+
+On Ubuntu/Linux, use the repository-local installer:
+
+```bash
+bash INSTALL_LINUX.sh
+```
+
+The Linux installer refreshes `.ai-orch/config.yaml` for the current machine by
+default, creates `.ai-orch/state` and `.ai-orch/reports`, and falls back to
+`mock` when no real worker CLI is detected. If Python 3.12+ is missing, it
+offers an opt-in `apt` bootstrap:
+
+```bash
+bash INSTALL_LINUX.sh --install-python
+```
+
+After installation, run `./ai-orch` from the repository root to see common next
+commands.
+
 ## Smoke Path
 
 After installation, initialize state and run the local mock path:
@@ -54,7 +74,7 @@ After installation, initialize state and run the local mock path:
 ```bash
 ai-orch setup
 ai-orch doctor
-ai-orch agents --repo . --check
+ai-orch doctor agents --repo .
 ai-orch start --task "Check the install path" --repo .
 ai-orch status TASK_ID --repo .
 ```

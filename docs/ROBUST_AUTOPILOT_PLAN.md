@@ -19,6 +19,10 @@ Robust autopilot is reached when all of these are true:
 - the supervisor and independent verifier remain the only authorities for
   completion.
 
+Operator readiness now includes `ai-orch doctor agents`, which reports the
+configured worker connector, CLI availability, credential model, and the current
+native API-adapter status before unattended execution.
+
 ## Stage 0. Strategy And Backlog
 
 Goal: make the robust-autopilot direction explicit and actionable.

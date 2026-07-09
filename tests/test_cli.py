@@ -52,6 +52,13 @@ def test_state_store_for_repo_reuses_store_for_same_repo(tmp_path: Path) -> None
     assert second is first
 
 
+def task_id_from_run_output(output: str) -> str:
+    for line in output.splitlines():
+        if line.startswith("task-") and ":" in line:
+            return line.split(":", 1)[0]
+    raise AssertionError(f"Could not find task id in output:\n{output}")
+
+
 def test_autopilot_next_prints_next_plan_item(capsys, tmp_path: Path) -> None:
     plan = tmp_path / "ROADMAP.md"
     plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
@@ -2241,6 +2248,57 @@ def test_doctor_reports_missing_config(
     assert "Suggested fix: run ai-orch setup --repo ." in output
 
 
+def test_doctor_agents_reports_connector_matrix(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    assert main(["setup", "--repo", str(tmp_path), "--agent", "mock"]) == 0
+    capsys.readouterr()
+
+    exit_code = main(["doctor", "agents", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    connectors = {item["name"]: item for item in payload["connectors"]}
+
+    assert exit_code == 0
+    assert payload["ready"] is True
+    assert payload["api_adapters"]["status"] == "not_implemented"
+    assert connectors["mock"]["availability"] == "yes"
+    assert connectors["mock"]["api_status"] == "not_applicable"
+    assert connectors["codex"]["api_status"].startswith("not_implemented")
+    assert connectors["codex"]["auth_model"] == (
+        "native CLI login or CLI-managed provider credentials"
+    )
+
+
+def test_doctor_agents_reports_unavailable_default_agent(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+orchestrator:
+  default_agent: "codex"
+
+agents:
+  codex:
+    enabled: true
+    type: "codex_exec"
+    command: "missing-codex-test-binary"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["doctor", "agents", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "codex" in output
+    assert "available=no" in output
+    assert "default_agent_unavailable" in output
+
+
 def test_agents_lists_adapter_profile(capsys, tmp_path: Path) -> None:
     config_dir = tmp_path / ".ai-orch"
     config_dir.mkdir()
@@ -2350,7 +2408,13 @@ def test_resume_runs_existing_task_and_appends_iteration(capsys, tmp_path: Path)
     iterations = store.list_iterations(task.task_id)
 
     assert exit_code == 0
+    assert "=== ai-orch run ===" in output
+    assert "action: resume" in output
+    assert f"task_id: {task.task_id}" in output
+    assert "status: running" in output
+    assert "progress: iteration 1: agent mock started" in output
     assert f"{task.task_id}: Iteration 1: Verification passed: custom" in output
+    assert f"ai-orch status {task.task_id} --repo {tmp_path}" in output
     assert loaded is not None
     assert loaded.status == "done"
     assert len(iterations) == 1
@@ -2502,6 +2566,13 @@ def test_start_uses_project_config(capsys, tmp_path: Path) -> None:
     output = capsys.readouterr().out
 
     assert exit_code == 0
+    task_id = task_id_from_run_output(output)
+    assert "=== ai-orch run ===" in output
+    assert "action: start" in output
+    assert "status: running" in output
+    assert "note: mock agent is smoke-test mode" in output
+    assert "progress: iteration 1: agent mock started" in output
+    assert f"ai-orch status {task_id} --repo {tmp_path}" in output
     assert "Verification passed: custom" in output
 
 
@@ -2521,7 +2592,7 @@ verification:
 
     exit_code = main(["start", "--task", "demo", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
-    task_id = output.split(":", 1)[0]
+    task_id = task_id_from_run_output(output)
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.get_task(task_id)
 
@@ -2566,7 +2637,7 @@ def test_start_with_use_memory_enriches_initial_prompt(
         ]
     )
     output = capsys.readouterr().out
-    task_id = output.split(":", 1)[0]
+    task_id = task_id_from_run_output(output)
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.get_task(task_id)
     iterations = store.list_iteration_details(task_id)
@@ -2586,7 +2657,7 @@ def test_start_uses_generic_agent_from_project_config(capsys, tmp_path: Path) ->
 
     exit_code = main(["start", "--task", "hello generic", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
-    task_id = output.split(":", 1)[0]
+    task_id = task_id_from_run_output(output)
     iterations = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db").list_iterations(
         task_id
     )
@@ -2601,7 +2672,7 @@ def test_start_uses_codex_agent_from_project_config(capsys, tmp_path: Path) -> N
 
     exit_code = main(["start", "--task", "hello codex", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
-    task_id = output.split(":", 1)[0]
+    task_id = task_id_from_run_output(output)
     iterations = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db").list_iterations(
         task_id
     )
@@ -2616,7 +2687,7 @@ def test_start_uses_claude_agent_from_project_config(capsys, tmp_path: Path) -> 
 
     exit_code = main(["start", "--task", "hello claude", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
-    task_id = output.split(":", 1)[0]
+    task_id = task_id_from_run_output(output)
     iterations = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db").list_iterations(
         task_id
     )
@@ -2647,7 +2718,7 @@ def test_start_uses_cli_alias_agent_from_project_config(
 
     exit_code = main(["start", "--task", f"hello {agent_name}", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
-    task_id = output.split(":", 1)[0]
+    task_id = task_id_from_run_output(output)
     iterations = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db").list_iterations(
         task_id
     )
@@ -2737,7 +2808,7 @@ def test_start_uses_fallback_agent_when_default_unavailable(
 
     exit_code = main(["start", "--task", "hello fallback", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
-    task_id = output.split(":", 1)[0]
+    task_id = task_id_from_run_output(output)
     iterations = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db").list_iterations(
         task_id
     )

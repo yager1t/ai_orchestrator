@@ -26,7 +26,7 @@ verification remains authoritative.
 
 1. Add a read-only capability discovery command for an MCP/ACP endpoint.
 2. Store endpoint config outside hard-coded code paths.
-3. Return availability/status through `ai-orch agents --check`.
+3. Return availability/status through `ai-orch doctor agents`.
 4. Do not execute tools until policy and approval behavior is specified.
 
 ## Runtime proposal gate

@@ -90,6 +90,24 @@ _PLAN_GRAPH_STATUSES = ("active", "done", "blocked", "archived")
 _PLAN_GRAPH_NODE_STATUSES = ("pending", "in_progress", "done", "blocked", "skipped")
 _TERMINAL_QUEUE_STATUSES = {"done", "skipped"}
 _STATE_STORE_CACHE: dict[Path, StateStore] = {}
+_KNOWN_AGENT_CONNECTORS = ("codex", "claude", "gemini", "kimi", "generic", "mock")
+_AGENT_DEFAULT_COMMANDS = {
+    "codex": "codex",
+    "claude": "claude",
+    "gemini": "gemini",
+    "kimi": "kimi",
+    "generic": "(configured)",
+    "mock": "(internal)",
+}
+_AGENT_DEFAULT_TYPES = {
+    "codex": "codex_exec",
+    "claude": "claude_headless",
+    "gemini": "gemini_cli",
+    "kimi": "kimi_cli",
+    "generic": "generic_cli",
+    "mock": "mock",
+}
+_CLI_AUTH_CONNECTORS = {"codex", "claude", "gemini", "kimi"}
 
 # Schema version for the JSON trace produced by ``ai-orch export``.
 TRACE_SCHEMA_VERSION = "1.0"
@@ -140,6 +158,12 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--json", action="store_true", help="Print machine-readable output")
 
     doctor = sub.add_parser("doctor", help="Diagnose local setup readiness")
+    doctor.add_argument(
+        "doctor_command",
+        nargs="?",
+        choices=["agents"],
+        help="Optional focused doctor view",
+    )
     doctor.add_argument("--repo", default=".")
     doctor.add_argument("--json", action="store_true", help="Print machine-readable output")
 
@@ -1369,17 +1393,27 @@ def main(argv: list[str] | None = None) -> int:
 
         config = load_project_config(Path(task.repo_path))
         try:
-            supervisor = _build_supervisor(state_store=store, config=config)
+            supervisor = _build_supervisor(
+                state_store=store,
+                config=config,
+                progress_callback=_print_progress,
+            )
         except ValueError as exc:
             print(str(exc))
             return 1
+        _print_run_preamble(
+            action="resume",
+            repo=Path(task.repo_path),
+            config=config,
+            supervisor=supervisor,
+            task_id=task.task_id,
+        )
         supervisor_result = supervisor.run_existing(
             task_id=task.task_id,
             task=task.task,
             repo=Path(task.repo_path),
         )
-        task_prefix = f"{supervisor_result.task_id}: " if supervisor_result.task_id else ""
-        print(f"{task_prefix}{supervisor_result.summary}")
+        _print_supervisor_result(supervisor_result, repo=Path(task.repo_path))
         return 0 if supervisor_result.status == "done" else 1
 
     if args.command == "recover":
@@ -1440,17 +1474,23 @@ def main(argv: list[str] | None = None) -> int:
             supervisor = _build_supervisor(
                 state_store=_state_store_for_repo(repo),
                 config=config,
+                progress_callback=_print_progress,
             )
         except ValueError as exc:
             print(str(exc))
             return 1
+        _print_run_preamble(
+            action="start",
+            repo=execution_repo,
+            config=config,
+            supervisor=supervisor,
+        )
         supervisor_result = supervisor.run_once(
             task=args.task,
             repo=execution_repo,
             planning_context=planning_context,
         )
-        task_prefix = f"{supervisor_result.task_id}: " if supervisor_result.task_id else ""
-        print(f"{task_prefix}{supervisor_result.summary}")
+        _print_supervisor_result(supervisor_result, repo=execution_repo)
         return 0 if supervisor_result.status == "done" else 1
 
     parser.print_help()
@@ -1929,7 +1969,11 @@ def _format_evaluation_summary(summary: Any) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _build_supervisor(state_store: StateStore, config: ProjectConfig) -> Supervisor:
+def _build_supervisor(
+    state_store: StateStore,
+    config: ProjectConfig,
+    progress_callback: Callable[[str], None] | None = None,
+) -> Supervisor:
     policy_engine = _policy_engine(config)
     return Supervisor(
         agent=_select_agent(config, policy_engine),
@@ -1939,8 +1983,47 @@ def _build_supervisor(state_store: StateStore, config: ProjectConfig) -> Supervi
         max_iterations=config.max_iterations,
         max_no_change_iterations=config.max_no_change_iterations,
         max_runtime_sec=config.max_runtime_sec,
+        progress_callback=progress_callback,
         memory_lesson_limit=config.memory.max_lessons,
     )
+
+
+def _print_run_preamble(
+    *,
+    action: str,
+    repo: Path,
+    config: ProjectConfig,
+    supervisor: Supervisor,
+    task_id: str | None = None,
+) -> None:
+    agent = supervisor.agent
+    check_names = ", ".join(command.name for command in config.verification_commands)
+    print("=== ai-orch run ===")
+    if task_id:
+        print(f"task_id: {task_id}")
+    print(f"action: {action}")
+    print(f"repo: {repo}")
+    print(f"agent: {agent.name}")
+    print(f"verification: {check_names or 'none'}")
+    print("status: running")
+    if agent.name == "mock":
+        print(
+            "note: mock agent is smoke-test mode; it verifies the orchestration loop "
+            "but does not perform real AI work."
+        )
+    print("", flush=True)
+
+
+def _print_supervisor_result(result: SupervisorResult, *, repo: Path) -> None:
+    task_prefix = f"{result.task_id}: " if result.task_id else ""
+    print(f"{task_prefix}{result.summary}")
+    print("")
+    print(f"result: {result.status}")
+    if result.task_id:
+        print("next commands:")
+        print(f"  ai-orch status {result.task_id} --repo {repo}")
+        print(f"  ai-orch report {result.task_id} --repo {repo}")
+        print(f"  ai-orch timeline {result.task_id} --repo {repo}")
 
 
 def _select_agent(config: ProjectConfig, policy_engine: PolicyEngine) -> AgentAdapter:
@@ -2024,6 +2107,9 @@ def _run_setup_command(args: argparse.Namespace) -> int:
 
 
 def _run_doctor_command(args: argparse.Namespace) -> int:
+    if args.doctor_command == "agents":
+        return _run_doctor_agents_command(args)
+
     repo = Path(args.repo).resolve()
     config_path = repo / ".ai-orch" / "config.yaml"
     state_dir = repo / ".ai-orch" / "state"
@@ -2108,6 +2194,165 @@ def _run_doctor_command(args: argparse.Namespace) -> int:
         return 1
     print("ready: yes")
     return 0
+
+
+def _run_doctor_agents_command(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config_path = repo / ".ai-orch" / "config.yaml"
+    config_exists = config_path.exists()
+    config = load_project_config(repo)
+    rows = _doctor_agent_rows(config)
+    default_row = next(
+        (row for row in rows if row["name"] == config.default_agent),
+        None,
+    )
+    issues: list[str] = []
+    if not config_exists:
+        issues.append("missing_config")
+    if default_row is None:
+        issues.append("default_agent_missing")
+    elif default_row["availability"] != "yes":
+        issues.append("default_agent_unavailable")
+
+    payload = {
+        "repo": str(repo),
+        "config_path": str(config_path),
+        "config_exists": config_exists,
+        "default_agent": config.default_agent,
+        "fallback_agents": config.fallback_agents,
+        "connectors": rows,
+        "api_adapters": {
+            "status": "not_implemented",
+            "guidance": (
+                "Use provider CLIs or a generic wrapper with externally managed "
+                "environment credentials."
+            ),
+        },
+        "issues": issues,
+        "ready": not issues,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if not issues else 1
+
+    print("=== ai-orch doctor agents ===")
+    print(f"repo: {repo}")
+    print(f"default_agent: {config.default_agent}")
+    if config.fallback_agents:
+        print(f"fallbacks: {', '.join(config.fallback_agents)}")
+    print("connectors:")
+    for row in rows:
+        markers = []
+        if row["default"]:
+            markers.append("default")
+        if row["fallback"]:
+            markers.append("fallback")
+        marker = f" ({', '.join(markers)})" if markers else ""
+        print(
+            f"- {row['name']}: configured={row['configured']} "
+            f"enabled={row['enabled']} type={row['type']} "
+            f"command={row['command']} available={row['availability']}{marker}"
+        )
+        print(f"  auth: {row['auth_model']}")
+        print(f"  api: {row['api_status']}")
+    print(
+        "api_adapters: not_implemented "
+        "(use provider CLIs or a generic wrapper with env-managed credentials)"
+    )
+    if issues:
+        print("issues:")
+        for issue in issues:
+            print(f"- {issue}")
+        return 1
+    print("ready: yes")
+    return 0
+
+
+def _doctor_agent_rows(config: ProjectConfig) -> list[dict[str, object]]:
+    names = list(_KNOWN_AGENT_CONNECTORS)
+    for name in config.agents:
+        if name not in names:
+            names.append(name)
+
+    detected = _detect_agent_commands()
+    rows: list[dict[str, object]] = []
+    for name in names:
+        agent_config = config.agents.get(name)
+        connector = _agent_connector_name(name, agent_config)
+        configured = agent_config is not None
+        enabled = bool(agent_config.enabled) if agent_config else False
+        if not configured:
+            availability = "not_configured"
+        elif not enabled:
+            availability = "skipped"
+        else:
+            availability = _agent_availability(config, name)
+        command = _doctor_agent_command(name, connector, agent_config)
+        rows.append(
+            {
+                "name": name,
+                "connector": connector,
+                "type": (
+                    agent_config.type
+                    if agent_config
+                    else _AGENT_DEFAULT_TYPES.get(connector, "generic_cli")
+                ),
+                "configured": configured,
+                "enabled": enabled,
+                "command": command,
+                "cli_path": detected.get(connector),
+                "availability": availability,
+                "auth_model": _agent_auth_model(connector, agent_config),
+                "api_status": _agent_api_status(connector),
+                "default": name == config.default_agent,
+                "fallback": name in config.fallback_agents,
+            }
+        )
+    return rows
+
+
+def _agent_connector_name(name: str, agent_config: AgentConfig | None) -> str:
+    if agent_config is None:
+        return name
+    if agent_config.type == "mock":
+        return "mock"
+    if agent_config.type == "generic_cli":
+        return "generic"
+    if agent_config.type == "codex_exec":
+        return "codex"
+    if agent_config.type in {"claude", "claude_headless"}:
+        return "claude"
+    if agent_config.type in {"gemini", "gemini_cli"}:
+        return "gemini"
+    if agent_config.type in {"kimi", "kimi_cli"}:
+        return "kimi"
+    return name
+
+
+def _doctor_agent_command(
+    name: str,
+    connector: str,
+    agent_config: AgentConfig | None,
+) -> str:
+    if agent_config is not None and agent_config.command:
+        return agent_config.command
+    return _AGENT_DEFAULT_COMMANDS.get(connector, _AGENT_DEFAULT_COMMANDS["generic"])
+
+
+def _agent_auth_model(connector: str, agent_config: AgentConfig | None) -> str:
+    if connector == "mock":
+        return "none; smoke-test adapter"
+    if connector in _CLI_AUTH_CONNECTORS:
+        return "native CLI login or CLI-managed provider credentials"
+    if agent_config and agent_config.env:
+        return "external environment variables supplied by wrapper process"
+    return "external wrapper/environment; no secrets stored by ai-orch"
+
+
+def _agent_api_status(connector: str) -> str:
+    if connector == "mock":
+        return "not_applicable"
+    return "not_implemented; use CLI adapter or generic wrapper"
 
 
 def _detect_agent_commands() -> dict[str, str | None]:

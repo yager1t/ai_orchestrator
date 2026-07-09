@@ -44,10 +44,11 @@ If the installer says Python 3.12+ was not found, use the built-in bootstrap:
 INSTALL_WINDOWS.cmd /install-python
 ```
 
-This uses `winget` to install Python 3.12, then continues the `ai-orch`
-installation. If `winget` is not available, install Python manually from
-python.org, enable PATH when the installer asks, and run `INSTALL_WINDOWS.cmd`
-again.
+The normal installer also offers this in the same window when Python is missing.
+Answer `Y` to let it try installing Python through `winget`, or use
+`/install-python` to skip the question. If `winget` is not available, install
+Python manually from python.org, enable PATH when the installer asks, and run
+`INSTALL_WINDOWS.cmd` again.
 
 The lower-level script is also available from Command Prompt:
 
@@ -123,7 +124,7 @@ Run commands through the root launcher:
 
 ```powershell
 .\ai-orch.cmd doctor
-.\ai-orch.cmd agents --check
+.\ai-orch.cmd doctor agents
 .\ai-orch.cmd start --task "Check setup"
 ```
 
@@ -131,12 +132,12 @@ In Command Prompt, omit the leading `.\`:
 
 ```cmd
 ai-orch.cmd doctor
-ai-orch.cmd agents --check
+ai-orch.cmd doctor agents
 ai-orch.cmd start --task "Check setup"
 ```
 
-If you run `.\ai-orch.cmd` without arguments, it prints common commands and
-runs `doctor`.
+If you run `.\ai-orch.cmd` without arguments, it prints common commands, runs
+`doctor`, and then runs `doctor agents`.
 
 If you installed Codex, Claude, Kimi, or Gemini and want a real worker, log in
 with that tool first. Keep raw provider keys outside `.ai-orch/config.yaml`;
@@ -151,6 +152,7 @@ If Python is not found, run:
 INSTALL_WINDOWS.cmd /install-python
 ```
 
+The default installer will also ask whether it should try this automatically.
 If automatic Python install is not available, install Python 3.12+ manually and
 rerun the script.
 

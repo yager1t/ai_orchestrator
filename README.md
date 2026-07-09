@@ -71,6 +71,10 @@ ai-orch start --task "Check the MVP scaffold" --repo .
 python -m pytest
 ```
 
+`start` and `resume` print run progress, including the selected agent,
+verification phase, result, and follow-up commands. When the selected agent is
+`mock`, the CLI states that it is smoke-test mode rather than real AI work.
+
 For a non-editable local install, run `python -m pip install .`. See
 [`docs/INSTALL.md`](docs/INSTALL.md) for the install smoke path and release
 verification commands. See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for the
@@ -94,8 +98,26 @@ If the installer says Python is missing, run:
 INSTALL_WINDOWS.cmd /install-python
 ```
 
+The normal installer also asks whether it should install Python when Python is
+missing; `/install-python` just skips that question.
+
 See [`docs/WINDOWS_INSTALL.md`](docs/WINDOWS_INSTALL.md) for PowerShell options,
 developer install mode, and troubleshooting.
+
+On Ubuntu/Linux, use:
+
+```bash
+bash INSTALL_LINUX.sh
+```
+
+After it finishes, run:
+
+```bash
+./ai-orch
+```
+
+See [`docs/LINUX_INSTALL.md`](docs/LINUX_INSTALL.md) for Python/bootstrap
+options and troubleshooting.
 
 ## Configuration
 
@@ -208,6 +230,27 @@ Use `ai-orch metrics --repo .` to print a local execution summary covering task
 and iteration counts, verification pass rate, approval request states, and
 adapter failures.
 
+Use `ai-orch doctor agents --repo .` to inspect the connector matrix for the
+current machine. It reports whether each known worker is configured, enabled,
+available on `PATH`, how credentials are expected to be supplied, and whether a
+native API adapter exists.
+
+Connector support in `0.2.4`:
+
+| Connector | CLI/headless support | Native API adapter | Credential model |
+| --- | --- | --- | --- |
+| Codex | yes, via `codex exec` | not implemented | Codex CLI login or CLI-managed credentials |
+| Claude | yes, via `claude -p` | not implemented | Claude CLI login or CLI-managed credentials |
+| Gemini | yes, via `gemini -p` | not implemented | Gemini CLI login or CLI-managed credentials |
+| Kimi | yes, via `kimi` | not implemented | Kimi CLI login or CLI-managed credentials |
+| Generic | yes, configurable command wrapper | wrapper-owned | external env/secret store outside `.ai-orch/config.yaml` |
+| Mock | yes, smoke-test only | not applicable | no credentials |
+
+Native provider API adapters are intentionally not part of the `0.2.4`
+production surface. If a provider API is required today, wrap it with the
+`generic_cli` adapter and inject credentials from the shell, OS/user secret
+store, service manager, or CI secrets.
+
 Timeouts are configured per agent and verification command with `timeout_sec`.
 Use `orchestrator.max_runtime_sec` as an outer cooperative budget for the
 supervisor loop.
@@ -233,6 +276,14 @@ python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG
 python -m ai_orchestrator autopilot plan ready 1 --repo .
 python -m ai_orchestrator autopilot loop --repo . --plan docs/BACKLOG.md --max-items 2
 python -m ai_orchestrator autopilot loop-history --repo . --plan docs/BACKLOG.md
+```
+
+Before unattended work, run:
+
+```bash
+python -m ai_orchestrator doctor --repo .
+python -m ai_orchestrator doctor agents --repo .
+python -m ai_orchestrator autopilot queue preflight --repo . --plan docs/BACKLOG.md
 ```
 
 `autopilot run` is a dry run unless `--execute` is passed. Execution is blocked
@@ -345,6 +396,7 @@ in `ai_orchestrator/storage/migrations.py`.
 - `docs/ARCHITECTURE.md`: current component overview.
 - `docs/USER_GUIDE.md`: practical operator guide for installation, tasks,
   approvals, memory, autopilot, evaluations, and recovery.
+- `docs/LINUX_INSTALL.md`: one-command Ubuntu/Linux installer and troubleshooting.
 - `docs/WINDOWS_INSTALL.md`: one-command Windows installer and troubleshooting.
 - `docs/MVP_IMPLEMENTATION_PLAN.md`: implemented phases and deferred work.
 - `docs/POST_MVP_ROADMAP.md`: post-MVP product and engineering roadmap.

@@ -111,11 +111,33 @@ Close this window, open the extracted project folder again, and run:
 "@
     }
 
+    Write-Host ""
+    Write-Host "Python 3.12+ was not found." -ForegroundColor Yellow
+    Write-Host "ai-orch needs Python 3.12 or newer."
+    Write-Host ""
+    Write-Host "The installer can try to install Python 3.12 using winget."
+    Write-Host "This may open a Windows installer prompt."
+    Write-Host ""
+    $answer = Read-Host "Install Python 3.12 now? Type Y and press Enter, or press Enter to cancel"
+    if ($answer -match "^(Y|y|YES|yes)$") {
+        Install-PythonWithWinget
+        $python = Get-PythonCandidate
+        if ($null -ne $python) {
+            return $python
+        }
+        throw @"
+Python was installed, but this terminal cannot see it yet.
+
+Close this window, open the extracted project folder again, and run:
+  INSTALL_WINDOWS.cmd
+"@
+    }
+
     throw @"
 Python 3.12+ was not found.
 
 Fast fix:
-  Double-click INSTALL_WINDOWS.cmd again with automatic Python install enabled:
+  Run:
     INSTALL_WINDOWS.cmd /install-python
 
 Manual fix:
@@ -202,6 +224,10 @@ if (-not $SkipDoctor) {
     if ($LASTEXITCODE -ne 0) {
         throw "ai-orch doctor reported setup issues."
     }
+    & $VenvPython -m ai_orchestrator doctor agents --repo $RepoRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "ai-orch doctor agents reported setup issues."
+    }
 }
 
 Write-Step "Creating launcher"
@@ -210,6 +236,7 @@ $LauncherText = @'
 setlocal
 set "ROOT=%~dp0."
 set "AI_ORCH=%ROOT%\.venv\Scripts\ai-orch.exe"
+set "PATH=%ROOT%\.venv\Scripts;%PATH%"
 
 if not exist "%AI_ORCH%" (
   echo ai-orch is not installed yet.
@@ -222,13 +249,18 @@ if "%~1"=="" (
   echo.
   echo Common commands:
   echo   ai-orch.cmd doctor
-  echo   ai-orch.cmd agents --check
+  echo   ai-orch.cmd doctor agents
   echo   ai-orch.cmd start --task "Check setup"
   echo   ai-orch.cmd status TASK_ID
   echo.
   echo Running doctor now:
   echo.
   "%AI_ORCH%" doctor --repo "%ROOT%"
+  if errorlevel 1 exit /b %ERRORLEVEL%
+  echo.
+  echo Running agent diagnostics now:
+  echo.
+  "%AI_ORCH%" doctor agents --repo "%ROOT%"
   exit /b %ERRORLEVEL%
 )
 
@@ -252,8 +284,8 @@ Write-Host "  1. Run diagnostics:"
 Write-Host "     PowerShell: .\ai-orch.cmd doctor"
 Write-Host "     Command Prompt: ai-orch.cmd doctor"
 Write-Host "  2. See detected workers:"
-Write-Host "     PowerShell: .\ai-orch.cmd agents --check"
-Write-Host "     Command Prompt: ai-orch.cmd agents --check"
+Write-Host "     PowerShell: .\ai-orch.cmd doctor agents"
+Write-Host "     Command Prompt: ai-orch.cmd doctor agents"
 Write-Host "  3. Run a first safe task:"
 Write-Host "     PowerShell: .\ai-orch.cmd start --task `"Check setup`""
 Write-Host "     Command Prompt: ai-orch.cmd start --task `"Check setup`""

@@ -137,6 +137,7 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
         repo / "README.md",
         repo / "CHANGELOG.md",
         repo / "docs" / "INSTALL.md",
+        repo / "docs" / "LINUX_INSTALL.md",
         repo / "docs" / "WINDOWS_INSTALL.md",
         repo / "docs" / "RELEASE.md",
         repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md",
