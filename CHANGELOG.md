@@ -2,17 +2,28 @@
 
 ## Unreleased
 
+## 0.2.5 — connector diagnostics and Linux install
+
 - Added `ai-orch doctor agents` with text and JSON connector diagnostics for
   configured/enabled state, CLI availability, auth model, and native API-adapter
   status.
 
-- Documented the `0.2.4` connector support matrix: Codex, Claude, Gemini, Kimi,
+- Documented the `0.2.5` connector support matrix: Codex, Claude, Gemini, Kimi,
   Generic, and Mock are CLI/headless or wrapper-based; native provider API
-  adapters remain post-0.2.4 work.
+  adapters remain post-0.2.5 work.
 
 - Added operator-facing progress output for `ai-orch start` and `resume`,
   including run headers, supervisor progress milestones, mock-agent smoke-test
   warnings, final result status, and next commands.
+
+- Added `INSTALL_LINUX.sh`, `scripts/install_linux.sh`, and
+  `docs/LINUX_INSTALL.md` for Ubuntu/Linux installs that regenerate local config,
+  create state/report directories, offer an opt-in Python 3.12 `apt` bootstrap,
+  and fall back to `mock` when real worker CLIs are unavailable.
+
+- Updated generated Windows and Linux launchers to prepend the local virtual
+  environment to `PATH`, so verification commands that invoke `python` work
+  without manually activating `.venv`.
 
 ## 0.2.4 — double-click Windows installer
 
@@ -26,15 +37,6 @@
 
 - Changed the missing-Python flow to offer the winget Python install
   interactively in the same installer window before failing.
-
-- Added `INSTALL_LINUX.sh`, `scripts/install_linux.sh`, and
-  `docs/LINUX_INSTALL.md` for Ubuntu/Linux installs that regenerate local config,
-  create state/report directories, offer an opt-in Python 3.12 `apt` bootstrap,
-  and fall back to `mock` when real worker CLIs are unavailable.
-
-- Updated generated Windows and Linux launchers to prepend the local virtual
-  environment to `PATH`, so verification commands that invoke `python` work
-  without manually activating `.venv`.
 
 ## 0.2.3 — clearer Windows first-run UX
 

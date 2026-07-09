@@ -1,6 +1,6 @@
 # Architectural Decisions
 
-## ADR-0006: Native Provider API Adapters Are Post-0.2.4 Work
+## ADR-0006: Native Provider API Adapters Are Post-0.2.5 Work
 
 Date: 2026-07-09
 
@@ -18,7 +18,7 @@ and provider-specific error handling.
 
 ### Decision
 
-Keep the `0.2.4` production surface focused on CLI/headless adapters and
+Keep the `0.2.5` production surface focused on CLI/headless adapters and
 `generic_cli` wrappers. Do not advertise native provider API adapters as ready
 until they have explicit adapter contracts, tests, credential guidance, and
 release documentation.

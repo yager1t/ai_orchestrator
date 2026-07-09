@@ -235,7 +235,7 @@ current machine. It reports whether each known worker is configured, enabled,
 available on `PATH`, how credentials are expected to be supplied, and whether a
 native API adapter exists.
 
-Connector support in `0.2.4`:
+Connector support in `0.2.5`:
 
 | Connector | CLI/headless support | Native API adapter | Credential model |
 | --- | --- | --- | --- |
@@ -246,7 +246,7 @@ Connector support in `0.2.4`:
 | Generic | yes, configurable command wrapper | wrapper-owned | external env/secret store outside `.ai-orch/config.yaml` |
 | Mock | yes, smoke-test only | not applicable | no credentials |
 
-Native provider API adapters are intentionally not part of the `0.2.4`
+Native provider API adapters are intentionally not part of the `0.2.5`
 production surface. If a provider API is required today, wrap it with the
 `generic_cli` adapter and inject credentials from the shell, OS/user secret
 store, service manager, or CI secrets.

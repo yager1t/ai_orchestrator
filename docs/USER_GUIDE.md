@@ -231,7 +231,7 @@ ai-orch agents --repo . --check
 ai-orch doctor agents --repo .
 ```
 
-Connector support in `0.2.4`:
+Connector support in `0.2.5`:
 
 | Connector | CLI/headless support | Native API adapter | Credential model |
 | --- | --- | --- | --- |
