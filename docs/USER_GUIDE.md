@@ -106,6 +106,16 @@ The demo runs `examples/docs_only_quickstart` with the built-in `mock` worker,
 verifies the result, writes a report, and prints the next real-worker path. It
 does not require Codex, Claude, Gemini, Kimi, or external AI credentials.
 
+Run the first-run wizard for your own repository:
+
+```bash
+ai-orch onboard
+ai-orch onboard --json
+```
+
+`onboard` checks config, state/report directories, worker CLI availability,
+mock-vs-real mode, verification readiness, and concrete next commands.
+
 Use this distinction throughout the product:
 
 - `mock demo mode` means the supervisor and verification flow work locally, but
@@ -295,7 +305,29 @@ it through `generic_cli`. Keep API keys outside `.ai-orch/config.yaml`.
 
 ## 5. Run One Task
 
-Start a task:
+For beginner-friendly scenarios, prefer the product commands:
+
+```bash
+ai-orch fix --task "Fix the failing payment test"
+ai-orch task --task "Add OAuth login"
+ai-orch analyze
+ai-orch review
+ai-orch docs --task "Document local setup"
+```
+
+Each command applies a role template and then calls the same supervisor loop as
+`start`. Verification remains the authority for completion.
+
+Available role templates:
+
+- Developer
+- Bug fixer
+- Code reviewer
+- Documentation writer
+- Security auditor
+- QA engineer
+
+The explicit low-level command remains available:
 
 ```bash
 ai-orch start --task "Implement a small bounded change" --repo .

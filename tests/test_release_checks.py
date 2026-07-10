@@ -183,7 +183,10 @@ requires-python = ">=3.12"
     (repo / "ai_orchestrator" / "__init__.py").write_text("", encoding="utf-8")
     (repo / "ai_orchestrator" / "__main__.py").write_text("", encoding="utf-8")
     (repo / "ai_orchestrator" / "cli" / "app.py").write_text("", encoding="utf-8")
-    (repo / "README.md").write_text("# Demo\n\nRun `ai-orch demo`.\n", encoding="utf-8")
+    (repo / "README.md").write_text(
+        "# Demo\n\nRun `ai-orch demo`, `ai-orch onboard`, and `ai-orch fix`.\n",
+        encoding="utf-8",
+    )
     (repo / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
     (repo / "docs" / "INSTALL.md").write_text(
         "# Install\n\nUse `pipx install ai-orchestrator`.\n",
@@ -201,6 +204,10 @@ requires-python = ">=3.12"
         "# Onboarding Goal Plan\n",
         encoding="utf-8",
     )
+    (repo / "docs" / "V0_3_GOAL_PLAN.md").write_text(
+        "# v0.3 Goal Plan\n",
+        encoding="utf-8",
+    )
     (repo / "docs" / "WINDOWS_INSTALL.md").write_text(
         "# Windows Install\n",
         encoding="utf-8",
@@ -211,6 +218,6 @@ requires-python = ">=3.12"
         encoding="utf-8",
     )
     (repo / "docs" / "USER_GUIDE.md").write_text(
-        "# User Guide\n\nRun `ai-orch demo`.\n",
+        "# User Guide\n\nRun `ai-orch demo`, `ai-orch onboard`, and `ai-orch fix`.\n",
         encoding="utf-8",
     )

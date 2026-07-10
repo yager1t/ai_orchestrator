@@ -19,6 +19,11 @@ ai-orch demo
 
 Until the package is published, use the repository-local install below.
 
+WinGet and Homebrew remain planned platform channels until maintainable
+manifests/formulae exist. A Linux `curl | bash` install route should be treated
+as a future distribution artifact that requires the same release review as any
+installer script, not as an ad hoc command copied into docs.
+
 ## Development Install
 
 Use an editable install when developing or running local autopilot iterations:
@@ -108,7 +113,8 @@ ai-orch setup
 ai-orch doctor
 ai-orch doctor agents --repo .
 ai-orch demo
-ai-orch start --task "Check the install path" --repo .
+ai-orch onboard
+ai-orch fix --task "Check the install path" --repo .
 ai-orch status TASK_ID --repo .
 ```
 

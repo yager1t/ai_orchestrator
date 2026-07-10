@@ -2361,8 +2361,84 @@ verification:
     assert "=== ai-orch demo ===" in output
     assert "Demo summary:" in output
     assert "- result: done" in output
+    assert "Run summary:" in output
+    assert "verification: passed" in output
     assert "Next real-worker path:" in output
     assert list((tmp_path / ".ai-orch" / "reports").glob("task-*.md"))
+
+
+def test_onboard_reports_missing_config_with_next_steps(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    exit_code = main(["onboard", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["config_exists"] is False
+    assert payload["ready"] is False
+    assert payload["recommended_steps"][0].startswith("Run: ai-orch setup")
+    assert any(item["name"] == "Fix a bug" for item in payload["scenarios"])
+
+
+def test_onboard_reports_ready_mock_demo_mode(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    assert main(["setup", "--repo", str(tmp_path), "--agent", "mock"]) == 0
+    capsys.readouterr()
+
+    exit_code = main(["onboard", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "=== ai-orch onboard ===" in output
+    assert "Recommended path:" in output
+    assert "ai-orch demo" in output
+    assert "Scenarios:" in output
+    assert "ai-orch fix" in output
+
+
+def test_product_fix_command_uses_role_template_and_writes_report(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    write_config(tmp_path)
+
+    exit_code = main(
+        [
+            "fix",
+            "--repo",
+            str(tmp_path),
+            "--task",
+            "Fix the payment bug",
+        ]
+    )
+    output = capsys.readouterr().out
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    tasks = store.list_tasks()
+
+    assert exit_code == 0
+    assert "action: fix" in output
+    assert "Run summary:" in output
+    assert "report:" in output
+    assert tasks
+    assert "Role: Bug fixer." in tasks[0].task
+    assert "Fix the payment bug" in tasks[0].task
+    assert list((tmp_path / ".ai-orch" / "reports").glob("task-*.md"))
+
+
+def test_product_command_requires_setup_for_real_project(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    exit_code = main(["review", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "Config not found" in output
+    assert "Next command: ai-orch setup --repo ." in output
+    assert "ai-orch demo" in output
 
 
 def test_doctor_agents_reports_unavailable_default_agent(

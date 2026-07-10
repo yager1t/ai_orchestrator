@@ -91,11 +91,14 @@ direct Codex path is:
 ```bash
 ai-orch setup --profile codex-safe --agent codex
 ai-orch doctor agents
-ai-orch start --task "Review this repository and suggest the safest next fix" --repo .
+ai-orch onboard
+ai-orch fix --task "Review this repository and suggest the safest next fix" --repo .
 ```
 
 `setup` writes `.ai-orch/config.yaml`, `doctor agents` explains worker
-availability and auth expectations, and `start` runs the supervisor loop.
+availability and auth expectations, `onboard` gives a first-run readiness
+wizard, and `fix` runs the same verification-gated supervisor loop with a
+beginner-friendly role template.
 
 When the selected agent is `mock`, the CLI states that it is demo/smoke-test
 mode rather than real AI work.
@@ -119,7 +122,8 @@ ai-orch --help
 ai-orch setup
 ai-orch doctor
 ai-orch demo
-ai-orch start --task "Check setup" --repo .
+ai-orch onboard
+ai-orch review --repo .
 python -m pytest
 ```
 
@@ -180,6 +184,28 @@ ai-orch demo
 
 See [`docs/MAC_INSTALL.md`](docs/MAC_INSTALL.md) for `pipx`, local install,
 launcher, and Homebrew-channel guidance.
+
+## Configuration
+
+## Human-Friendly Task Commands
+
+`start` remains the explicit low-level command, but most first runs can use a
+scenario command:
+
+```bash
+ai-orch fix --task "Fix the failing payment test"
+ai-orch task --task "Add OAuth login"
+ai-orch analyze
+ai-orch review
+ai-orch docs --task "Document local setup"
+```
+
+These commands use beginner role templates such as Bug fixer, Developer, Code
+reviewer, Documentation writer, Security auditor, and QA engineer. They do not
+bypass supervisor verification; they only shape the task prompt and then call
+the normal run loop.
+
+Use `ai-orch onboard` any time you need the guided readiness view again.
 
 ## Configuration
 
