@@ -2201,6 +2201,58 @@ def test_setup_auto_selects_detected_agent(
     assert 'command: "claude"' in config_text
 
 
+def test_setup_codex_safe_profile_prefers_codex_when_detected(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_which(command: str) -> str | None:
+        if command == "codex":
+            return "/usr/bin/codex"
+        return None
+
+    monkeypatch.setattr("ai_orchestrator.cli.app.shutil.which", fake_which)
+
+    exit_code = main(
+        ["setup", "--repo", str(tmp_path), "--profile", "codex-safe", "--json"]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    config_text = (tmp_path / ".ai-orch" / "config.yaml").read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert payload["profile"] == "codex-safe"
+    assert payload["default_agent"] == "codex"
+    assert payload["readiness"]["mode"] == "real worker"
+    assert payload["readiness"]["real_worker_ready"] == "yes"
+    assert 'setup_profile: "codex-safe"' in config_text
+    assert 'default_agent: "codex"' in config_text
+
+
+def test_setup_docs_profile_writes_docs_verification(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    exit_code = main(
+        [
+            "setup",
+            "--repo",
+            str(tmp_path),
+            "--agent",
+            "mock",
+            "--profile",
+            "docs-project",
+        ]
+    )
+    output = capsys.readouterr().out
+    config_text = (tmp_path / ".ai-orch" / "config.yaml").read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert "profile: docs-project" in output
+    assert 'setup_profile: "docs-project"' in config_text
+    assert 'name: "readme-has-heading"' in config_text
+    assert "OPENAI_API_KEY" not in config_text
+
+
 def test_setup_refuses_to_overwrite_existing_config(
     capsys,
     tmp_path: Path,
@@ -2233,6 +2285,8 @@ def test_doctor_reports_ready_setup(
     assert payload["config_exists"] is True
     assert payload["default_agent"] == "mock"
     assert payload["default_agent_available"] == "yes"
+    assert payload["readiness"]["mode"] == "mock demo"
+    assert payload["readiness"]["mock_demo_mode"] == "yes"
     assert payload["issues"] == []
 
 
@@ -2268,6 +2322,47 @@ def test_doctor_agents_reports_connector_matrix(
     assert connectors["codex"]["auth_model"] == (
         "native CLI login or CLI-managed provider credentials"
     )
+    assert connectors["codex"]["next_step"]
+    assert payload["readiness"]["selected_worker"] == "mock"
+
+
+def test_demo_runs_docs_only_first_value_path(capsys, tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    config_dir = tmp_path / ".ai-orch"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        """
+orchestrator:
+  default_agent: "mock"
+  max_iterations: 2
+
+agents:
+  mock:
+    enabled: true
+    type: "mock"
+
+verification:
+  strict: true
+  commands:
+    - name: "readme-has-heading"
+      argv:
+        - "python"
+        - "-c"
+        - "import re, sys; txt = open('README.md', encoding='utf-8').read(); sys.exit(0 if re.search(r'^# ', txt, re.MULTILINE) else 1)"
+      timeout_sec: 30
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["demo", "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "=== ai-orch demo ===" in output
+    assert "Demo summary:" in output
+    assert "- result: done" in output
+    assert "Next real-worker path:" in output
+    assert list((tmp_path / ".ai-orch" / "reports").glob("task-*.md"))
 
 
 def test_doctor_agents_reports_unavailable_default_agent(

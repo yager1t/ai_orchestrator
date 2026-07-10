@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.2.6 — product-ready onboarding
+
+- Added `ai-orch demo`, a safe first-value command that runs the bundled
+  docs-only quickstart through the real supervisor, verification, report, and
+  next-step flow without requiring external AI credentials.
+
+- Added setup presets with `--profile` for `codex-safe`, `python-project`,
+  `node-project`, `docs-project`, and `readonly-review`, plus clearer setup and
+  doctor readiness summaries that distinguish mock demo mode from real-worker
+  readiness and external CLI login expectations.
+
+- Reworked first-run documentation around two user paths: "try it safely" with
+  `ai-orch demo`, and "use it on my project" with Codex-first setup, doctor,
+  and start commands.
+
+- Added package-channel guidance for `pipx`, a dedicated macOS install guide,
+  and release checks that require the onboarding docs and key install/demo
+  content.
+
 ## 0.2.5 — connector diagnostics and Linux install
 
 - Added `ai-orch doctor agents` with text and JSON connector diagnostics for

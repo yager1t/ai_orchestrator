@@ -15,6 +15,16 @@ verification checks are.
 
 ## 1. Install
 
+For packaged releases, prefer `pipx`:
+
+```bash
+pipx install ai-orchestrator
+ai-orch --version
+ai-orch demo
+```
+
+Until the package is published, install from a checkout or release ZIP.
+
 From the repository root:
 
 ```bash
@@ -22,6 +32,7 @@ python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 python -m pip install -e ".[dev]"
 ai-orch --version
+ai-orch demo
 ```
 
 For a non-editable local install:
@@ -74,7 +85,35 @@ other real worker CLIs are unavailable. The `./ai-orch` launcher adds `.venv/bin
 to `PATH`, so you do not need to activate the virtual environment before running
 normal commands.
 
-## 2. Initialize Local State
+On macOS, see `docs/MAC_INSTALL.md`. The short local path is:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+ai-orch demo
+```
+
+## 2. Get First Value
+
+Run the bundled safe demo before using a real worker:
+
+```bash
+ai-orch demo
+```
+
+The demo runs `examples/docs_only_quickstart` with the built-in `mock` worker,
+verifies the result, writes a report, and prints the next real-worker path. It
+does not require Codex, Claude, Gemini, Kimi, or external AI credentials.
+
+Use this distinction throughout the product:
+
+- `mock demo mode` means the supervisor and verification flow work locally, but
+  no real AI worker is doing useful coding work.
+- `real worker mode` means a configured CLI such as Codex is selected and
+  available; authentication still belongs to that CLI's native login flow.
+
+## 3. Initialize Local State
 
 For the simplest first run, let `ai-orch` create a safe local config:
 
@@ -92,9 +131,18 @@ for example `codex login` or `claude login`, before using them as real workers.
 Use an explicit worker when you already know what should run:
 
 ```bash
-ai-orch setup --agent codex
+ai-orch setup --profile codex-safe --agent codex
 ai-orch setup --agent claude
 ai-orch setup --agent mock
+```
+
+Use a setup preset to avoid editing YAML at first:
+
+```bash
+ai-orch setup --profile python-project
+ai-orch setup --profile node-project
+ai-orch setup --profile docs-project
+ai-orch setup --profile readonly-review
 ```
 
 Preview without writing files:
@@ -145,7 +193,7 @@ In PowerShell, keep the leading `.\`. In Command Prompt, `ai-orch.cmd doctor`
 also works. Running `.\ai-orch.cmd` without arguments prints common commands
 and runs diagnostics.
 
-## 3. Configure Agents And Verification
+## 4. Configure Agents And Verification
 
 Most users should start with `ai-orch setup`. Edit `.ai-orch/config.yaml` only
 when you need custom commands, flags, timeouts, policies, or verification.
@@ -245,7 +293,7 @@ Connector support in `0.2.5`:
 If you need a provider API today, wrap that API call in a local script and run
 it through `generic_cli`. Keep API keys outside `.ai-orch/config.yaml`.
 
-## 4. Run One Task
+## 5. Run One Task
 
 Start a task:
 
@@ -296,7 +344,7 @@ ai-orch export <task-id> --repo .
 ai-orch export <task-id> --repo . --redact
 ```
 
-## 5. Run Verification Directly
+## 6. Run Verification Directly
 
 ```bash
 ai-orch verify --repo .
@@ -318,7 +366,7 @@ mypy ai_orchestrator
 git diff --check
 ```
 
-## 6. Handle Approvals
+## 7. Handle Approvals
 
 Commands matching `policy.require_approval` create approval requests or require
 an exact command approval. Deny rules always win over approvals.
@@ -354,7 +402,7 @@ Mark old pending approvals stale:
 ai-orch approvals stale --repo . --older-than-hours 24
 ```
 
-## 7. Use The Read-Only TUI Helpers
+## 8. Use The Read-Only TUI Helpers
 
 ```bash
 ai-orch tui tasks --repo .
@@ -368,7 +416,7 @@ ai-orch tui memory-influence --repo . --task-id <task-id>
 
 These commands only render stored state. They do not execute agents.
 
-## 8. Use Memory
+## 9. Use Memory
 
 External Codebase Memory is optional. It is useful for architecture search and
 impact review before risky work.
@@ -396,7 +444,7 @@ ai-orch memory influence --repo . --task-id <task-id>
 The supervisor may inject ranked active lessons into planning context as
 read-only hints. Verification remains authoritative.
 
-## 9. Use Autopilot Safely
+## 10. Use Autopilot Safely
 
 Autopilot is dry-run-by-default. It does not push, merge, deploy, publish, or
 delete worktrees.
@@ -451,7 +499,7 @@ ai-orch autopilot loop-history --repo . --plan docs/BACKLOG.md
 
 For the full operator flow, see `docs/AUTOPILOT_RUNBOOK.md`.
 
-## 10. Use PlanGraph
+## 11. Use PlanGraph
 
 Create a durable graph:
 
@@ -486,7 +534,7 @@ ai-orch autopilot plan run-next <graph-id> --repo .
 ai-orch autopilot plan run-next <graph-id> --repo . --execute --allow-dirty
 ```
 
-## 11. Run Evaluations
+## 12. Run Evaluations
 
 ```bash
 ai-orch eval golden --repo .
@@ -499,7 +547,7 @@ ai-orch eval all --repo . --json
 Evaluation suites run local scenarios through the supervisor in isolated
 temporary repositories. Unsafe action count should stay zero.
 
-## 12. Recover Interrupted Work
+## 13. Recover Interrupted Work
 
 Preview recovery:
 
@@ -517,7 +565,7 @@ ai-orch recover --repo . --apply --reason "operator recovery after interrupted r
 Recovery can block interrupted running tasks and fail expired action records so
 they do not look active forever.
 
-## 13. Normal Operating Loop
+## 14. Normal Operating Loop
 
 Use this loop for real work:
 
@@ -530,7 +578,7 @@ Use this loop for real work:
 7. Run the full quality gate.
 8. Commit manually after review.
 
-## 14. Safety Rules
+## 15. Safety Rules
 
 - Deny rules are stronger than approvals.
 - Keep execution dry-run-first for autopilot.

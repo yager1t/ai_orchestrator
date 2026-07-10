@@ -16,6 +16,10 @@ Use this checklist before tagging or publishing an `ai-orch` release.
   `ai-orch --version`.
 - For a packaged local smoke test, create a clean virtual environment and run
   `python -m pip install .`, then `ai-orch --help`.
+- Confirm `ai-orch demo` runs the bundled docs-only first-value path.
+- Confirm `README.md`, `docs/INSTALL.md`, `docs/USER_GUIDE.md`, and
+  `docs/MAC_INSTALL.md` describe the same `pipx`, demo, and real-worker setup
+  flow.
 - Follow `docs/INSTALL.md` for the install smoke path.
 
 ## Verification
