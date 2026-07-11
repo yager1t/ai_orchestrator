@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.5.3 — PyPI metadata
+
+- Added README-based PyPI long description metadata and disabled publish
+  attestations while the release workflow uses an explicit PyPI API token.
+
 ## 0.5.2 — PyPI package channel
 
 - Changed the public PyPI distribution name to `ai-engineering-supervisor`
