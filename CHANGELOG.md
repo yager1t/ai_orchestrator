@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 — AgentTrace and durability core
+
 - Added v0.4 AgentTrace durability metadata to task events, including run,
   session, iteration, correlation, actor, summary, payload preview, and
   idempotency fields with a schema migration for existing state stores.
