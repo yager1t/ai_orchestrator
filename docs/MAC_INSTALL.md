@@ -11,13 +11,14 @@ For packaged releases, prefer `pipx`:
 ```bash
 python3 -m pip install --user pipx
 python3 -m pipx ensurepath
-pipx install ai-orch
+pipx install ai-engineering-supervisor
 ai-orch --version
 ai-orch demo
 ```
 
 The Python import package remains `ai_orchestrator`; the published
-distribution and console command are both named `ai-orch`.
+distribution is named `ai-engineering-supervisor`, and the console command is
+named `ai-orch`.
 
 ## Local Repository Install
 

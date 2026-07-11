@@ -2,12 +2,19 @@
 
 ## Unreleased
 
+## 0.5.2 — PyPI package channel
+
+- Changed the public PyPI distribution name to `ai-engineering-supervisor`
+  after PyPI rejected both `ai-orchestrator` and `ai-orch` because of existing
+  project ownership/name-similarity rules. The Python import package remains
+  `ai_orchestrator`, and the console command remains `ai-orch`.
+
 ## 0.5.1 — PyPI package channel
 
-- Changed the public PyPI distribution name to `ai-orch` because
-  `ai-orchestrator` is already owned by a different PyPI project. The Python
-  import package remains `ai_orchestrator`, and the console command remains
-  `ai-orch`.
+- Prepared a fallback public PyPI distribution name, `ai-orch`, after
+  discovering that `ai-orchestrator` is already owned by a different PyPI
+  project. PyPI later rejected `ai-orch` as too similar to an existing project,
+  so this GitHub-only release is superseded by `0.5.2`.
 
 ## 0.5.0 — Typed Action Broker and policy tiers
 
