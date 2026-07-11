@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0 — PlanGraph v1
+
 - Added v0.6 PlanGraph node metadata for task text, acceptance criteria,
   verification requirements, blocked reasons, source/repair links, linked task
   ids, and queue item ids, with schema migration support for older state stores.
