@@ -141,7 +141,7 @@ _PRODUCT_COMMAND_DEFAULT_TASKS = {
 }
 
 # Schema version for the JSON trace produced by ``ai-orch export``.
-TRACE_SCHEMA_VERSION = "1.0"
+TRACE_SCHEMA_VERSION = "1.1"
 
 
 def _add_max_runtime_sec_argument(parser: Any) -> None:
@@ -1712,12 +1712,26 @@ def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
             store.update_task_status(task.task_id, "blocked")
             store.append_task_event(
                 task.task_id,
+                "task_recovered",
+                {
+                    "previous_status": "running",
+                    "status": "blocked",
+                    "reason": args.reason,
+                },
+                actor="supervisor",
+                summary="Task recovered and marked blocked",
+                idempotency_key="task_recovered:blocked",
+            )
+            store.append_task_event(
+                task.task_id,
                 "task.recovered",
                 {
                     "previous_status": "running",
                     "status": "blocked",
                     "reason": args.reason,
                 },
+                actor="supervisor",
+                summary="Task recovered and marked blocked",
             )
             blocked_tasks += 1
         for action in expired_actions:

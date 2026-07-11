@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Added v0.4 AgentTrace durability metadata to task events, including run,
+  session, iteration, correlation, actor, summary, payload preview, and
+  idempotency fields with a schema migration for existing state stores.
+
+- Instrumented supervisor runs with durable lifecycle events and checkpoints for
+  task creation/resume, iteration start/finish, agent calls/results,
+  verification start/finish, supervisor decisions, terminal task states, and
+  interrupted execution inspection.
+
+- Added policy/tool audit events for brokered approvals, denials, command
+  starts, and command finishes, and expanded task reports with
+  recovery/checkpoint summaries.
+
 ## 0.3.0 — first-run wizard and product commands
 
 - Added `ai-orch onboard`, a beginner-facing first-run wizard with text and

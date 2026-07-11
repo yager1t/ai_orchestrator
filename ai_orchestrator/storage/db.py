@@ -122,8 +122,16 @@ class StoredTaskEvent:
     event_id: int
     task_id: str
     sequence: int
+    run_id: str | None
+    session_id: str | None
+    iteration_id: int | None
+    correlation_id: str | None
+    idempotency_key: str | None
     event_type: str
+    actor: str
+    summary: str
     payload: dict[str, object]
+    payload_preview: str
     created_at: str
 
 
@@ -431,8 +439,16 @@ class StateStore:
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id TEXT NOT NULL,
                     sequence INTEGER NOT NULL,
+                    run_id TEXT,
+                    session_id TEXT,
+                    iteration_id INTEGER,
+                    correlation_id TEXT,
+                    idempotency_key TEXT,
                     event_type TEXT NOT NULL,
+                    actor TEXT NOT NULL DEFAULT 'system',
+                    summary TEXT NOT NULL DEFAULT '',
                     payload_json TEXT NOT NULL DEFAULT '{}',
+                    payload_preview TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     UNIQUE (task_id, sequence),
                     FOREIGN KEY (task_id) REFERENCES tasks(task_id)
@@ -440,6 +456,10 @@ class StateStore:
 
                 CREATE INDEX IF NOT EXISTS idx_task_events_task_sequence
                 ON task_events (task_id, sequence);
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_task_events_task_idempotency
+                ON task_events (task_id, idempotency_key)
+                WHERE idempotency_key IS NOT NULL;
 
                 CREATE TABLE IF NOT EXISTS action_records (
                     action_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -701,14 +721,44 @@ class StateStore:
         task_id: str,
         event_type: str,
         payload: dict[str, object] | None = None,
+        *,
+        run_id: str | None = None,
+        session_id: str | None = None,
+        iteration_id: int | None = None,
+        correlation_id: str | None = None,
+        idempotency_key: str | None = None,
+        actor: str = "system",
+        summary: str | None = None,
+        payload_preview: str | None = None,
     ) -> StoredTaskEvent:
         self.initialize()
         if not event_type.strip():
             raise ValueError("Task event type cannot be empty")
+        if not actor.strip():
+            raise ValueError("Task event actor cannot be empty")
 
         now = _now()
         payload_json = _encode_json_payload(payload)
+        normalized_event_type = event_type.strip()
+        normalized_actor = actor.strip()
+        normalized_idempotency_key = (
+            idempotency_key.strip()
+            if idempotency_key is not None and idempotency_key.strip()
+            else None
+        )
+        normalized_summary = redact_secrets(summary or normalized_event_type) or ""
+        normalized_preview = _event_payload_preview(
+            payload_preview if payload_preview is not None else payload
+        )
         with self._connect() as connection:
+            if normalized_idempotency_key is not None:
+                existing = self._task_event_by_idempotency_key(
+                    connection,
+                    task_id,
+                    normalized_idempotency_key,
+                )
+                if existing is not None:
+                    return _stored_task_event_from_row(existing)
             row = connection.execute(
                 """
                 SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
@@ -723,17 +773,33 @@ class StateStore:
                 INSERT INTO task_events (
                     task_id,
                     sequence,
+                    run_id,
+                    session_id,
+                    iteration_id,
+                    correlation_id,
+                    idempotency_key,
                     event_type,
+                    actor,
+                    summary,
                     payload_json,
+                    payload_preview,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
                     sequence,
-                    event_type.strip(),
+                    run_id or _run_id_for_task(task_id),
+                    session_id,
+                    iteration_id,
+                    correlation_id,
+                    normalized_idempotency_key,
+                    normalized_event_type,
+                    normalized_actor,
+                    normalized_summary,
                     payload_json,
+                    normalized_preview,
                     now,
                 ),
             )
@@ -746,14 +812,22 @@ class StateStore:
             task_id,
             event_id,
             sequence,
-            event_type.strip(),
+            normalized_event_type,
         )
         return StoredTaskEvent(
             event_id=event_id,
             task_id=task_id,
             sequence=sequence,
-            event_type=event_type.strip(),
+            run_id=run_id or _run_id_for_task(task_id),
+            session_id=session_id,
+            iteration_id=iteration_id,
+            correlation_id=correlation_id,
+            idempotency_key=normalized_idempotency_key,
+            event_type=normalized_event_type,
+            actor=normalized_actor,
+            summary=normalized_summary,
             payload=_decode_json_payload(payload_json),
+            payload_preview=normalized_preview,
             created_at=now,
         )
 
@@ -766,8 +840,16 @@ class StateStore:
                     event_id,
                     task_id,
                     sequence,
+                    run_id,
+                    session_id,
+                    iteration_id,
+                    correlation_id,
+                    idempotency_key,
                     event_type,
+                    actor,
+                    summary,
                     payload_json,
+                    payload_preview,
                     created_at
                 FROM task_events
                 WHERE task_id = ?
@@ -776,6 +858,36 @@ class StateStore:
                 (task_id,),
             ).fetchall()
         return [_stored_task_event_from_row(row) for row in rows]
+
+    def _task_event_by_idempotency_key(
+        self,
+        connection: sqlite3.Connection,
+        task_id: str,
+        idempotency_key: str,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT
+                event_id,
+                task_id,
+                sequence,
+                run_id,
+                session_id,
+                iteration_id,
+                correlation_id,
+                idempotency_key,
+                event_type,
+                actor,
+                summary,
+                payload_json,
+                payload_preview,
+                created_at
+            FROM task_events
+            WHERE task_id = ?
+              AND idempotency_key = ?
+            """,
+            (task_id, idempotency_key),
+        ).fetchone()
 
     def record_action(
         self,
@@ -2054,13 +2166,39 @@ class StateStore:
 
             for row in connection.execute(
                 """
-                SELECT event_id, sequence, event_type, payload_json, created_at
+                SELECT
+                    event_id,
+                    sequence,
+                    run_id,
+                    session_id,
+                    iteration_id,
+                    correlation_id,
+                    idempotency_key,
+                    event_type,
+                    actor,
+                    summary,
+                    payload_json,
+                    payload_preview,
+                    created_at
                 FROM task_events
                 WHERE task_id = ?
                 ORDER BY sequence ASC, event_id ASC
                 """,
                 (task_id,),
             ).fetchall():
+                payload = {
+                    "sequence": int(row["sequence"]),
+                    "payload": _decode_json_payload(row["payload_json"]),
+                }
+                for key in (
+                    "run_id",
+                    "session_id",
+                    "iteration_id",
+                    "correlation_id",
+                    "idempotency_key",
+                ):
+                    if row[key] not in (None, ""):
+                        payload[key] = row[key]
                 _append_timeline_entry(
                     entries,
                     occurred_at=str(row["created_at"]),
@@ -2068,11 +2206,8 @@ class StateStore:
                     source_id=str(row["event_id"]),
                     event_type=str(row["event_type"]),
                     status=None,
-                    summary=str(row["event_type"]),
-                    payload={
-                        "sequence": int(row["sequence"]),
-                        "payload": _decode_json_payload(row["payload_json"]),
-                    },
+                    summary=str(row["summary"] or row["event_type"]),
+                    payload=payload,
                 )
 
             for row in connection.execute(
@@ -3833,6 +3968,19 @@ def _memory_lesson_relevance_text(lesson: StoredMemoryLesson) -> str:
 def _encode_json_payload(value: dict[str, object] | None) -> str:
     redacted = _redact_json_value(value or {})
     return json.dumps(redacted, sort_keys=True)
+
+
+def _event_payload_preview(value: object, limit: int = 500) -> str:
+    redacted = _redact_json_value(value)
+    if redacted in (None, "", {}, []):
+        return ""
+    if isinstance(redacted, str):
+        preview = redacted
+    else:
+        preview = json.dumps(redacted, ensure_ascii=False, sort_keys=True)
+    if len(preview) <= limit:
+        return preview
+    return f"{preview[:limit]}\n... truncated ..."
 
 
 def _decode_json_payload(value: str | None) -> dict[str, object]:

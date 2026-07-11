@@ -77,6 +77,15 @@ class CancellingDuringRunAgent(StopRecordingAgent):
         )
 
 
+class ReturningCancelledAgent(StopRecordingAgent):
+    def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
+        return AgentResult(
+            status="cancelled",
+            raw_output="cancelled",
+            session_id=session.session_id,
+        )
+
+
 class NoChangeAgent(MockAgentAdapter):
     def run_step(self, session: SessionRef, prompt: str) -> AgentResult:
         return AgentResult(
@@ -294,6 +303,31 @@ def test_supervisor_skips_verification_when_task_cancelled_during_run(tmp_path: 
     assert verifier.calls == 0
     assert len(agent.stopped_sessions) == 1
     assert store.list_iterations(task.task_id) == []
+
+
+def test_supervisor_marks_agent_cancelled_result_as_cancelled(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    supervisor = Supervisor(
+        agent=ReturningCancelledAgent(),
+        verifier=SequencedVerifier(["passed"]),
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        state_store=store,
+    )
+
+    result = supervisor.run_once(task="demo cancelled result", repo=tmp_path)
+
+    assert result.status == "cancelled"
+    assert result.task_id is not None
+    task = store.get_task(result.task_id)
+    assert task is not None
+    assert task.status == "cancelled"
+    assert store.list_iterations(result.task_id) == []
+    assert any(
+        event.event_type == "task_cancelled"
+        for event in store.list_task_events(result.task_id)
+    )
 
 
 def test_supervisor_blocks_before_verification_when_runtime_budget_exhausted(
@@ -626,6 +660,31 @@ def test_supervisor_persists_verification_approval_request(tmp_path: Path) -> No
     assert "Requires approval" in approvals[0].reason
 
 
+def test_supervisor_keeps_policy_denial_visible_in_event_log(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    supervisor = Supervisor(
+        agent=MockAgentAdapter(),
+        verifier=VerificationRunner(policy_engine=PolicyEngine()),
+        verification_commands=[
+            VerificationCommand("danger", "rm -rf /"),
+        ],
+        state_store=store,
+        max_iterations=1,
+    )
+
+    result = supervisor.run_once(task="demo denied policy", repo=tmp_path)
+
+    assert result.status == "blocked"
+    assert result.task_id is not None
+    events = store.list_task_events(result.task_id)
+    assert any(event.event_type == "command_denied" for event in events)
+    assert any(
+        event.event_type == "verification_finished"
+        and event.payload["results"][0]["status"] == "policy_denied"
+        for event in events
+    )
+
+
 def test_supervisor_resume_appends_next_iteration_index(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo", repo_path=tmp_path)
@@ -653,6 +712,64 @@ def test_supervisor_resume_appends_next_iteration_index(tmp_path: Path) -> None:
 
     assert result.status == "done"
     assert [item.iteration_index for item in iterations] == [1, 2]
+
+
+def test_supervisor_records_durable_lifecycle_events(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    supervisor = Supervisor(
+        agent=MockAgentAdapter(),
+        verifier=SequencedVerifier(["passed"]),
+        verification_commands=[
+            VerificationCommand("unit", "ignored"),
+        ],
+        state_store=store,
+        max_iterations=1,
+    )
+
+    result = supervisor.run_once(task="demo lifecycle", repo=tmp_path)
+
+    assert result.status == "done"
+    assert result.task_id is not None
+    events = store.list_task_events(result.task_id)
+    event_types = [event.event_type for event in events]
+    assert "task_created" in event_types
+    assert "iteration_started" in event_types
+    assert "agent_called" in event_types
+    assert "agent_result_received" in event_types
+    assert "verification_started" in event_types
+    assert "verification_finished" in event_types
+    assert "decision_made" in event_types
+    assert "iteration_finished" in event_types
+    assert "task_done" in event_types
+    assert event_types.count("checkpoint_saved") >= 4
+    assert all(event.run_id == store.run_id_for_task(result.task_id) for event in events)
+    assert any(event.iteration_id == 1 for event in events if event.event_type == "task_done")
+
+
+def test_supervisor_interrupted_task_can_be_inspected(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    supervisor = Supervisor(
+        agent=InterruptingAgent(),
+        verifier=VerificationRunner(),
+        verification_commands=[],
+        state_store=store,
+    )
+
+    try:
+        supervisor.run_once(task="demo interrupt", repo=tmp_path)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("Expected KeyboardInterrupt")
+
+    tasks = store.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].status == "running"
+    event_types = [event.event_type for event in store.list_task_events(tasks[0].task_id)]
+    assert "task_created" in event_types
+    assert "agent_called" in event_types
+    assert "checkpoint_saved" in event_types
+    assert store.list_task_timeline(tasks[0].task_id)
 
 
 def test_supervisor_blocks_when_agent_unavailable() -> None:

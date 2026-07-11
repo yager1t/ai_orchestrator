@@ -14,6 +14,7 @@ from ai_orchestrator.storage.db import (
     StoredPlanItem,
     StoredReplanDecision,
     StoredReflectionRecord,
+    StoredTaskEvent,
     StoredTimelineEntry,
     StoredVerificationRun,
 )
@@ -39,6 +40,8 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
     reflections = store.list_reflection_records(task.task_id)
     memory_influence = store.list_memory_influence(task.task_id)
     timeline_entries = store.list_task_timeline(task.task_id)
+    checkpoint_events = _checkpoint_events(task_events)
+    recovery_events = _recovery_events(task_events)
     plan_item = _plan_item_for_task(store, task.task_id)
     final_iteration = iterations[-1] if iterations else None
     final_verification_runs = (
@@ -61,6 +64,8 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
         f"- Verification runs: `{len(verification_runs)}`{_status_summary(verification_runs)}",
         f"- Approval requests: `{len(approvals)}`{_approval_status_summary(approvals)}",
         f"- Task events: `{len(task_events)}`",
+        f"- Checkpoints: `{len(checkpoint_events)}`",
+        f"- Recovery events: `{len(recovery_events)}`",
         f"- Action records: `{len(action_records)}`{_action_status_summary(action_records)}",
         f"- Replan decisions: `{len(replan_decisions)}`",
         f"- Memory lessons: `{len(memory_lessons)}`",
@@ -82,6 +87,9 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
 
     lines.extend(["", "## Timeline", ""])
     lines.extend(_render_timeline_entry_lines(timeline_entries))
+
+    lines.extend(["", "## Recovery And Checkpoints", ""])
+    lines.extend(_render_recovery_checkpoint_lines(checkpoint_events, recovery_events))
 
     lines.extend(["", "## Actions", ""])
     lines.extend(_render_action_record_lines(action_records))
@@ -227,6 +235,51 @@ def _render_timeline_entry_lines(
         if entry.payload:
             payload = json.dumps(entry.payload, ensure_ascii=False, sort_keys=True)
             lines.append(f"  - Payload: `{redact_secrets(payload) or ''}`")
+    return lines
+
+
+def _checkpoint_events(task_events: Sequence[StoredTaskEvent]) -> list[StoredTaskEvent]:
+    return [event for event in task_events if event.event_type == "checkpoint_saved"]
+
+
+def _recovery_events(task_events: Sequence[StoredTaskEvent]) -> list[StoredTaskEvent]:
+    return [
+        event
+        for event in task_events
+        if event.event_type in {"task_recovered", "task.recovered"}
+    ]
+
+
+def _render_recovery_checkpoint_lines(
+    checkpoint_events: Sequence[StoredTaskEvent],
+    recovery_events: Sequence[StoredTaskEvent],
+) -> list[str]:
+    if not checkpoint_events and not recovery_events:
+        return ["No recovery or checkpoint events recorded."]
+
+    lines: list[str] = []
+    if checkpoint_events:
+        lines.append("Checkpoints:")
+        for event in checkpoint_events:
+            phase = event.payload.get("phase", "unknown")
+            status = event.payload.get("status", "unknown")
+            iteration = event.iteration_id or event.payload.get("iteration_index", "none")
+            lines.append(
+                (
+                    f"- `{event.sequence}`: phase=`{phase}` status=`{status}` "
+                    f"iteration=`{iteration}` at `{event.created_at}`"
+                )
+            )
+    if recovery_events:
+        lines.append("Recovery:")
+        for event in recovery_events:
+            reason = event.payload.get("reason", event.summary)
+            lines.append(
+                (
+                    f"- `{event.sequence}`: `{event.event_type}` "
+                    f"reason={redact_secrets(str(reason)) or ''} at `{event.created_at}`"
+                )
+            )
     return lines
 
 

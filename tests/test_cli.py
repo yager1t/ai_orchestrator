@@ -1979,7 +1979,7 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
     assert trace_path.exists()
 
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
-    assert trace["metadata"]["schema_version"] == "1.0"
+    assert trace["metadata"]["schema_version"] == "1.1"
     assert trace["metadata"]["task_id"] == task.task_id
     assert trace["metadata"]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["metadata"]["unsafe_action_count"] == 0

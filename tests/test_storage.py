@@ -379,6 +379,51 @@ def test_state_store_creates_task_events_table_and_index(tmp_path: Path) -> None
 
     assert "task_events" in tables
     assert "idx_task_events_task_sequence" in indexes
+    assert "idx_task_events_task_idempotency" in indexes
+
+
+def test_migrate_schema_upgrades_v17_store_with_task_event_trace_metadata(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 17")
+        connection.execute(
+            """
+            CREATE TABLE task_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                UNIQUE (task_id, sequence)
+            )
+            """
+        )
+
+        version = migrate_schema(connection)
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(task_events)").fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(task_events)").fetchall()
+        }
+
+    assert version == SCHEMA_VERSION
+    assert {
+        "run_id",
+        "session_id",
+        "iteration_id",
+        "correlation_id",
+        "idempotency_key",
+        "actor",
+        "summary",
+        "payload_preview",
+    } <= columns
+    assert "idx_task_events_task_idempotency" in indexes
 
 
 def test_state_store_creates_action_records_table_and_indexes(tmp_path: Path) -> None:
@@ -966,6 +1011,45 @@ def test_state_store_appends_task_events_in_sequence(tmp_path: Path) -> None:
     assert events[0].event_type == "task.created"
     assert events[0].payload == {"source": "cli", "attempt": 1}
     assert events[1].payload == {"checks": ["unit", "compile"]}
+
+
+def test_state_store_records_task_event_trace_metadata_and_idempotency(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo event metadata", repo_path=tmp_path)
+
+    first = store.append_task_event(
+        task.task_id,
+        "checkpoint_saved",
+        {"phase": "before_agent_execution", "status": "started"},
+        session_id="session-1",
+        iteration_id=7,
+        correlation_id="corr-1",
+        idempotency_key="checkpoint-1",
+        actor="supervisor",
+        summary="Checkpoint saved before agent execution",
+    )
+    duplicate = store.append_task_event(
+        task.task_id,
+        "checkpoint_saved",
+        {"phase": "changed"},
+        idempotency_key="checkpoint-1",
+        actor="supervisor",
+    )
+
+    events = store.list_task_events(task.task_id)
+
+    assert duplicate == first
+    assert len(events) == 1
+    assert events[0].run_id == store.run_id_for_task(task.task_id)
+    assert events[0].session_id == "session-1"
+    assert events[0].iteration_id == 7
+    assert events[0].correlation_id == "corr-1"
+    assert events[0].idempotency_key == "checkpoint-1"
+    assert events[0].actor == "supervisor"
+    assert events[0].summary == "Checkpoint saved before agent execution"
+    assert "before_agent_execution" in events[0].payload_preview
 
 
 def test_state_store_redacts_task_event_payload(tmp_path: Path) -> None:

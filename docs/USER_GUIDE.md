@@ -597,6 +597,20 @@ ai-orch recover --repo . --apply --reason "operator recovery after interrupted r
 Recovery can block interrupted running tasks and fail expired action records so
 they do not look active forever.
 
+Every supervisor-run task also writes durable lifecycle events and checkpoints
+to the local state store. Use the replay views after an interruption or policy
+denial:
+
+```bash
+ai-orch timeline <task-id> --repo .
+ai-orch report <task-id> --repo .
+ai-orch export <task-id> --repo .
+```
+
+Reports and trace exports include the final supervisor decision, event timeline,
+verification runs, approval/denial visibility, action records, and
+recovery/checkpoint details.
+
 ## 14. Normal Operating Loop
 
 Use this loop for real work:
