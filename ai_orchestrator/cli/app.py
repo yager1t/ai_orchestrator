@@ -55,6 +55,7 @@ from ai_orchestrator.storage.db import (
     StoredPlanGraph,
     StoredPlanGraphDependency,
     StoredPlanGraphNode,
+    StoredPlanGraphNodeReadiness,
     StoredPlanItem,
     StoredTask,
     StoredTimelineEntry,
@@ -94,7 +95,14 @@ from ai_orchestrator.verification.runner import (
 
 _QUEUE_STATUSES = ("created", "in_progress", "done", "blocked", "skipped")
 _PLAN_GRAPH_STATUSES = ("active", "done", "blocked", "archived")
-_PLAN_GRAPH_NODE_STATUSES = ("pending", "in_progress", "done", "blocked", "skipped")
+_PLAN_GRAPH_NODE_STATUSES = (
+    "pending",
+    "in_progress",
+    "done",
+    "blocked",
+    "failed",
+    "skipped",
+)
 _TERMINAL_QUEUE_STATUSES = {"done", "skipped"}
 _STATE_STORE_CACHE: dict[Path, StateStore] = {}
 _KNOWN_AGENT_CONNECTORS = ("codex", "claude", "gemini", "kimi", "generic", "mock")
@@ -702,6 +710,32 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_max_runtime_sec_argument(autopilot_plan_run_batch)
+    autopilot_plan_recover = autopilot_plan_sub.add_parser(
+        "recover",
+        help="Find stale in_progress PlanGraph nodes and optionally mark them blocked",
+    )
+    autopilot_plan_recover.add_argument("graph_id", type=int)
+    autopilot_plan_recover.add_argument("--repo", default=".")
+    autopilot_plan_recover.add_argument(
+        "--apply",
+        action="store_true",
+        help="Mark stale in_progress nodes as blocked; dry-run by default",
+    )
+    autopilot_plan_recover.add_argument(
+        "--reason",
+        help="Reason for blocking stale nodes (required with --apply)",
+    )
+    autopilot_plan_recover.add_argument(
+        "--older-than-hours",
+        type=int,
+        metavar="N",
+        help="Only recover in_progress nodes whose updated_at is older than N hours",
+    )
+    autopilot_plan_recover.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of text",
+    )
     autopilot_plan_update = autopilot_plan_sub.add_parser(
         "update",
         help="Update a plan graph status",
@@ -722,6 +756,34 @@ def build_parser() -> argparse.ArgumentParser:
     autopilot_plan_add_node.add_argument("--repo", default=".")
     autopilot_plan_add_node.add_argument("--key", required=True)
     autopilot_plan_add_node.add_argument("--title", required=True)
+    autopilot_plan_add_node.add_argument(
+        "--task-text",
+        help="Execution task text for this node; defaults to --title",
+    )
+    autopilot_plan_add_node.add_argument(
+        "--acceptance-criterion",
+        dest="acceptance_criteria",
+        action="append",
+        help="Acceptance criterion for this node; repeat for multiple criteria",
+    )
+    autopilot_plan_add_node.add_argument(
+        "--verification-requirement",
+        help="Verification requirement or command summary for this node",
+    )
+    autopilot_plan_add_node.add_argument(
+        "--blocked-reason",
+        help="Initial blocked reason when creating a blocked node",
+    )
+    autopilot_plan_add_node.add_argument(
+        "--source-node-id",
+        type=int,
+        help="Source node for repair, follow-up, or manual-review nodes",
+    )
+    autopilot_plan_add_node.add_argument(
+        "--node-type",
+        default="task",
+        help="Node type label such as task, repair, follow-up, or manual-review",
+    )
     autopilot_plan_add_node.add_argument(
         "--status",
         choices=_PLAN_GRAPH_NODE_STATUSES,
@@ -754,6 +816,10 @@ def build_parser() -> argparse.ArgumentParser:
     attempts_group = autopilot_plan_update_node.add_mutually_exclusive_group()
     attempts_group.add_argument("--attempts", type=int)
     attempts_group.add_argument("--increment-attempts", action="store_true")
+    autopilot_plan_update_node.add_argument(
+        "--blocked-reason",
+        help="Record or update the node blocked/failed reason",
+    )
     autopilot_plan_update_node.add_argument(
         "--json",
         action="store_true",
@@ -1656,6 +1722,7 @@ def _export_task_trace(
             _trace_record_with_run_id(asdict(decision), run_id)
             for decision in store.list_replan_decisions(task_id=task_id)
         ],
+        "plan_graph": _plan_graph_trace_payload_for_task(store, task_id),
         "memory_lessons": [
             _trace_record_with_run_id(asdict(lesson), run_id)
             for lesson in store.list_memory_lessons(include_stale=True)
@@ -2024,6 +2091,9 @@ def _finish_plan_graph_node_for_queue_result(
     store.update_plan_graph_node_status(
         item.plan_graph_root_node_id,
         node_status,
+        blocked_reason=item.blocked_reason if node_status != "done" else None,
+        task_id=task_id,
+        plan_item_id=item.plan_item_id,
     )
     if task_id is not None:
         store.link_replan_decisions_to_plan_graph(
@@ -4905,6 +4975,45 @@ def _plan_graph_payload(store: StateStore, graph: StoredPlanGraph) -> dict[str, 
     }
 
 
+def _plan_graph_trace_payload_for_task(
+    store: StateStore,
+    task_id: str,
+) -> dict[str, object] | None:
+    for graph in store.list_plan_graphs():
+        nodes = store.list_plan_graph_nodes(graph.graph_id)
+        linked_node = next((node for node in nodes if node.task_id == task_id), None)
+        if linked_node is not None or graph.task_id == task_id:
+            payload = _plan_graph_payload(store, graph)
+            payload["context_node"] = asdict(linked_node) if linked_node else None
+            payload["readiness"] = [
+                asdict(item)
+                for item in store.list_plan_graph_node_readiness(graph.graph_id)
+            ]
+            return payload
+
+    plan_item = next(
+        (item for item in store.list_plan_items() if item.task_id == task_id),
+        None,
+    )
+    if plan_item is None or plan_item.plan_graph_id is None:
+        return None
+    linked_graph = store.get_plan_graph(plan_item.plan_graph_id)
+    if linked_graph is None:
+        return None
+    context_node = (
+        store.get_plan_graph_node(plan_item.plan_graph_root_node_id)
+        if plan_item.plan_graph_root_node_id is not None
+        else None
+    )
+    payload = _plan_graph_payload(store, linked_graph)
+    payload["context_node"] = asdict(context_node) if context_node else None
+    payload["readiness"] = [
+        asdict(item)
+        for item in store.list_plan_graph_node_readiness(linked_graph.graph_id)
+    ]
+    return payload
+
+
 def _plan_graph_list_payload(graphs: list[StoredPlanGraph]) -> dict[str, object]:
     return {
         "total": len(graphs),
@@ -4915,12 +5024,16 @@ def _plan_graph_list_payload(graphs: list[StoredPlanGraph]) -> dict[str, object]
 def _ready_plan_graph_nodes_payload(
     graph: StoredPlanGraph,
     nodes: list[StoredPlanGraphNode],
+    readiness: list[StoredPlanGraphNodeReadiness] | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "graph": asdict(graph),
         "ready_count": len(nodes),
         "nodes": [asdict(node) for node in nodes],
     }
+    if readiness is not None:
+        payload["readiness"] = [asdict(item) for item in readiness]
+    return payload
 
 
 def _print_plan_graph_text(
@@ -4947,6 +5060,25 @@ def _print_plan_graph_text(
             f"node={node.node_id} key={node.node_key} "
             f"status={node.status} attempts={node.attempts} title={node.title}"
         )
+        if node.node_type != "task" or node.source_node_id is not None:
+            print(
+                "    "
+                f"type={node.node_type} "
+                f"source_node_id={node.source_node_id or 'none'}"
+            )
+        if node.task_text and node.task_text != node.title:
+            print(f"    task: {node.task_text}")
+        if node.acceptance_criteria:
+            for criterion in node.acceptance_criteria:
+                print(f"    acceptance: {criterion}")
+        if node.verification_requirement:
+            print(f"    verification: {node.verification_requirement}")
+        if node.blocked_reason:
+            print(f"    blocked_reason: {node.blocked_reason}")
+        if node.task_id:
+            print(f"    task_id: {node.task_id}")
+        if node.plan_item_id:
+            print(f"    plan_item_id: {node.plan_item_id}")
         node_dependencies = dependencies_by_node.get(node.node_id, [])
         if node_dependencies:
             depends_on = ", ".join(
@@ -4959,18 +5091,38 @@ def _print_plan_graph_text(
 def _print_ready_plan_graph_nodes_text(
     graph: StoredPlanGraph,
     nodes: list[StoredPlanGraphNode],
+    readiness: list[StoredPlanGraphNodeReadiness] | None = None,
 ) -> None:
     print(f"Ready PlanGraph nodes: {len(nodes)}")
     print(f"  graph: {graph.graph_id}")
     if not nodes:
         print("  No ready PlanGraph nodes.")
-        return
     for node in nodes:
         print(
             "  "
             f"node={node.node_id} key={node.node_key} "
             f"status={node.status} attempts={node.attempts} title={node.title}"
         )
+    if readiness is None:
+        return
+
+    not_ready = [item for item in readiness if not item.ready]
+    if not not_ready:
+        return
+    print("  Not ready PlanGraph nodes:")
+    for item in not_ready:
+        node = item.node
+        print(
+            "    "
+            f"node={node.node_id} key={node.node_key} "
+            f"reason={item.reason} status={node.status}"
+        )
+        if item.blocking_dependencies:
+            blockers = ", ".join(
+                f"{dependency.node_id}:{dependency.status}"
+                for dependency in item.blocking_dependencies
+            )
+            print(f"      blocking_dependencies: {blockers}")
 
 
 def _plan_graph_node_to_task(
@@ -4980,7 +5132,7 @@ def _plan_graph_node_to_task(
     return AutopilotTask(
         source_path=Path(f"PlanGraph-{graph.graph_id}"),
         line_number=node.node_id,
-        text=node.title,
+        text=node.task_text or node.title,
         section=f"PlanGraph {graph.graph_id}: {graph.title}",
     )
 
@@ -5075,6 +5227,64 @@ def _run_autopilot_plan_run_batch(
     return 0
 
 
+def _run_autopilot_plan_recover(args: argparse.Namespace, store: StateStore) -> int:
+    graph = store.get_plan_graph(args.graph_id)
+    if graph is None:
+        print(f"PlanGraph not found: {args.graph_id}")
+        return 1
+    if args.older_than_hours is not None and args.older_than_hours < 0:
+        print("--older-than-hours must be 0 or greater")
+        return 1
+    if args.apply and not args.reason:
+        print("--reason is required when --apply is set")
+        return 1
+
+    nodes = store.list_stale_plan_graph_nodes(
+        graph.graph_id,
+        older_than_hours=args.older_than_hours,
+    )
+    recovered = 0
+    if args.apply:
+        for node in nodes:
+            updated = store.update_plan_graph_node_status(
+                node.node_id,
+                "blocked",
+                blocked_reason=args.reason,
+            )
+            if updated is not None:
+                recovered += 1
+
+    if args.json:
+        payload = {
+            "graph": asdict(graph),
+            "mode": "apply" if args.apply else "dry_run",
+            "older_than_hours": args.older_than_hours,
+            "stale_count": len(nodes),
+            "nodes": [asdict(node) for node in nodes],
+            "recovered": {"blocked_nodes": recovered},
+            "reason": args.reason if args.apply else None,
+        }
+        _print_plan_graph_json(payload)
+        return 0
+
+    print(f"PlanGraph recover: {graph.graph_id}")
+    print(f"  stale_in_progress: {len(nodes)}")
+    if args.older_than_hours is not None:
+        print(f"  older_than_hours: {args.older_than_hours}")
+    if args.apply:
+        print(f"  blocked_nodes: {recovered}")
+        print(f"  reason: {args.reason}")
+    else:
+        print("  dry_run: use --apply --reason '...' to recover")
+    for node in nodes:
+        print(
+            "  "
+            f"node={node.node_id} key={node.node_key} "
+            f"status={node.status} updated_at={node.updated_at}"
+        )
+    return 0
+
+
 def _run_plan_graph_node(
     args: argparse.Namespace,
     store: StateStore,
@@ -5104,7 +5314,12 @@ def _run_plan_graph_node(
         return None
 
     node_status = "done" if result.status == "done" else "blocked"
-    store.update_plan_graph_node_status(node.node_id, node_status)
+    store.update_plan_graph_node_status(
+        node.node_id,
+        node_status,
+        blocked_reason=None if node_status == "done" else result.summary,
+        task_id=result.task_id,
+    )
     if result.task_id is not None:
         store.link_replan_decisions_to_plan_graph(
             result.task_id,
@@ -5176,12 +5391,17 @@ def _run_autopilot_plan_command(
                 args.graph_id,
                 limit=limit,
             )
+            readiness = store.list_plan_graph_node_readiness(args.graph_id)
             if args.json:
                 _print_plan_graph_json(
-                    _ready_plan_graph_nodes_payload(ready_graph, ready_nodes)
+                    _ready_plan_graph_nodes_payload(
+                        ready_graph,
+                        ready_nodes,
+                        readiness,
+                    )
                 )
                 return 0
-            _print_ready_plan_graph_nodes_text(ready_graph, ready_nodes)
+            _print_ready_plan_graph_nodes_text(ready_graph, ready_nodes, readiness)
             return 0
 
         if args.autopilot_plan_command == "run-next":
@@ -5189,6 +5409,9 @@ def _run_autopilot_plan_command(
 
         if args.autopilot_plan_command == "run-batch":
             return _run_autopilot_plan_run_batch(args, store)
+
+        if args.autopilot_plan_command == "recover":
+            return _run_autopilot_plan_recover(args, store)
 
         if args.autopilot_plan_command == "update":
             updated_graph = store.update_plan_graph_status(args.graph_id, args.status)
@@ -5213,6 +5436,12 @@ def _run_autopilot_plan_command(
                 status=args.status,
                 attempts=args.attempts,
                 depends_on_node_ids=args.depends_on_node_ids,
+                task_text=args.task_text,
+                acceptance_criteria=args.acceptance_criteria,
+                verification_requirement=args.verification_requirement,
+                blocked_reason=args.blocked_reason,
+                source_node_id=args.source_node_id,
+                node_type=args.node_type,
             )
             refreshed_graph = store.get_plan_graph(args.graph_id)
             if refreshed_graph is None:
@@ -5233,6 +5462,7 @@ def _run_autopilot_plan_command(
                 args.status,
                 attempts=args.attempts,
                 increment_attempts=args.increment_attempts,
+                blocked_reason=args.blocked_reason,
             )
             if updated_node is None:
                 print(f"PlanGraph node not found: {args.node_id}")

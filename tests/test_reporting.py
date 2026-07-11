@@ -115,6 +115,17 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
         lesson_id=lesson.lesson_id,
         reason="selected for planning",
     )
+    graph = store.create_plan_graph("Report graph")
+    node = store.add_plan_graph_node(
+        graph.graph_id,
+        "report-node",
+        "Report node",
+        status="done",
+        task_text="Render a PlanGraph-aware report",
+        acceptance_criteria=["PlanGraph section is present"],
+        verification_requirement="python -m pytest tests/test_reporting.py",
+        task_id=task.task_id,
+    )
     store.update_task_status(task.task_id, "done")
 
     report = render_task_report(store, task.task_id)
@@ -136,6 +147,19 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
     assert "final supervisor decision is backed by passing checks: `unit`" in report
     assert "- Final decision: `done`" in report
     assert "- Final reason: Verification passed: unit" in report
+    assert "## PlanGraph" in report
+    assert f"- Graph: `{graph.graph_id}` status=`active` title=Report graph" in report
+    assert "- Graph progress: `done`: 1" in report
+    assert (
+        f"- Node: `{node.node_id}` key=`report-node` status=`done` attempts=`0`"
+        in report
+    )
+    assert "- Node task: Render a PlanGraph-aware report" in report
+    assert "- Acceptance criteria: PlanGraph section is present" in report
+    assert (
+        "- Verification requirement: python -m pytest tests/test_reporting.py"
+        in report
+    )
     assert "### Iteration 1" in report
     assert "## Timeline" in report
     assert "task.created" in report

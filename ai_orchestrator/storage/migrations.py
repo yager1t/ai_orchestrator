@@ -4,13 +4,13 @@ import sqlite3
 from collections.abc import Callable
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 Migration = Callable[[sqlite3.Connection], None]
 
 
 _PLAN_ITEM_STATUS_CHECK = "CHECK (status IN ('created', 'in_progress', 'done', 'blocked', 'skipped'))"
 _PLAN_GRAPH_STATUS_CHECK = "CHECK (status IN ('active', 'done', 'blocked', 'archived'))"
-_PLAN_GRAPH_NODE_STATUS_CHECK = "CHECK (status IN ('pending', 'in_progress', 'done', 'blocked', 'skipped'))"
+_PLAN_GRAPH_NODE_STATUS_CHECK = "CHECK (status IN ('pending', 'in_progress', 'done', 'blocked', 'failed', 'skipped'))"
 _REPLAN_DECISION_STATUS_CHECK = "CHECK (status IN ('continue', 'blocked'))"
 
 
@@ -219,6 +219,10 @@ def _migrate_16_to_17(connection: sqlite3.Connection) -> None:
 
 def _migrate_17_to_18(connection: sqlite3.Connection) -> None:
     _add_task_event_trace_columns(connection)
+
+
+def _migrate_18_to_19(connection: sqlite3.Connection) -> None:
+    _upgrade_plan_graph_nodes_table_v19(connection)
 
 
 def _create_autopilot_loop_runs_table(connection: sqlite3.Connection) -> None:
@@ -578,7 +582,15 @@ def _create_plan_graph_tables(connection: sqlite3.Connection) -> None:
             graph_id INTEGER NOT NULL,
             node_key TEXT NOT NULL,
             title TEXT NOT NULL,
+            task_text TEXT NOT NULL DEFAULT '',
+            acceptance_criteria_json TEXT NOT NULL DEFAULT '[]',
+            verification_requirement TEXT,
             status TEXT NOT NULL {_PLAN_GRAPH_NODE_STATUS_CHECK},
+            blocked_reason TEXT,
+            task_id TEXT,
+            plan_item_id INTEGER,
+            source_node_id INTEGER,
+            node_type TEXT NOT NULL DEFAULT 'task',
             attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -614,6 +626,114 @@ def _create_plan_graph_tables(connection: sqlite3.Connection) -> None:
         ON plan_graph_dependencies (graph_id, node_id, depends_on_node_id)
         """
     )
+
+
+def _upgrade_plan_graph_nodes_table_v19(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "plan_graph_nodes"):
+        return
+    # A rebuild changes the node table check constraint. End any implicit
+    # transaction first so SQLite can honor the temporary foreign_keys toggle.
+    connection.commit()
+    foreign_keys_enabled = bool(connection.execute("PRAGMA foreign_keys").fetchone()[0])
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute("DROP TABLE IF EXISTS plan_graph_nodes_v19")
+    connection.execute(
+        f"""
+        CREATE TABLE plan_graph_nodes_v19 (
+            node_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            graph_id INTEGER NOT NULL,
+            node_key TEXT NOT NULL,
+            title TEXT NOT NULL,
+            task_text TEXT NOT NULL DEFAULT '',
+            acceptance_criteria_json TEXT NOT NULL DEFAULT '[]',
+            verification_requirement TEXT,
+            status TEXT NOT NULL {_PLAN_GRAPH_NODE_STATUS_CHECK},
+            blocked_reason TEXT,
+            task_id TEXT,
+            plan_item_id INTEGER,
+            source_node_id INTEGER,
+            node_type TEXT NOT NULL DEFAULT 'task',
+            attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (graph_id, node_key),
+            FOREIGN KEY (graph_id) REFERENCES plan_graphs(graph_id)
+        )
+        """
+    )
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(plan_graph_nodes)")}
+    task_text_expr = "task_text" if "task_text" in columns else "title"
+    acceptance_expr = (
+        "acceptance_criteria_json"
+        if "acceptance_criteria_json" in columns
+        else "'[]'"
+    )
+    verification_expr = (
+        "verification_requirement"
+        if "verification_requirement" in columns
+        else "NULL"
+    )
+    blocked_reason_expr = "blocked_reason" if "blocked_reason" in columns else "NULL"
+    task_id_expr = "task_id" if "task_id" in columns else "NULL"
+    plan_item_id_expr = "plan_item_id" if "plan_item_id" in columns else "NULL"
+    source_node_id_expr = "source_node_id" if "source_node_id" in columns else "NULL"
+    node_type_expr = "node_type" if "node_type" in columns else "'task'"
+    connection.execute(
+        f"""
+        INSERT INTO plan_graph_nodes_v19 (
+            node_id,
+            graph_id,
+            node_key,
+            title,
+            task_text,
+            acceptance_criteria_json,
+            verification_requirement,
+            status,
+            blocked_reason,
+            task_id,
+            plan_item_id,
+            source_node_id,
+            node_type,
+            attempts,
+            created_at,
+            updated_at
+        )
+        SELECT
+            node_id,
+            graph_id,
+            node_key,
+            title,
+            COALESCE({task_text_expr}, title),
+            COALESCE({acceptance_expr}, '[]'),
+            {verification_expr},
+            status,
+            {blocked_reason_expr},
+            {task_id_expr},
+            {plan_item_id_expr},
+            {source_node_id_expr},
+            COALESCE({node_type_expr}, 'task'),
+            attempts,
+            created_at,
+            updated_at
+        FROM plan_graph_nodes
+        """
+    )
+    connection.execute("DROP TABLE plan_graph_nodes")
+    connection.execute("ALTER TABLE plan_graph_nodes_v19 RENAME TO plan_graph_nodes")
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_plan_graph_nodes_graph_status
+        ON plan_graph_nodes (graph_id, status, node_id)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_plan_graph_nodes_links
+        ON plan_graph_nodes (task_id, plan_item_id, source_node_id)
+        """
+    )
+    if foreign_keys_enabled:
+        connection.execute("PRAGMA foreign_keys = ON")
 
 
 def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
@@ -653,6 +773,7 @@ MIGRATIONS: dict[int, Migration] = {
     15: _migrate_15_to_16,
     16: _migrate_16_to_17,
     17: _migrate_17_to_18,
+    18: _migrate_18_to_19,
 }
 
 

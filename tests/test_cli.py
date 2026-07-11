@@ -288,6 +288,16 @@ def test_autopilot_plan_create_add_node_and_show_json(capsys, tmp_path: Path) ->
             "implement",
             "--title",
             "Implement next slice",
+            "--task-text",
+            "Implement the next bounded slice",
+            "--acceptance-criterion",
+            "targeted tests pass",
+            "--verification-requirement",
+            "python -m pytest",
+            "--source-node-id",
+            str(first_node_id),
+            "--node-type",
+            "repair",
             "--depends-on",
             str(first_node_id),
             "--json",
@@ -322,6 +332,12 @@ def test_autopilot_plan_create_add_node_and_show_json(capsys, tmp_path: Path) ->
     assert exit_code == 0
     assert payload["graph"]["graph_id"] == graph_id
     assert [node["node_key"] for node in payload["nodes"]] == ["discover", "implement"]
+    implement_node = payload["nodes"][1]
+    assert implement_node["task_text"] == "Implement the next bounded slice"
+    assert implement_node["acceptance_criteria"] == ["targeted tests pass"]
+    assert implement_node["verification_requirement"] == "python -m pytest"
+    assert implement_node["source_node_id"] == first_node_id
+    assert implement_node["node_type"] == "repair"
     assert len(payload["dependencies"]) == 1
 
 
@@ -356,6 +372,14 @@ def test_autopilot_plan_ready_lists_executable_nodes_json(
     assert payload["graph"]["graph_id"] == graph.graph_id
     assert payload["ready_count"] == 1
     assert [node["node_id"] for node in payload["nodes"]] == [first.node_id]
+    assert [
+        (item["node"]["node_id"], item["ready"], item["reason"])
+        for item in payload["readiness"]
+    ] == [
+        (first.node_id, True, "ready"),
+        (second.node_id, False, "blocked_dependencies"),
+    ]
+    assert payload["readiness"][1]["blocking_dependencies"][0]["node_id"] == first.node_id
 
     store.update_plan_graph_node_status(first.node_id, "done")
     exit_code = main(
@@ -375,6 +399,8 @@ def test_autopilot_plan_ready_lists_executable_nodes_json(
     assert exit_code == 0
     assert "Ready PlanGraph nodes: 1" in output
     assert f"node={second.node_id} key=second" in output
+    assert "Not ready PlanGraph nodes:" in output
+    assert f"node={first.node_id} key=first reason=node_status_done" in output
 
 
 def test_autopilot_plan_run_next_dry_run_keeps_node_pending(
@@ -531,6 +557,60 @@ def test_autopilot_plan_run_batch_dry_run_keeps_nodes_pending(
     assert loaded_first.attempts == 0
     assert loaded_second.status == "pending"
     assert loaded_second.attempts == 0
+
+
+def test_autopilot_plan_recover_blocks_stale_in_progress_nodes(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    graph = store.create_plan_graph("Recover graph")
+    node = store.add_plan_graph_node(graph.graph_id, "stale", "Stale node")
+    store.update_plan_graph_node_status(node.node_id, "in_progress")
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "recover",
+            str(graph.graph_id),
+            "--repo",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    dry_run_node = store.get_plan_graph_node(node.node_id)
+
+    assert exit_code == 0
+    assert payload["mode"] == "dry_run"
+    assert payload["stale_count"] == 1
+    assert payload["nodes"][0]["node_id"] == node.node_id
+    assert dry_run_node is not None
+    assert dry_run_node.status == "in_progress"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "plan",
+            "recover",
+            str(graph.graph_id),
+            "--repo",
+            str(tmp_path),
+            "--apply",
+            "--reason",
+            "worker interrupted",
+        ]
+    )
+    output = capsys.readouterr().out
+    recovered_node = store.get_plan_graph_node(node.node_id)
+
+    assert exit_code == 0
+    assert "PlanGraph recover" in output
+    assert "blocked_nodes: 1" in output
+    assert recovered_node is not None
+    assert recovered_node.status == "blocked"
+    assert recovered_node.blocked_reason == "worker interrupted"
 
 
 def test_autopilot_plan_run_batch_stops_on_blocked_node(
@@ -2035,6 +2115,17 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
         lesson_id=lesson.lesson_id,
         reason="selected for planning",
     )
+    graph = store.create_plan_graph("Export graph")
+    graph_node = store.add_plan_graph_node(
+        graph.graph_id,
+        "export-node",
+        "Export node",
+        status="done",
+        task_text="Export a PlanGraph-aware trace",
+        acceptance_criteria=["trace includes graph snapshot"],
+        verification_requirement="python -m pytest tests/test_cli.py",
+        task_id=task.task_id,
+    )
     approval = store.add_approval_request(
         task_id=task.task_id,
         iteration_id=iteration.iteration_id,
@@ -2113,6 +2204,15 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
     assert len(trace["replan_decisions"]) == 1
     assert trace["replan_decisions"][0]["status"] == "continue"
     assert trace["replan_decisions"][0]["failed_checks"][0]["name"] == "unit"
+    assert trace["plan_graph"]["graph"]["graph_id"] == graph.graph_id
+    assert trace["plan_graph"]["context_node"]["node_id"] == graph_node.node_id
+    assert trace["plan_graph"]["context_node"]["task_text"] == (
+        "Export a PlanGraph-aware trace"
+    )
+    assert trace["plan_graph"]["context_node"]["acceptance_criteria"] == [
+        "trace includes graph snapshot"
+    ]
+    assert trace["plan_graph"]["readiness"][0]["reason"] == "node_status_done"
     assert trace["memory_lessons"][0]["lesson"] == "Retry unit after fixing assertion"
     assert trace["reflection_records"][0]["reflection_type"] == "failed_verification"
     assert trace["memory_influence"][0]["lesson_id"] == lesson.lesson_id

@@ -361,7 +361,9 @@ python -m ai_orchestrator autopilot run --repo . --plan docs/POST_MVP_ROADMAP.md
 python -m ai_orchestrator autopilot run --repo . --execute --worktree ../ai-orch-autopilot
 python -m ai_orchestrator autopilot queue sync --repo . --plan docs/BACKLOG.md
 python -m ai_orchestrator autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 2
+python -m ai_orchestrator autopilot plan add-node 1 --repo . --key tests --title "Run tests" --acceptance-criterion "pytest passes"
 python -m ai_orchestrator autopilot plan ready 1 --repo .
+python -m ai_orchestrator autopilot plan recover 1 --repo . --json
 python -m ai_orchestrator autopilot loop --repo . --plan docs/BACKLOG.md --max-items 2
 python -m ai_orchestrator autopilot loop-history --repo . --plan docs/BACKLOG.md
 ```
@@ -383,6 +385,13 @@ selected agent name, type, command, mock/real mode, and availability. Unavailabl
 non-mock agents are blocked before supervisor execution starts.
 Pass `--worktree` to run the supervisor inside an existing separate git worktree
 linked to `--repo`; dirty checks then apply to that execution worktree.
+PlanGraph ready output is deterministic and includes non-ready explanations in
+JSON and text output. PlanGraph nodes can store task text, acceptance criteria,
+verification requirements, blocked reasons, source/repair links, and linked
+task or queue ids; reports and JSON trace exports include the linked graph
+snapshot when a task was run from a node. Use `autopilot plan recover` as a
+dry run to inspect stale `in_progress` graph nodes, then add
+`--apply --reason "..."` to mark them blocked for operator recovery.
 `autopilot loop` is also dry-run-by-default and persists a budget ledger with
 mode, runtime/action/attempt budgets, selected and processed counts,
 dead-letter counts, stop reason, result code, selected item ids, and elapsed

@@ -690,6 +690,142 @@ def test_migrate_schema_upgrades_v11_store_with_plan_graphs(tmp_path: Path) -> N
     assert "idx_plan_graph_dependencies_graph" in dependency_indexes
 
 
+def test_migrate_schema_upgrades_v18_plan_graph_node_metadata(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA user_version = 18")
+        connection.execute(
+            """
+            CREATE TABLE plan_graphs (
+                graph_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE plan_graph_nodes (
+                node_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                graph_id INTEGER NOT NULL,
+                node_key TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (
+                    status IN ('pending', 'in_progress', 'done', 'blocked', 'skipped')
+                ),
+                attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (graph_id, node_key),
+                FOREIGN KEY (graph_id) REFERENCES plan_graphs(graph_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE plan_graph_dependencies (
+                graph_id INTEGER NOT NULL,
+                node_id INTEGER NOT NULL,
+                depends_on_node_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (node_id, depends_on_node_id),
+                FOREIGN KEY (graph_id) REFERENCES plan_graphs(graph_id),
+                FOREIGN KEY (node_id) REFERENCES plan_graph_nodes(node_id),
+                FOREIGN KEY (depends_on_node_id) REFERENCES plan_graph_nodes(node_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO plan_graphs (
+                graph_id, task_id, title, status, created_at, updated_at
+            )
+            VALUES (1, NULL, 'Old graph', 'active', 'now', 'now')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO plan_graph_nodes (
+                node_id, graph_id, node_key, title, status, attempts, created_at, updated_at
+            )
+            VALUES (1, 1, 'old-node', 'Old node', 'pending', 0, 'now', 'now')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO plan_graph_nodes (
+                node_id, graph_id, node_key, title, status, attempts, created_at, updated_at
+            )
+            VALUES (2, 1, 'dependency-node', 'Dependency node', 'done', 0, 'now', 'now')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO plan_graph_dependencies (
+                graph_id, node_id, depends_on_node_id, created_at
+            )
+            VALUES (1, 1, 2, 'now')
+            """
+        )
+
+        version = migrate_schema(connection)
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(plan_graph_nodes)")
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_graph_nodes)").fetchall()
+        }
+        migrated = connection.execute(
+            """
+            SELECT task_text, acceptance_criteria_json, node_type
+            FROM plan_graph_nodes
+            WHERE node_id = 1
+            """
+        ).fetchone()
+        dependency_count = connection.execute(
+            "SELECT COUNT(*) FROM plan_graph_dependencies"
+        ).fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO plan_graph_nodes (
+                graph_id,
+                node_key,
+                title,
+                task_text,
+                acceptance_criteria_json,
+                status,
+                node_type,
+                attempts,
+                created_at,
+                updated_at
+            )
+            VALUES (1, 'failed-node', 'Failed node', 'Failed task', '[]', 'failed', 'task', 0, 'now', 'now')
+            """
+        )
+
+    assert version == SCHEMA_VERSION
+    assert {
+        "task_text",
+        "acceptance_criteria_json",
+        "verification_requirement",
+        "blocked_reason",
+        "task_id",
+        "plan_item_id",
+        "source_node_id",
+        "node_type",
+    }.issubset(columns)
+    assert "idx_plan_graph_nodes_links" in indexes
+    assert migrated == ("Old node", "[]", "task")
+    assert dependency_count == 1
+
+
 def test_migrate_schema_upgrades_v12_plan_items_with_graph_links(
     tmp_path: Path,
 ) -> None:
@@ -1477,8 +1613,15 @@ def test_state_store_lists_ready_plan_graph_nodes(tmp_path: Path) -> None:
     )
     third = store.add_plan_graph_node(graph.graph_id, "third", "Third step")
     store.update_plan_graph_node_status(third.node_id, "blocked")
+    fourth = store.add_plan_graph_node(
+        graph.graph_id,
+        "fourth",
+        "Fourth step",
+        depends_on_node_ids=[third.node_id],
+    )
 
     ready_before = store.list_ready_plan_graph_nodes(graph.graph_id)
+    readiness_before = store.list_plan_graph_node_readiness(graph.graph_id)
     store.update_plan_graph_node_status(first.node_id, "done")
     ready_after = store.list_ready_plan_graph_nodes(graph.graph_id)
     limited = store.list_ready_plan_graph_nodes(graph.graph_id, limit=1)
@@ -1486,6 +1629,65 @@ def test_state_store_lists_ready_plan_graph_nodes(tmp_path: Path) -> None:
     assert [node.node_id for node in ready_before] == [first.node_id]
     assert [node.node_id for node in ready_after] == [second.node_id]
     assert [node.node_id for node in limited] == [second.node_id]
+    assert [item.node.node_id for item in readiness_before] == [
+        first.node_id,
+        second.node_id,
+        third.node_id,
+        fourth.node_id,
+    ]
+    assert [(item.node.node_key, item.ready, item.reason) for item in readiness_before] == [
+        ("first", True, "ready"),
+        ("second", False, "blocked_dependencies"),
+        ("third", False, "node_status_blocked"),
+        ("fourth", False, "blocked_dependencies"),
+    ]
+    fourth_readiness = readiness_before[3]
+    assert [node.node_id for node in fourth_readiness.blocking_dependencies] == [
+        third.node_id
+    ]
+
+
+def test_state_store_plan_graph_node_metadata_and_cycle_guard(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    graph = store.create_plan_graph("Metadata graph")
+    first = store.add_plan_graph_node(graph.graph_id, "first", "First")
+    second = store.add_plan_graph_node(
+        graph.graph_id,
+        "second",
+        "Second",
+        depends_on_node_ids=[first.node_id],
+        task_text="Implement the second step",
+        acceptance_criteria=["tests pass", "report explains the decision"],
+        verification_requirement="python -m pytest",
+        blocked_reason="waiting for first",
+        source_node_id=first.node_id,
+        node_type="repair",
+    )
+    third = store.add_plan_graph_node(
+        graph.graph_id,
+        "third",
+        "Third",
+        depends_on_node_ids=[second.node_id],
+    )
+
+    assert second.task_text == "Implement the second step"
+    assert second.acceptance_criteria == [
+        "tests pass",
+        "report explains the decision",
+    ]
+    assert second.verification_requirement == "python -m pytest"
+    assert second.blocked_reason == "waiting for first"
+    assert second.source_node_id == first.node_id
+    assert second.node_type == "repair"
+
+    with pytest.raises(ValueError, match="Plan graph dependency would create a cycle"):
+        store.add_plan_graph_dependency(
+            graph.graph_id,
+            node_id=first.node_id,
+            depends_on_node_id=third.node_id,
+        )
 
 
 def test_state_store_rejects_invalid_plan_graph_inputs(tmp_path: Path) -> None:

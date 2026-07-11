@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added v0.6 PlanGraph node metadata for task text, acceptance criteria,
+  verification requirements, blocked reasons, source/repair links, linked task
+  ids, and queue item ids, with schema migration support for older state stores.
+
+- Added deterministic PlanGraph readiness explanations in text and JSON output,
+  explicit non-ready dependency semantics, dependency cycle rejection, and
+  stale `in_progress` node recovery via `autopilot plan recover`.
+
+- Extended Markdown task reports and JSON trace exports with linked PlanGraph
+  graph/node context, readiness, dependencies, repair links, and graph progress.
+
 ## 0.5.5 — Trusted Publisher environment
 
 - Added the `pypi` GitHub Actions environment to the PyPI publish job so its
