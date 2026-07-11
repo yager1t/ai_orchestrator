@@ -1,7 +1,9 @@
 from pathlib import Path
 
+from ai_orchestrator.policy.engine import PolicyEngine
 from ai_orchestrator.reporting.markdown import render_task_report
 from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.tools import ToolBroker, make_process_tool_call
 from ai_orchestrator.verification.runner import VerificationResult
 
 
@@ -48,6 +50,19 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
         command_string="python -m pytest",
         payload={"name": "unit"},
         result={"exit_code": 0},
+    )
+    broker = ToolBroker(store, PolicyEngine())
+    broker_call = make_process_tool_call(
+        "process.read",
+        "read",
+        argv=["python", "-m", "pytest"],
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        idempotency_key="test-report-brokered",
+    )
+    broker.run(
+        broker_call,
+        lambda _call: {"stdout": "broker ok", "stderr": "", "exit_code": 0},
     )
     leased_action = store.record_action(
         task_id=task.task_id,
@@ -110,8 +125,8 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
     assert "- Status: `done`" in report
     assert "- Iterations: `1`" in report
     assert "- Verification runs: `1` (`passed`: 1)" in report
-    assert "- Task events: `1`" in report
-    assert "- Action records: `2` (`started`: 1, `succeeded`: 1)" in report
+    assert "- Task events: `4`" in report
+    assert "- Action records: `3` (`started`: 1, `succeeded`: 2)" in report
     assert "- Replan decisions: `1`" in report
     assert "- Memory lessons: `1`" in report
     assert "- Reflection records: `1`" in report
@@ -134,7 +149,14 @@ def test_render_task_report_includes_iterations_and_checks(tmp_path: Path) -> No
     assert "- `1`: `verification_command` status=`succeeded`" in report
     assert "key=`test-report-action`" in report
     assert "- Command: `python -m pytest`" in report
-    assert "- `2`: `tool_call` status=`started`" in report
+    assert "- `2`: `process.read` status=`succeeded`" in report
+    assert "- Requested action: `process.read`" in report
+    assert "- Risk: category=`shell` tier=`read` approval_required=`False`" in report
+    assert "- Decision: `allow` reason=No blocking policy matched" in report
+    assert "- Outcome: `succeeded` summary=process.read succeeded" in report
+    assert '- Output preview: `{"exit_code": 0, "stderr": "", "stdout": "broker ok"}`' in report
+    assert "- Provenance: source=`process.read` actor=`tool_broker`" in report
+    assert "- `3`: `tool_call` status=`started`" in report
     assert "- Lease owner: `worker-1`" in report
     assert "- Lease expires: `2026-01-01T00:00:30+00:00`" in report
     assert "- Heartbeat: `2026-01-01T00:00:00+00:00`" in report

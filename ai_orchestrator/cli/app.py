@@ -59,16 +59,19 @@ from ai_orchestrator.storage.db import (
     StoredTask,
     StoredTimelineEntry,
 )
+from ai_orchestrator.storage.redaction import redact_secrets
 from ai_orchestrator.tools import (
     TOOL_RISK_TIERS,
     ToolBroker,
     ToolCall,
     ToolExecutorRegistry,
     ToolResult,
+    ToolResultStatus,
     ToolRiskTier,
     approved_memory_commands_for_call,
     file_tool_executor,
     make_tool_call,
+    make_process_tool_call,
     memory_tool_executor,
     process_tool_executor,
 )
@@ -82,7 +85,11 @@ from ai_orchestrator.tui.app import (
     render_tasks_view,
 )
 from ai_orchestrator.verification.release import run_release_checks
-from ai_orchestrator.verification.runner import VerificationCommand, VerificationRunner
+from ai_orchestrator.verification.runner import (
+    VerificationCommand,
+    VerificationResult,
+    VerificationRunner,
+)
 
 
 _QUEUE_STATUSES = ("created", "in_progress", "done", "blocked", "skipped")
@@ -141,7 +148,7 @@ _PRODUCT_COMMAND_DEFAULT_TASKS = {
 }
 
 # Schema version for the JSON trace produced by ``ai-orch export``.
-TRACE_SCHEMA_VERSION = "1.1"
+TRACE_SCHEMA_VERSION = "1.2"
 
 
 def _add_max_runtime_sec_argument(parser: Any) -> None:
@@ -1642,6 +1649,9 @@ def _export_task_trace(
             for event in store.list_task_events(task_id=task_id)
         ],
         "action_records": action_records,
+        "action_journal": [
+            _trace_action_journal_entry(action, run_id) for action in action_records
+        ],
         "replan_decisions": [
             _trace_record_with_run_id(asdict(decision), run_id)
             for decision in store.list_replan_decisions(task_id=task_id)
@@ -1682,16 +1692,92 @@ def _trace_record_with_run_id(record: dict[str, object], run_id: str) -> dict[st
     return {**record, "run_id": run_id}
 
 
+def _trace_action_journal_entry(
+    action: dict[str, object],
+    run_id: str,
+) -> dict[str, object]:
+    payload = _dict_value(action, "payload")
+    result = _dict_value(action, "result")
+    request = _dict_value(payload, "action_request")
+    risk = _dict_value(request, "risk")
+    provenance = _dict_value(request, "provenance")
+    decision = _dict_value(result, "action_decision")
+    action_result = _dict_value(result, "action_result")
+    output = _dict_value(result, "output")
+
+    approval_id = decision.get("approval_id")
+    if approval_id is None:
+        approval_id = output.get("approval_id")
+
+    command_string = action.get("command_string")
+    redacted_command = (
+        redact_secrets(command_string) if isinstance(command_string, str) else None
+    )
+    policy_reason = action.get("policy_reason")
+    redacted_policy_reason = (
+        redact_secrets(policy_reason) if isinstance(policy_reason, str) else None
+    )
+
+    return _trace_record_with_run_id(
+        {
+            "action_id": action.get("action_id"),
+            "task_id": action.get("task_id"),
+            "iteration_id": action.get("iteration_id"),
+            "idempotency_key": action.get("idempotency_key"),
+            "action_type": action.get("action_type"),
+            "requested_action": request.get("name") or payload.get("tool_name"),
+            "category": risk.get("action_type"),
+            "risk_tier": risk.get("risk_tier") or payload.get("risk_tier"),
+            "requires_approval": risk.get("requires_approval"),
+            "status": action.get("status"),
+            "command_string": redacted_command,
+            "policy_action": action.get("policy_action"),
+            "policy_reason": redacted_policy_reason,
+            "decision": decision,
+            "approval_id": approval_id,
+            "outcome": action_result,
+            "output_preview": action_result.get("output_preview"),
+            "provenance": provenance,
+            "lease": {
+                "owner": action.get("lease_owner"),
+                "expires_at": action.get("lease_expires_at"),
+                "heartbeat_at": action.get("heartbeat_at"),
+            },
+            "created_at": action.get("created_at"),
+            "updated_at": action.get("updated_at"),
+        },
+        run_id,
+    )
+
+
+def _dict_value(payload: dict[str, object], key: str) -> dict[str, object]:
+    value = payload.get(key)
+    if isinstance(value, dict) and all(isinstance(item_key, str) for item_key in value):
+        return cast(dict[str, object], value)
+    return {}
+
+
 def _unsafe_action_count(action_records: list[dict[str, object]]) -> int:
     count = 0
     for action in action_records:
         payload = action.get("payload")
         if not isinstance(payload, dict):
             continue
-        risk_tier = payload.get("risk_tier")
+        request = payload.get("action_request")
+        risk = request.get("risk") if isinstance(request, dict) else None
+        action_type = risk.get("action_type") if isinstance(risk, dict) else None
+        risk_tier = (
+            risk.get("risk_tier")
+            if isinstance(risk, dict)
+            else payload.get("risk_tier")
+        )
         policy_action = action.get("policy_action")
         status = action.get("status")
-        if risk_tier in {"network", "destructive"} and policy_action != "deny":
+        risky = risk_tier in {"network", "destructive"} or action_type in {
+            "dangerous",
+            "secret_sensitive",
+        }
+        if risky and policy_action != "deny":
             if status not in {"policy_denied", "needs_approval"}:
                 count += 1
     return count
@@ -1700,6 +1786,12 @@ def _unsafe_action_count(action_records: list[dict[str, object]]) -> int:
 def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
     running_tasks = [task for task in store.list_tasks() if task.status == "running"]
     expired_actions = store.list_expired_action_leases()
+    stale_started_actions = [
+        action
+        for action in store.list_stale_action_records()
+        if action.action_id not in {expired.action_id for expired in expired_actions}
+    ]
+    recover_actions = [*expired_actions, *stale_started_actions]
 
     if args.apply and not args.reason:
         print("--reason is required when --apply is set")
@@ -1734,7 +1826,7 @@ def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
                 summary="Task recovered and marked blocked",
             )
             blocked_tasks += 1
-        for action in expired_actions:
+        for action in recover_actions:
             completed = store.complete_action_record(
                 action.action_id,
                 "failed",
@@ -1753,6 +1845,7 @@ def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
         _print_recover_json(
             running_tasks=running_tasks,
             expired_actions=expired_actions,
+            stale_started_actions=stale_started_actions,
             apply=bool(args.apply),
             reason=args.reason if args.apply else None,
             blocked_tasks=blocked_tasks,
@@ -1763,14 +1856,15 @@ def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
     print("Recovery")
     print(f"  running_tasks: {len(running_tasks)}")
     print(f"  expired_action_leases: {len(expired_actions)}")
+    print(f"  stale_started_actions: {len(stale_started_actions)}")
     if args.apply:
         print(f"  blocked_tasks: {blocked_tasks}")
         print(f"  failed_actions: {failed_actions}")
         print(f"  reason: {args.reason}")
     else:
         print("  dry_run: use --apply --reason '...' to recover")
-    if not running_tasks and not expired_actions:
-        print("  No interrupted runs or expired action leases found.")
+    if not running_tasks and not recover_actions:
+        print("  No interrupted runs or stale action records found.")
         return 0
 
     for task in running_tasks:
@@ -1785,6 +1879,14 @@ def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
                 f"owner={owner} expires={expires}"
             )
         )
+    for action in stale_started_actions:
+        print(
+            (
+                f"  [stale_action] {action.action_id}: "
+                f"{action.action_type} task={action.task_id} "
+                f"updated={action.updated_at}"
+            )
+        )
     return 0
 
 
@@ -1792,6 +1894,7 @@ def _print_recover_json(
     *,
     running_tasks: list[StoredTask],
     expired_actions: list[StoredActionRecord],
+    stale_started_actions: list[StoredActionRecord],
     apply: bool,
     reason: str | None,
     blocked_tasks: int,
@@ -1808,6 +1911,10 @@ def _print_recover_json(
         "expired_action_leases": {
             "count": len(expired_actions),
             "items": [asdict(action) for action in expired_actions],
+        },
+        "stale_started_actions": {
+            "count": len(stale_started_actions),
+            "items": [asdict(action) for action in stale_started_actions],
         },
         "recovered": {
             "blocked_tasks": blocked_tasks,
@@ -3160,24 +3267,41 @@ def _retry_approval_request(
 
     repo = Path(task.repo_path)
     config = load_project_config(repo)
-    runner = _verification_runner(
-        config,
-        approved_commands={approval.command_string},
-    )
-    result = runner.run(
-        VerificationCommand(
-            name=f"approval-{approval.approval_id}",
-            run=approval.command_string,
+    broker = ToolBroker(store, _policy_engine(config))
+    call = make_process_tool_call(
+        "process.approval_retry",
+        "write",
+        command=approval.command_string,
+        task_id=approval.task_id,
+        idempotency_key=(
+            f"approval:{approval.approval_id}:retry:"
+            f"{approval.command_string}"
         ),
-        cwd=repo,
     )
+    runner = _verification_runner(config, approved_commands={approval.command_string})
+    result = broker.run_approved(
+        call,
+        lambda _call: _approval_retry_tool_result(
+            call,
+            runner.run(
+                VerificationCommand(
+                    name=f"approval-{approval.approval_id}",
+                    run=approval.command_string,
+                ),
+                cwd=repo,
+            ),
+        ),
+        approval_id=approval.approval_id,
+    )
+    retry_status = _tool_retry_status(result)
+    exit_code = _tool_retry_exit_code(result)
     updated_approval = store.record_approval_retry(
         approval_id=approval.approval_id,
-        status=result.status,
-        exit_code=result.exit_code,
-        error=result.error or result.stderr,
+        status=retry_status,
+        exit_code=exit_code,
+        error=result.error or _tool_retry_stderr(result),
     )
-    print(f"retry: {result.status} exit={result.exit_code}")
+    print(f"retry: {retry_status} exit={exit_code}")
     if updated_approval is not None:
         print(
             "retry history: "
@@ -3187,11 +3311,38 @@ def _retry_approval_request(
         )
     if result.error:
         print(f"error: {result.error}")
-    if result.stdout:
-        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
-    if result.stderr:
-        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n")
-    return 0 if result.status == "passed" else 1
+    stdout = _tool_retry_stdout(result)
+    stderr = _tool_retry_stderr(result)
+    if stdout:
+        print(stdout, end="" if stdout.endswith("\n") else "\n")
+    if stderr:
+        print(stderr, end="" if stderr.endswith("\n") else "\n")
+    return 0 if retry_status == "passed" else 1
+
+
+def _approval_retry_tool_result(
+    call: ToolCall,
+    result: VerificationResult,
+) -> ToolResult:
+    status: ToolResultStatus
+    if result.status == "passed":
+        status = "succeeded"
+    elif result.status in {"policy_denied", "needs_approval"}:
+        status = cast(ToolResultStatus, result.status)
+    else:
+        status = "failed"
+
+    return ToolResult(
+        call=call,
+        status=status,
+        output={
+            "verification_status": result.status,
+            "exit_code": result.exit_code,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        },
+        error=result.error or (result.stderr if result.status != "passed" else None),
+    )
 
 
 def _retry_tool_broker_approval_request(

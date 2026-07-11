@@ -5,11 +5,15 @@ import pytest
 from ai_orchestrator.memory import CodebaseMemoryResult
 from ai_orchestrator.process.runner import ProcessResult, RunOptions
 from ai_orchestrator.tools import (
+    ACTION_TYPES,
     TOOL_RISK_TIERS,
+    ActionDecision,
+    ActionRisk,
     ToolCall,
     ToolExecutorRegistry,
     ToolResult,
     ToolSpec,
+    classify_tool_action,
     file_tool_executor,
     make_fs_write_call,
     make_memory_tool_call,
@@ -50,6 +54,87 @@ def test_tool_call_exposes_action_record_payload() -> None:
     }
 
 
+def test_tool_call_builds_typed_action_request_payload() -> None:
+    call = ToolCall(
+        spec=ToolSpec("verification.run", "read", action_type="verification_command"),
+        idempotency_key="tool:verification.run:demo",
+        arguments={"command": "python -m pytest"},
+        task_id="task-1",
+        iteration_id=2,
+    )
+
+    request = call.action_request(command_string="python -m pytest").to_payload()
+
+    assert request["schema_version"] == "action-envelope/v1"
+    assert request["name"] == "verification.run"
+    assert request["record_type"] == "verification_command"
+    assert request["command_string"] == "python -m pytest"
+    assert request["arguments"] == {"command": "python -m pytest"}
+    assert request["risk"] == {
+        "action_type": "verification",
+        "risk_tier": "read",
+        "requires_approval": False,
+        "reasons": [],
+    }
+    assert request["provenance"] == {
+        "source": "verification.run",
+        "actor": "tool_broker",
+        "task_id": "task-1",
+        "iteration_id": 2,
+        "idempotency_key": "tool:verification.run:demo",
+        "correlation_id": "tool:verification.run:demo",
+    }
+
+
+def test_tool_action_classification_covers_v0_5_action_types() -> None:
+    assert "secret_sensitive" in ACTION_TYPES
+    assert classify_tool_action(ToolCall(ToolSpec("fs.read", "read"), "read-1")) == "read"
+    assert classify_tool_action(ToolCall(ToolSpec("fs.write", "write"), "write-1")) == "write"
+    assert (
+        classify_tool_action(
+            ToolCall(
+                ToolSpec("process.run", "read"),
+                "shell-1",
+                arguments={"argv": ["python", "-m", "pytest"]},
+            )
+        )
+        == "shell"
+    )
+    assert (
+        classify_tool_action(
+            ToolCall(
+                ToolSpec("process.run", "write"),
+                "git-1",
+                arguments={"argv": ["git", "status", "--short"]},
+            )
+        )
+        == "git"
+    )
+    assert (
+        classify_tool_action(
+            ToolCall(
+                ToolSpec("memory.index_repository", "network"),
+                "network-1",
+            )
+        )
+        == "network"
+    )
+    assert (
+        classify_tool_action(
+            ToolCall(
+                ToolSpec("process.run", "read"),
+                "secret-1",
+                arguments={"command": "cat ~/.codex/auth.json"},
+            )
+        )
+        == "secret_sensitive"
+    )
+    assert (
+        classify_tool_action(ToolCall(ToolSpec("fs.delete", "destructive"), "danger-1"))
+        == "dangerous"
+    )
+
+
 def test_tool_result_exposes_action_result_payload() -> None:
     call = ToolCall(
         spec=ToolSpec("fs.read", "read"),
@@ -67,6 +152,39 @@ def test_tool_result_exposes_action_result_payload() -> None:
         "risk_tier": "read",
         "status": "succeeded",
         "output": {"bytes": 42},
+    }
+    assert result.typed_action_result().to_payload() == {
+        "status": "succeeded",
+        "summary": "fs.read succeeded",
+        "output": {"bytes": 42},
+    }
+
+
+def test_action_dataclasses_validate_and_serialize() -> None:
+    risk = ActionRisk(
+        action_type="write",
+        risk_tier="write",
+        requires_approval=True,
+        reasons=("Tool risk tier: write",),
+    )
+    decision = ActionDecision(
+        action="ask",
+        reason="Tool risk tier requires approval: write",
+        approval_id=7,
+        policy_name="PolicyEngine",
+    )
+
+    assert risk.to_payload() == {
+        "action_type": "write",
+        "risk_tier": "write",
+        "requires_approval": True,
+        "reasons": ["Tool risk tier: write"],
+    }
+    assert decision.to_payload() == {
+        "action": "ask",
+        "reason": "Tool risk tier requires approval: write",
+        "approval_id": 7,
+        "policy_name": "PolicyEngine",
     }
 
 

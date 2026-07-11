@@ -1207,6 +1207,43 @@ def test_state_store_allows_reacquiring_expired_action_lease(tmp_path: Path) -> 
     assert reacquired.lease_expires_at == "2026-01-01T00:01:01+00:00"
 
 
+def test_state_store_lists_stale_started_actions_without_lease(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo stale action", repo_path=tmp_path)
+    stale = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="demo-stale-action",
+        action_type="process.approval_retry",
+    )
+    fresh = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="demo-fresh-action",
+        action_type="process.approval_retry",
+    )
+    completed = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="demo-completed-action",
+        action_type="process.approval_retry",
+        status="succeeded",
+        result={"status": "succeeded"},
+    )
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE action_records SET updated_at = ? WHERE action_id IN (?, ?)",
+            (
+                "2026-01-01T00:00:00+00:00",
+                stale.action_id,
+                completed.action_id,
+            ),
+        )
+
+    loaded = store.list_stale_action_records("2026-01-01T00:30:00+00:00")
+
+    assert [action.action_id for action in loaded] == [stale.action_id]
+    assert fresh.action_id not in {action.action_id for action in loaded}
+    assert completed.action_id not in {action.action_id for action in loaded}
+
+
 def test_state_store_releases_action_lease(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo release lease", repo_path=tmp_path)

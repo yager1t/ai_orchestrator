@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Added the v0.5 typed action broker envelope and action journal enrichment for
+  brokered actions, including request, risk, provenance, policy decision,
+  approval reference, execution outcome, and redacted stdout/stderr previews.
+
+- Hardened action policy tiers so dangerous and secret-sensitive action
+  classifications are denied before executor invocation, and approved retries
+  cannot override those denials.
+
+- Routed legacy approval retry execution through the action broker, added
+  replay-safe handling for completed broker actions by idempotency key, and
+  expanded recovery to detect stale started actions without active leases.
+
+- Extended JSON trace exports with normalized `action_journal` entries and
+  improved Markdown reports with readable action request, risk, decision,
+  outcome, preview, and provenance details.
+
 ## 0.4.0 — AgentTrace and durability core
 
 - Added v0.4 AgentTrace durability metadata to task events, including run,
