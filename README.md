@@ -1,11 +1,19 @@
 # AI Task Finisher / ai-orch
 
-`ai-orch` is a local supervisor for CLI-based AI agents. It runs an agent,
-verifies the result, and decides whether the task should continue, finish, or be
-marked blocked.
+`ai-orch` helps you run local AI coding agents such as Codex CLI, Claude Code,
+Gemini CLI, Kimi CLI, or a generic wrapper without letting the agent declare its
+own work finished. It supervises the run, executes independent verification, and
+leaves an auditable report.
 
-The core rule: executor agents do not decide that work is done. Completion is
-accepted only after supervisor-controlled verification passes.
+Use it when you want a local control plane for coding tasks:
+
+- give a task to a CLI worker;
+- verify the result with real commands;
+- continue, finish, or block based on supervisor checks;
+- keep reports, timelines, approvals, and traces on disk.
+
+The core rule is simple: executor agents do not decide that work is done.
+Completion is accepted only after supervisor-controlled verification passes.
 
 ```text
 plan -> execute -> verify -> decide -> continue | done | blocked
@@ -58,7 +66,53 @@ Latest verified baseline:
 - `python -m ai_orchestrator release-check --repo .`: passed
 - `git diff --check`: passed
 
-## Quick Start
+## First Run
+
+Choose one path.
+
+### Try It Safely
+
+Run the bundled docs-only demo. It uses the built-in `mock` worker, so it does
+not need Codex, Claude, Gemini, Kimi, or any provider credentials.
+
+```bash
+python -m pip install -e ".[dev]"
+ai-orch demo
+```
+
+The command runs `examples/docs_only_quickstart`, verifies that its README has a
+top-level heading, writes a task report, and prints the next real-worker path.
+
+### Use It On Your Project
+
+For a real AI worker, install and log in to that worker CLI first. The most
+direct Codex path is:
+
+```bash
+ai-orch setup --profile codex-safe --agent codex
+ai-orch doctor agents
+ai-orch onboard
+ai-orch fix --task "Review this repository and suggest the safest next fix" --repo .
+```
+
+`setup` writes `.ai-orch/config.yaml`, `doctor agents` explains worker
+availability and auth expectations, `onboard` gives a first-run readiness
+wizard, and `fix` runs the same verification-gated supervisor loop with a
+beginner-friendly role template.
+
+When the selected agent is `mock`, the CLI states that it is demo/smoke-test
+mode rather than real AI work.
+
+## Install Paths
+
+For future packaged releases, the universal end-user path is `pipx`:
+
+```bash
+pipx install ai-orchestrator
+ai-orch --help
+```
+
+For a checked-out repository or release ZIP, use the local install path:
 
 ```bash
 python -m venv .venv
@@ -67,7 +121,9 @@ python -m pip install -e ".[dev]"
 ai-orch --help
 ai-orch setup
 ai-orch doctor
-ai-orch start --task "Check the MVP scaffold" --repo .
+ai-orch demo
+ai-orch onboard
+ai-orch review --repo .
 python -m pytest
 ```
 
@@ -118,6 +174,38 @@ After it finishes, run:
 
 See [`docs/LINUX_INSTALL.md`](docs/LINUX_INSTALL.md) for Python/bootstrap
 options and troubleshooting.
+
+On macOS, use the dedicated guide:
+
+```bash
+python3 -m pip install .
+ai-orch demo
+```
+
+See [`docs/MAC_INSTALL.md`](docs/MAC_INSTALL.md) for `pipx`, local install,
+launcher, and Homebrew-channel guidance.
+
+## Configuration
+
+## Human-Friendly Task Commands
+
+`start` remains the explicit low-level command, but most first runs can use a
+scenario command:
+
+```bash
+ai-orch fix --task "Fix the failing payment test"
+ai-orch task --task "Add OAuth login"
+ai-orch analyze
+ai-orch review
+ai-orch docs --task "Document local setup"
+```
+
+These commands use beginner role templates such as Bug fixer, Developer, Code
+reviewer, Documentation writer, Security auditor, and QA engineer. They do not
+bypass supervisor verification; they only shape the task prompt and then call
+the normal run loop.
+
+Use `ai-orch onboard` any time you need the guided readiness view again.
 
 ## Configuration
 

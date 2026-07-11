@@ -4,7 +4,7 @@ import sqlite3
 from collections.abc import Callable
 
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 Migration = Callable[[sqlite3.Connection], None]
 
 
@@ -217,6 +217,10 @@ def _migrate_16_to_17(connection: sqlite3.Connection) -> None:
     _create_autopilot_loop_runs_table(connection)
 
 
+def _migrate_17_to_18(connection: sqlite3.Connection) -> None:
+    _add_task_event_trace_columns(connection)
+
+
 def _create_autopilot_loop_runs_table(connection: sqlite3.Connection) -> None:
     connection.execute(
         """
@@ -359,8 +363,16 @@ def _create_task_events_table(connection: sqlite3.Connection) -> None:
             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
             task_id TEXT NOT NULL,
             sequence INTEGER NOT NULL,
+            run_id TEXT,
+            session_id TEXT,
+            iteration_id INTEGER,
+            correlation_id TEXT,
+            idempotency_key TEXT,
             event_type TEXT NOT NULL,
+            actor TEXT NOT NULL DEFAULT 'system',
+            summary TEXT NOT NULL DEFAULT '',
             payload_json TEXT NOT NULL DEFAULT '{}',
+            payload_preview TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             UNIQUE (task_id, sequence),
             FOREIGN KEY (task_id) REFERENCES tasks(task_id)
@@ -371,6 +383,48 @@ def _create_task_events_table(connection: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_task_events_task_sequence
         ON task_events (task_id, sequence)
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_task_events_task_idempotency
+        ON task_events (task_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+        """
+    )
+
+
+def _add_task_event_trace_columns(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "task_events"):
+        return
+    _add_column_if_missing(connection, "task_events", "run_id", "TEXT")
+    _add_column_if_missing(connection, "task_events", "session_id", "TEXT")
+    _add_column_if_missing(connection, "task_events", "iteration_id", "INTEGER")
+    _add_column_if_missing(connection, "task_events", "correlation_id", "TEXT")
+    _add_column_if_missing(connection, "task_events", "idempotency_key", "TEXT")
+    _add_column_if_missing(
+        connection,
+        "task_events",
+        "actor",
+        "TEXT NOT NULL DEFAULT 'system'",
+    )
+    _add_column_if_missing(
+        connection,
+        "task_events",
+        "summary",
+        "TEXT NOT NULL DEFAULT ''",
+    )
+    _add_column_if_missing(
+        connection,
+        "task_events",
+        "payload_preview",
+        "TEXT NOT NULL DEFAULT ''",
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_task_events_task_idempotency
+        ON task_events (task_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL
         """
     )
 
@@ -598,6 +652,7 @@ MIGRATIONS: dict[int, Migration] = {
     14: _migrate_14_to_15,
     15: _migrate_15_to_16,
     16: _migrate_16_to_17,
+    17: _migrate_17_to_18,
 }
 
 

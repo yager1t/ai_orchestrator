@@ -138,9 +138,13 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
         repo / "CHANGELOG.md",
         repo / "docs" / "INSTALL.md",
         repo / "docs" / "LINUX_INSTALL.md",
+        repo / "docs" / "MAC_INSTALL.md",
+        repo / "docs" / "ONBOARDING_GOAL_PLAN.md",
         repo / "docs" / "WINDOWS_INSTALL.md",
         repo / "docs" / "RELEASE.md",
         repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md",
+        repo / "docs" / "USER_GUIDE.md",
+        repo / "docs" / "V0_3_GOAL_PLAN.md",
     ]
     missing = [_relative_label(path, repo) for path in required_docs if not path.exists()]
     if missing:
@@ -157,12 +161,34 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
             status="failed",
             detail="CHANGELOG.md is missing an Unreleased section",
         )
+
+    content_requirements = [
+        (repo / "README.md", "ai-orch demo"),
+        (repo / "README.md", "ai-orch onboard"),
+        (repo / "README.md", "ai-orch fix"),
+        (repo / "docs" / "INSTALL.md", "pipx"),
+        (repo / "docs" / "USER_GUIDE.md", "ai-orch demo"),
+        (repo / "docs" / "USER_GUIDE.md", "ai-orch onboard"),
+        (repo / "docs" / "USER_GUIDE.md", "ai-orch fix"),
+        (repo / "docs" / "MAC_INSTALL.md", "macOS"),
+    ]
+    missing_content = [
+        f"{_relative_label(path, repo)} missing {needle!r}"
+        for path, needle in content_requirements
+        if needle not in path.read_text(encoding="utf-8")
+    ]
+    if missing_content:
+        return ReleaseCheckResult(
+            name="release-docs",
+            status="failed",
+            detail=f"Missing onboarding content: {', '.join(missing_content)}",
+        )
     return ReleaseCheckResult(
         name="release-docs",
         status="passed",
         detail=(
-            "README, changelog, install guides, release checklist, and "
-            "shipping template present"
+            "README, changelog, platform install guides, onboarding plan, "
+            "user guide, release checklist, and shipping template present"
         ),
     )
 

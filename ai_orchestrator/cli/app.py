@@ -108,9 +108,40 @@ _AGENT_DEFAULT_TYPES = {
     "mock": "mock",
 }
 _CLI_AUTH_CONNECTORS = {"codex", "claude", "gemini", "kimi"}
+_SETUP_PROFILES = (
+    "codex-safe",
+    "python-project",
+    "node-project",
+    "docs-project",
+    "readonly-review",
+)
+_DEMO_TASK = "Confirm the README has a top-level heading."
+_PRODUCT_COMMANDS = ("fix", "task", "analyze", "review", "docs")
+_BEGINNER_ROLES = {
+    "developer": "Developer",
+    "bug-fixer": "Bug fixer",
+    "code-reviewer": "Code reviewer",
+    "documentation-writer": "Documentation writer",
+    "security-auditor": "Security auditor",
+    "qa-engineer": "QA engineer",
+}
+_PRODUCT_COMMAND_DEFAULT_ROLES = {
+    "fix": "bug-fixer",
+    "task": "developer",
+    "analyze": "code-reviewer",
+    "review": "code-reviewer",
+    "docs": "documentation-writer",
+}
+_PRODUCT_COMMAND_DEFAULT_TASKS = {
+    "fix": "Find and fix the most important failing behavior in this repository.",
+    "task": "Implement the requested coding task safely.",
+    "analyze": "Analyze this repository and report the highest-priority risks.",
+    "review": "Review this repository for correctness, tests, and safety issues.",
+    "docs": "Improve or create documentation for the current project.",
+}
 
 # Schema version for the JSON trace produced by ``ai-orch export``.
-TRACE_SCHEMA_VERSION = "1.0"
+TRACE_SCHEMA_VERSION = "1.1"
 
 
 def _add_max_runtime_sec_argument(parser: Any) -> None:
@@ -144,6 +175,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["auto", "mock", "codex", "claude", "kimi", "gemini"],
         default="auto",
         help="Default agent to configure; auto chooses the first detected CLI",
+    )
+    setup.add_argument(
+        "--profile",
+        choices=_SETUP_PROFILES,
+        default="python-project",
+        help="Verification and onboarding preset to write into config.yaml",
     )
     setup.add_argument(
         "--force",
@@ -188,6 +225,54 @@ def build_parser() -> argparse.ArgumentParser:
             "Relative paths are resolved from --repo."
         ),
     )
+
+    demo = sub.add_parser(
+        "demo",
+        help="Run a safe first-value demo using the bundled docs-only example",
+    )
+    demo.add_argument(
+        "--repo",
+        default="examples/docs_only_quickstart",
+        help="Demo repository to run (default: examples/docs_only_quickstart)",
+    )
+    demo.add_argument(
+        "--task",
+        default=_DEMO_TASK,
+        help="Demo task text to run through the supervisor",
+    )
+
+    onboard = sub.add_parser(
+        "onboard",
+        help="Run a beginner-friendly first-run readiness wizard",
+    )
+    onboard.add_argument("--repo", default=".")
+    onboard.add_argument("--json", action="store_true", help="Print machine-readable output")
+
+    for command_name in _PRODUCT_COMMANDS:
+        product = sub.add_parser(
+            command_name,
+            help=f"Run a {command_name} scenario through the supervisor",
+        )
+        product.add_argument(
+            "prompt",
+            nargs="*",
+            help="Scenario prompt; can be used instead of --task",
+        )
+        product.add_argument("--task", help="Scenario prompt to run")
+        product.add_argument("--repo", default=".")
+        product.add_argument(
+            "--role",
+            choices=tuple(_BEGINNER_ROLES),
+            default=_PRODUCT_COMMAND_DEFAULT_ROLES[command_name],
+            help="Beginner role template to apply",
+        )
+        product.add_argument(
+            "--worktree",
+            help=(
+                "Run the task in an existing separate git worktree. "
+                "Relative paths are resolved from --repo."
+            ),
+        )
 
     status = sub.add_parser("status", help="Show stored task status")
     status.add_argument("task_id")
@@ -1220,6 +1305,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return _run_doctor_command(args)
 
+    if args.command == "demo":
+        return _run_demo_command(args)
+
+    if args.command == "onboard":
+        return _run_onboard_command(args)
+
     if args.command == "agents":
         config = load_project_config(Path(args.repo))
         print(f"default: {config.default_agent}")
@@ -1449,49 +1540,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "start":
-        repo = Path(args.repo)
-        config = load_project_config(repo)
-        execution_repo = _autopilot_execution_repo(repo, getattr(args, "worktree", None))
-        if args.worktree:
-            worktree_error = _validate_autopilot_worktree(repo, execution_repo)
-            if worktree_error is not None:
-                print(f"Execution blocked: {worktree_error}")
-                return 1
-        planning_context = None
-        if args.use_memory:
-            memory_context = _load_memory_planning_context(
-                config=config,
-                repo=repo,
-                area=args.memory_area,
-            )
-            if memory_context.status != "passed":
-                print(f"memory context: {memory_context.status}")
-                if memory_context.error:
-                    print(f"error: {memory_context.error}")
-                return 1
-            planning_context = memory_context.stdout
-        try:
-            supervisor = _build_supervisor(
-                state_store=_state_store_for_repo(repo),
-                config=config,
-                progress_callback=_print_progress,
-            )
-        except ValueError as exc:
-            print(str(exc))
-            return 1
-        _print_run_preamble(
-            action="start",
-            repo=execution_repo,
-            config=config,
-            supervisor=supervisor,
-        )
-        supervisor_result = supervisor.run_once(
+        start_result = _run_supervisor_start(
+            repo=Path(args.repo),
             task=args.task,
-            repo=execution_repo,
-            planning_context=planning_context,
+            worktree=args.worktree,
+            use_memory=args.use_memory,
+            memory_area=args.memory_area,
         )
-        _print_supervisor_result(supervisor_result, repo=execution_repo)
-        return 0 if supervisor_result.status == "done" else 1
+        if start_result is None:
+            return 1
+        return 0 if start_result.status == "done" else 1
+
+    if args.command in _PRODUCT_COMMANDS:
+        return _run_product_command(args)
 
     parser.print_help()
     return 0
@@ -1651,12 +1712,26 @@ def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
             store.update_task_status(task.task_id, "blocked")
             store.append_task_event(
                 task.task_id,
+                "task_recovered",
+                {
+                    "previous_status": "running",
+                    "status": "blocked",
+                    "reason": args.reason,
+                },
+                actor="supervisor",
+                summary="Task recovered and marked blocked",
+                idempotency_key="task_recovered:blocked",
+            )
+            store.append_task_event(
+                task.task_id,
                 "task.recovered",
                 {
                     "previous_status": "running",
                     "status": "blocked",
                     "reason": args.reason,
                 },
+                actor="supervisor",
+                summary="Task recovered and marked blocked",
             )
             blocked_tasks += 1
         for action in expired_actions:
@@ -2014,16 +2089,320 @@ def _print_run_preamble(
     print("", flush=True)
 
 
-def _print_supervisor_result(result: SupervisorResult, *, repo: Path) -> None:
+def _print_supervisor_result(
+    result: SupervisorResult,
+    *,
+    repo: Path,
+    store: StateStore | None = None,
+    report_path: Path | None = None,
+) -> None:
     task_prefix = f"{result.task_id}: " if result.task_id else ""
     print(f"{task_prefix}{result.summary}")
     print("")
+    print("Run summary:")
+    print(f"  task_id: {result.task_id or 'none'}")
     print(f"result: {result.status}")
+    if result.task_id and store is not None:
+        files_changed = _files_changed_for_task(store, result.task_id)
+        verification_status = _verification_status_for_task(store, result.task_id)
+        if files_changed:
+            print(f"  files_changed: {', '.join(files_changed)}")
+        else:
+            print("  files_changed: none")
+        print(f"  verification: {verification_status}")
+    if report_path is not None:
+        print(f"  report: {report_path}")
     if result.task_id:
         print("next commands:")
         print(f"  ai-orch status {result.task_id} --repo {repo}")
         print(f"  ai-orch report {result.task_id} --repo {repo}")
         print(f"  ai-orch timeline {result.task_id} --repo {repo}")
+
+
+def _files_changed_for_task(store: StateStore, task_id: str) -> list[str]:
+    seen: set[str] = set()
+    files: list[str] = []
+    for iteration in store.list_iteration_details(task_id):
+        for path in iteration.files_changed:
+            if path not in seen:
+                seen.add(path)
+                files.append(path)
+    return files
+
+
+def _verification_status_for_task(store: StateStore, task_id: str) -> str:
+    runs = store.list_verification_details(task_id)
+    if not runs:
+        return "not_run"
+    if all(run.status == "passed" for run in runs):
+        return "passed"
+    if any(run.status == "failed" for run in runs):
+        return "failed"
+    return ", ".join(sorted({run.status for run in runs}))
+
+
+def _run_supervisor_start(
+    *,
+    repo: Path,
+    task: str,
+    worktree: str | None = None,
+    use_memory: bool = False,
+    memory_area: str = "supervisor",
+    action: str = "start",
+    write_report: bool = False,
+    require_verification: bool = False,
+) -> SupervisorResult | None:
+    config_path = repo / ".ai-orch" / "config.yaml"
+    if not config_path.exists():
+        print(f"Config not found: {config_path}")
+        print("Next command: ai-orch setup --repo .")
+        print("For a safe first result, run: ai-orch demo")
+        return None
+    config = load_project_config(repo)
+    if require_verification and not config.verification_commands:
+        print("No verification commands configured.")
+        print("Next command: ai-orch setup --repo . --force")
+        return None
+    execution_repo = _autopilot_execution_repo(repo, worktree)
+    if worktree:
+        worktree_error = _validate_autopilot_worktree(repo, execution_repo)
+        if worktree_error is not None:
+            print(f"Execution blocked: {worktree_error}")
+            return None
+    planning_context = None
+    if use_memory:
+        memory_context = _load_memory_planning_context(
+            config=config,
+            repo=repo,
+            area=memory_area,
+        )
+        if memory_context.status != "passed":
+            print(f"memory context: {memory_context.status}")
+            if memory_context.error:
+                print(f"error: {memory_context.error}")
+            return None
+        planning_context = memory_context.stdout
+    try:
+        store = _state_store_for_repo(repo)
+        supervisor = _build_supervisor(
+            state_store=store,
+            config=config,
+            progress_callback=_print_progress,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        print("Next command: ai-orch doctor agents --repo .")
+        return None
+    _print_run_preamble(
+        action=action,
+        repo=execution_repo,
+        config=config,
+        supervisor=supervisor,
+    )
+    result = supervisor.run_once(
+        task=task,
+        repo=execution_repo,
+        planning_context=planning_context,
+    )
+    report_path = None
+    if write_report and result.task_id:
+        report_path = _write_task_report(store, execution_repo, result.task_id)
+    _print_supervisor_result(
+        result,
+        repo=execution_repo,
+        store=store,
+        report_path=report_path,
+    )
+    return result
+
+
+def _run_demo_command(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config_path = repo / ".ai-orch" / "config.yaml"
+    if not config_path.exists():
+        print(f"Demo config not found: {config_path}")
+        print("Use the bundled example or run setup for your own repository first.")
+        return 1
+
+    print("=== ai-orch demo ===")
+    print(f"repo: {repo}")
+    print("mode: mock demo")
+    print("This path does not require external AI credentials.")
+    result = _run_supervisor_start(
+        repo=repo,
+        task=args.task,
+        action="demo",
+        write_report=True,
+    )
+    if result is None:
+        return 1
+
+    print("")
+    print("Demo summary:")
+    print("- mode: mock demo")
+    print(f"- task_id: {result.task_id or 'none'}")
+    print(f"- result: {result.status}")
+    print(f"- verification: {'passed' if result.status == 'done' else 'not passed'}")
+    print("Next real-worker path:")
+    print("1. Install and log in to Codex CLI or another supported worker.")
+    print("2. Run: ai-orch setup --profile codex-safe --agent codex --force")
+    print("3. Run: ai-orch doctor agents --repo .")
+    return 0 if result.status == "done" else 1
+
+
+def _run_product_command(args: argparse.Namespace) -> int:
+    repo = Path(args.repo)
+    task = _product_task_from_args(args)
+    result = _run_supervisor_start(
+        repo=repo,
+        task=task,
+        worktree=args.worktree,
+        action=args.command,
+        write_report=True,
+        require_verification=True,
+    )
+    if result is None:
+        return 1
+    return 0 if result.status == "done" else 1
+
+
+def _product_task_from_args(args: argparse.Namespace) -> str:
+    explicit = args.task or " ".join(args.prompt).strip()
+    if not explicit:
+        explicit = _PRODUCT_COMMAND_DEFAULT_TASKS[args.command]
+    role_name = _BEGINNER_ROLES[args.role]
+    scenario = args.command
+    return (
+        f"Role: {role_name}.\n"
+        f"Scenario: {scenario}.\n"
+        "Work in small steps, keep changes scoped, and rely on verification as "
+        "the source of truth.\n"
+        f"User request: {explicit}"
+    )
+
+
+def _run_onboard_command(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    payload = _onboard_payload(repo)
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    print("=== ai-orch onboard ===")
+    print(f"repo: {repo}")
+    print("System checks:")
+    checks = cast(list[dict[str, object]], payload["checks"])
+    for check in checks:
+        marker = "ok" if check["ok"] else "needs attention"
+        print(f"- {check['name']}: {marker} - {check['detail']}")
+    print("")
+    print("Worker CLIs:")
+    detected_agents = cast(dict[str, str | None], payload["detected_agents"])
+    for name, value in detected_agents.items():
+        print(f"- {name}: {value or 'not found'}")
+    print("")
+    print("Recommended path:")
+    recommended_steps = cast(list[str], payload["recommended_steps"])
+    for index, step in enumerate(recommended_steps, start=1):
+        print(f"{index}. {step}")
+    print("")
+    print("Scenarios:")
+    scenarios = cast(list[dict[str, str]], payload["scenarios"])
+    for scenario in scenarios:
+        print(f"- {scenario['name']}: {scenario['command']}")
+    return 0
+
+
+def _onboard_payload(repo: Path) -> dict[str, object]:
+    config_path = repo / ".ai-orch" / "config.yaml"
+    state_dir = repo / ".ai-orch" / "state"
+    reports_dir = repo / ".ai-orch" / "reports"
+    detected = _detect_agent_commands()
+    config_exists = config_path.exists()
+    config = load_project_config(repo)
+    default_available = _agent_availability(config, config.default_agent)
+    checks = [
+        {
+            "name": "config",
+            "ok": config_exists,
+            "detail": "found" if config_exists else "missing; run ai-orch setup --repo .",
+        },
+        {
+            "name": "state_dir",
+            "ok": state_dir.exists(),
+            "detail": "found" if state_dir.exists() else "missing; setup creates it",
+        },
+        {
+            "name": "reports_dir",
+            "ok": reports_dir.exists(),
+            "detail": "found" if reports_dir.exists() else "missing; setup creates it",
+        },
+        {
+            "name": "selected_worker",
+            "ok": default_available == "yes",
+            "detail": f"{config.default_agent} availability={default_available}",
+        },
+        {
+            "name": "verification",
+            "ok": bool(config.verification_commands),
+            "detail": (
+                f"{len(config.verification_commands)} command(s)"
+                if config.verification_commands
+                else "missing; run setup or edit config"
+            ),
+        },
+    ]
+    recommended_steps = _onboard_recommended_steps(config, config_exists, default_available)
+    scenarios = [
+        {"name": "Fix a bug", "command": 'ai-orch fix --task "Describe the bug"'},
+        {"name": "Build a feature", "command": 'ai-orch task --task "Describe the feature"'},
+        {"name": "Analyze project", "command": "ai-orch analyze"},
+        {"name": "Review code", "command": "ai-orch review"},
+        {"name": "Write docs", "command": 'ai-orch docs --task "Document setup"'},
+    ]
+    return {
+        "repo": str(repo),
+        "config_path": str(config_path),
+        "config_exists": config_exists,
+        "mode": "mock demo" if config.default_agent == "mock" else "real worker",
+        "default_agent": config.default_agent,
+        "default_agent_available": default_available,
+        "detected_agents": detected,
+        "checks": checks,
+        "recommended_steps": recommended_steps,
+        "scenarios": scenarios,
+        "ready": all(check["ok"] for check in checks),
+    }
+
+
+def _onboard_recommended_steps(
+    config: ProjectConfig,
+    config_exists: bool,
+    default_available: str,
+) -> list[str]:
+    if not config_exists:
+        return [
+            "Run: ai-orch setup --profile codex-safe --agent auto",
+            "Run: ai-orch doctor agents --repo .",
+            "Run: ai-orch demo",
+        ]
+    if config.default_agent == "mock":
+        return [
+            "Run: ai-orch demo",
+            "Install and log in to Codex CLI for real-worker mode.",
+            "Run: ai-orch setup --profile codex-safe --agent codex --force",
+        ]
+    if default_available != "yes":
+        return [
+            f"Install or fix the {config.default_agent} CLI.",
+            "Run that worker's native login/status command.",
+            "Run: ai-orch doctor agents --repo .",
+        ]
+    return [
+        "Run: ai-orch fix --task \"Describe the bug\"",
+        "Run: ai-orch task --task \"Describe the feature\"",
+        "Run: ai-orch report TASK_ID --repo .",
+    ]
 
 
 def _select_agent(config: ProjectConfig, policy_engine: PolicyEngine) -> AgentAdapter:
@@ -2061,13 +2440,16 @@ def _run_setup_command(args: argparse.Namespace) -> int:
     ai_orch_dir = repo / ".ai-orch"
     config_path = ai_orch_dir / "config.yaml"
     detected = _detect_agent_commands()
-    default_agent = _select_setup_default_agent(args.agent, detected)
-    config_text = _render_setup_config(default_agent, detected)
+    default_agent = _select_setup_default_agent(args.agent, detected, args.profile)
+    config_text = _render_setup_config(default_agent, detected, args.profile)
+    readiness = _setup_readiness_summary(default_agent, detected, args.profile)
     payload = {
         "repo": str(repo),
         "config_path": str(config_path),
+        "profile": args.profile,
         "default_agent": default_agent,
         "detected_agents": detected,
+        "readiness": readiness,
         "dry_run": bool(args.dry_run),
         "written": False,
     }
@@ -2093,16 +2475,19 @@ def _run_setup_command(args: argparse.Namespace) -> int:
 
     action = "Would write" if args.dry_run else "Wrote"
     print(f"{action}: {config_path}")
+    print(f"profile: {args.profile}")
     print(f"default_agent: {default_agent}")
     print("Detected CLI agents:")
     for name in ["codex", "claude", "kimi", "gemini"]:
         print(f"- {name}: {detected.get(name) or 'not found'}")
-    if default_agent == "mock":
-        print("No real CLI agent was detected; using mock for safe smoke tests.")
+    print("Readiness:")
+    for key, value in readiness.items():
+        print(f"- {key}: {value}")
     print("Next steps:")
     print("1. Run: ai-orch doctor --repo .")
-    print("2. If a real agent is missing auth, run that CLI's native login command.")
-    print('3. Try: ai-orch start --repo . --task "Check setup"')
+    print("2. Run: ai-orch demo")
+    print("3. If a real worker is selected, run that CLI's native login command.")
+    print('4. Try: ai-orch start --repo . --task "Check setup"')
     return 0
 
 
@@ -2128,6 +2513,7 @@ def _run_doctor_command(args: argparse.Namespace) -> int:
         for agent in config.agents.values()
     ]
     default_available = _agent_availability(config, config.default_agent)
+    readiness = _doctor_readiness_summary(config, default_available)
     issues: list[str] = []
     warnings: list[str] = []
     if not config_exists:
@@ -2153,6 +2539,7 @@ def _run_doctor_command(args: argparse.Namespace) -> int:
         "reports_dir_exists": reports_dir.exists(),
         "default_agent": config.default_agent,
         "default_agent_available": default_available,
+        "readiness": readiness,
         "agents": agents,
         "verification_commands": [
             {"name": command.name, "timeout_sec": command.timeout_sec}
@@ -2172,6 +2559,9 @@ def _run_doctor_command(args: argparse.Namespace) -> int:
     print(f"state_dir: {'ok' if state_dir.exists() else 'missing'}")
     print(f"reports_dir: {'ok' if reports_dir.exists() else 'missing'}")
     print(f"default_agent: {config.default_agent} available={default_available}")
+    print("readiness:")
+    for key, value in readiness.items():
+        print(f"- {key}: {value}")
     print("agents:")
     for agent in agents:
         marker = " default" if agent["default"] else ""
@@ -2221,6 +2611,7 @@ def _run_doctor_agents_command(args: argparse.Namespace) -> int:
         "default_agent": config.default_agent,
         "fallback_agents": config.fallback_agents,
         "connectors": rows,
+        "readiness": _doctor_agents_readiness(rows, config.default_agent),
         "api_adapters": {
             "status": "not_implemented",
             "guidance": (
@@ -2255,6 +2646,7 @@ def _run_doctor_agents_command(args: argparse.Namespace) -> int:
         )
         print(f"  auth: {row['auth_model']}")
         print(f"  api: {row['api_status']}")
+        print(f"  next: {row['next_step']}")
     print(
         "api_adapters: not_implemented "
         "(use provider CLIs or a generic wrapper with env-managed credentials)"
@@ -2304,11 +2696,29 @@ def _doctor_agent_rows(config: ProjectConfig) -> list[dict[str, object]]:
                 "availability": availability,
                 "auth_model": _agent_auth_model(connector, agent_config),
                 "api_status": _agent_api_status(connector),
+                "next_step": _agent_next_step(connector, configured, enabled, availability),
                 "default": name == config.default_agent,
                 "fallback": name in config.fallback_agents,
             }
         )
     return rows
+
+
+def _agent_next_step(
+    connector: str,
+    configured: bool,
+    enabled: bool,
+    availability: str,
+) -> str:
+    if not configured:
+        return "run setup with this worker or keep it as an optional connector"
+    if not enabled:
+        return "enable in .ai-orch/config.yaml when you want to use it"
+    if connector == "mock":
+        return "ready for smoke tests and demos; no login required"
+    if availability == "yes":
+        return "CLI found; run the worker's native login/status command if tasks fail auth"
+    return "install the CLI and complete its native login outside ai-orch"
 
 
 def _agent_connector_name(name: str, agent_config: AgentConfig | None) -> str:
@@ -2367,9 +2777,12 @@ def _detect_agent_commands() -> dict[str, str | None]:
 def _select_setup_default_agent(
     requested: str,
     detected: dict[str, str | None],
+    profile: str = "python-project",
 ) -> str:
     if requested != "auto":
         return requested
+    if profile == "codex-safe":
+        return "codex" if detected.get("codex") else "mock"
     for name in ["codex", "claude", "kimi", "gemini"]:
         if detected.get(name):
             return name
@@ -2379,6 +2792,7 @@ def _select_setup_default_agent(
 def _render_setup_config(
     default_agent: str,
     detected: dict[str, str | None],
+    profile: str = "python-project",
 ) -> str:
     fallback_agents = [
         name
@@ -2389,6 +2803,7 @@ def _render_setup_config(
         "project:",
         '  name: "ai-orchestrator-project"',
         '  repo: "."',
+        f'  setup_profile: "{profile}"',
         "",
         "orchestrator:",
         f'  default_agent: "{default_agent}"',
@@ -2446,12 +2861,7 @@ def _render_setup_config(
         "verification:",
         "  strict: true",
         "  commands:",
-        '    - name: "compile"',
-        '      run: "python -m compileall ai_orchestrator"',
-        "      timeout_sec: 120",
-        '    - name: "tests"',
-        '      run: "python -m pytest"',
-        "      timeout_sec: 300",
+        *_verification_profile_lines(profile),
         "",
         "policy:",
         "  deny:",
@@ -2475,6 +2885,104 @@ def _render_setup_config(
         "",
     ]
     return "\n".join(lines)
+
+
+def _verification_profile_lines(profile: str) -> list[str]:
+    profiles = {
+        "codex-safe": [
+            ('compile', "python -m compileall ai_orchestrator", 120),
+            ('tests', "python -m pytest", 300),
+        ],
+        "python-project": [
+            ('compile', "python -m compileall .", 120),
+            ('tests', "python -m pytest", 300),
+        ],
+        "node-project": [
+            ('npm-test', "npm test", 300),
+        ],
+        "docs-project": [
+            (
+                'readme-has-heading',
+                "python -c \"import re, sys; txt=open('README.md', encoding='utf-8').read(); sys.exit(0 if re.search(r'^# ', txt, re.MULTILINE) else 1)\"",
+                30,
+            ),
+        ],
+        "readonly-review": [
+            ('diff-check', "git diff --check", 60),
+        ],
+    }
+    commands = profiles.get(profile, profiles["python-project"])
+    lines: list[str] = []
+    for name, command, timeout in commands:
+        lines.extend(
+            [
+                f'    - name: "{name}"',
+                f'      run: "{command}"',
+                f"      timeout_sec: {timeout}",
+            ]
+        )
+    return lines
+
+
+def _setup_readiness_summary(
+    default_agent: str,
+    detected: dict[str, str | None],
+    profile: str,
+) -> dict[str, str]:
+    worker_ready = default_agent == "mock" or bool(detected.get(default_agent))
+    mode = "mock demo" if default_agent == "mock" else "real worker"
+    auth = (
+        "not required"
+        if default_agent == "mock"
+        else f"run {default_agent} native login/status outside ai-orch"
+    )
+    return {
+        "installed": "config preview" if not detected else "local CLI scan complete",
+        "profile": profile,
+        "mode": mode,
+        "real_worker_ready": "yes" if worker_ready and default_agent != "mock" else "no",
+        "mock_demo_mode": "yes" if default_agent == "mock" else "no",
+        "worker_auth": auth,
+        "verification_configured": "yes",
+    }
+
+
+def _doctor_readiness_summary(
+    config: ProjectConfig,
+    default_available: str,
+) -> dict[str, str]:
+    mode = "mock demo" if config.default_agent == "mock" else "real worker"
+    return {
+        "installed": "yes",
+        "selected_worker": config.default_agent,
+        "mode": mode,
+        "real_worker_ready": (
+            "yes" if config.default_agent != "mock" and default_available == "yes" else "no"
+        ),
+        "mock_demo_mode": "yes" if config.default_agent == "mock" else "no",
+        "worker_auth": (
+            "not required"
+            if config.default_agent == "mock"
+            else "managed by the selected worker CLI outside ai-orch"
+        ),
+        "verification_configured": "yes" if config.verification_commands else "no",
+    }
+
+
+def _doctor_agents_readiness(
+    rows: list[dict[str, object]],
+    default_agent: str,
+) -> dict[str, str]:
+    default_row = next((row for row in rows if row["name"] == default_agent), None)
+    if default_row is None:
+        return {"selected_worker": default_agent, "status": "missing"}
+    mode = "mock demo" if default_agent == "mock" else "real worker"
+    return {
+        "selected_worker": default_agent,
+        "mode": mode,
+        "availability": str(default_row["availability"]),
+        "next_step": str(default_row["next_step"]),
+    }
 
 
 def _yaml_bool(value: bool) -> str:

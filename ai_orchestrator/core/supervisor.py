@@ -11,7 +11,7 @@ from ai_orchestrator.agents.base import AgentAdapter, ProgressCallback, SessionR
 from ai_orchestrator.core.decision import Decision, DecisionEngine
 from ai_orchestrator.policy.engine import PolicyDecision, PolicyEngine
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
-from ai_orchestrator.storage.db import StateStore
+from ai_orchestrator.storage.db import StateStore, StoredIteration
 from ai_orchestrator.tools import ToolBroker, ToolResult, make_verification_tool_call
 from ai_orchestrator.tools.types import ToolResultStatus
 from ai_orchestrator.verification.runner import (
@@ -116,14 +116,39 @@ class Supervisor:
         if self.state_store is not None:
             if stored_task_id is None:
                 stored_task_id = self.state_store.create_task(task=task, repo_path=repo).task_id
+                self.state_store.update_task_status(stored_task_id, "running")
+                self._record_task_event(
+                    stored_task_id,
+                    "task_created",
+                    {"repo_path": str(repo), "agent": self.agent.name},
+                    actor="supervisor",
+                    summary="Task created and marked running",
+                    idempotency_key="task_created",
+                )
             else:
                 if self._is_task_cancelled(stored_task_id):
+                    self._record_task_event(
+                        stored_task_id,
+                        "task_cancelled",
+                        {"previous_status": "cancelled"},
+                        actor="supervisor",
+                        summary="Resume skipped because task is cancelled",
+                        idempotency_key="resume_cancelled",
+                    )
                     return SupervisorResult(
                         status="cancelled",
                         summary="Task was cancelled",
                         task_id=stored_task_id,
                     )
                 self.state_store.update_task_status(stored_task_id, "running")
+                self._record_task_event(
+                    stored_task_id,
+                    "task_resumed",
+                    {"start_iteration": start_iteration, "agent": self.agent.name},
+                    actor="supervisor",
+                    summary=f"Task resumed at iteration {start_iteration}",
+                    idempotency_key=f"task_resumed:{start_iteration}",
+                )
 
         if not self.agent.check_available():
             logger.warning(
@@ -132,7 +157,7 @@ class Supervisor:
                 stored_task_id,
             )
             if stored_task_id is not None and self.state_store is not None:
-                self.state_store.add_iteration(
+                unavailable_iteration = self.state_store.add_iteration(
                     task_id=stored_task_id,
                     iteration_index=start_iteration,
                     agent_name=self.agent.name,
@@ -143,7 +168,34 @@ class Supervisor:
                     decision_reason="Agent is not available",
                     exit_reason="agent_unavailable",
                 )
+                self._record_task_event(
+                    stored_task_id,
+                    "decision_made",
+                    {
+                        "iteration_index": start_iteration,
+                        "iteration_id": unavailable_iteration.iteration_id,
+                        "status": "blocked",
+                        "reason": "Agent is not available",
+                    },
+                    iteration_id=unavailable_iteration.iteration_id,
+                    actor="supervisor",
+                    summary="Supervisor decision: blocked",
+                    idempotency_key=f"decision:{start_iteration}",
+                )
                 self.state_store.update_task_status(stored_task_id, "blocked")
+                self._record_task_event(
+                    stored_task_id,
+                    "task_blocked",
+                    {
+                        "iteration_index": start_iteration,
+                        "iteration_id": unavailable_iteration.iteration_id,
+                        "reason": "Agent is not available",
+                    },
+                    iteration_id=unavailable_iteration.iteration_id,
+                    actor="supervisor",
+                    summary="Task blocked: Agent is not available",
+                    idempotency_key=f"task_blocked:{start_iteration}",
+                )
             return SupervisorResult(
                 status="blocked",
                 summary="Agent is not available",
@@ -175,6 +227,16 @@ class Supervisor:
             if self._is_runtime_budget_exhausted(started_at):
                 if stored_task_id is not None and self.state_store is not None:
                     self.state_store.update_task_status(stored_task_id, "blocked")
+                    self._record_task_event(
+                        stored_task_id,
+                        "task_blocked",
+                        {"iteration_index": iteration_index, "reason": "Runtime budget exhausted"},
+                        iteration_index=iteration_index,
+                        session=session,
+                        actor="supervisor",
+                        summary="Task blocked: runtime budget exhausted",
+                        idempotency_key=f"task_blocked:{iteration_index}:runtime_budget",
+                    )
                 logger.warning(
                     "event=supervisor.runtime_budget_exhausted task_id=%s iteration=%s",
                     stored_task_id,
@@ -192,6 +254,17 @@ class Supervisor:
                     stored_task_id,
                     iteration_index,
                 )
+                if stored_task_id is not None:
+                    self._record_task_event(
+                        stored_task_id,
+                        "task_cancelled",
+                        {"iteration_index": iteration_index},
+                        iteration_index=iteration_index,
+                        session=session,
+                        actor="supervisor",
+                        summary="Task cancelled before agent call",
+                        idempotency_key=f"task_cancelled:{iteration_index}:before_agent",
+                    )
                 self._stop_session(session)
                 return SupervisorResult(
                     status="cancelled",
@@ -206,12 +279,59 @@ class Supervisor:
                 attempt,
             )
             self._progress(f"iteration {iteration_index}: agent {session.agent_name} started")
+            if stored_task_id is not None:
+                self._record_task_event(
+                    stored_task_id,
+                    "iteration_started",
+                    {
+                        "iteration_index": iteration_index,
+                        "attempt": attempt,
+                        "agent": session.agent_name,
+                    },
+                    iteration_index=iteration_index,
+                    session=session,
+                    actor="supervisor",
+                    summary=f"Iteration {iteration_index} started",
+                    idempotency_key=f"iteration_started:{iteration_index}",
+                )
+                self._record_checkpoint(
+                    stored_task_id,
+                    phase="before_agent_execution",
+                    status="started",
+                    iteration_index=iteration_index,
+                    session=session,
+                    idempotency_key=f"checkpoint:{iteration_index}:before_agent_execution",
+                )
+                self._record_task_event(
+                    stored_task_id,
+                    "agent_called",
+                    {
+                        "iteration_index": iteration_index,
+                        "attempt": attempt,
+                        "agent": session.agent_name,
+                        "call_type": "run_step" if attempt == 1 else "continue_session",
+                    },
+                    iteration_index=iteration_index,
+                    session=session,
+                    actor="supervisor",
+                    summary=f"Agent called for iteration {iteration_index}",
+                    idempotency_key=f"agent_called:{iteration_index}",
+                )
             try:
                 if attempt == 1:
                     result = self.agent.run_step(session, prompt=prompt)
                 else:
                     result = self.agent.continue_session(session, prompt=prompt)
             except KeyboardInterrupt:
+                if stored_task_id is not None:
+                    self._record_checkpoint(
+                        stored_task_id,
+                        phase="agent_execution_interrupted",
+                        status="interrupted",
+                        iteration_index=iteration_index,
+                        session=session,
+                        idempotency_key=f"checkpoint:{iteration_index}:agent_interrupted",
+                    )
                 self._stop_session(session)
                 raise
             logger.debug(
@@ -222,12 +342,53 @@ class Supervisor:
                 result.status,
                 len(result.files_changed),
             )
+            if stored_task_id is not None:
+                self._record_task_event(
+                    stored_task_id,
+                    "agent_result_received",
+                    {
+                        "iteration_index": iteration_index,
+                        "agent": session.agent_name,
+                        "status": result.status,
+                        "files_changed_count": len(result.files_changed),
+                        "tool_actions_count": len(result.tool_actions),
+                        "exit_reason": result.exit_reason,
+                        "uncertainty": result.uncertainty,
+                        "error": result.error,
+                    },
+                    iteration_index=iteration_index,
+                    session=session,
+                    actor="agent",
+                    summary=f"Agent result received: {result.status}",
+                    idempotency_key=f"agent_result_received:{iteration_index}",
+                )
+                self._record_checkpoint(
+                    stored_task_id,
+                    phase="after_agent_execution",
+                    status=result.status,
+                    iteration_index=iteration_index,
+                    session=session,
+                    idempotency_key=f"checkpoint:{iteration_index}:after_agent_execution",
+                )
             if result.status == "cancelled" or self._is_task_cancelled(stored_task_id):
                 logger.warning(
                     "event=supervisor.task_cancelled task_id=%s iteration=%s",
                     stored_task_id,
                     iteration_index,
                 )
+                if stored_task_id is not None:
+                    if self.state_store is not None:
+                        self.state_store.update_task_status(stored_task_id, "cancelled")
+                    self._record_task_event(
+                        stored_task_id,
+                        "task_cancelled",
+                        {"iteration_index": iteration_index, "agent_status": result.status},
+                        iteration_index=iteration_index,
+                        session=session,
+                        actor="supervisor",
+                        summary="Task cancelled after agent result",
+                        idempotency_key=f"task_cancelled:{iteration_index}:after_agent",
+                    )
                 self._stop_session(session)
                 return SupervisorResult(
                     status="cancelled",
@@ -240,6 +401,19 @@ class Supervisor:
                 if self._is_runtime_budget_exhausted(started_at):
                     if stored_task_id is not None and self.state_store is not None:
                         self.state_store.update_task_status(stored_task_id, "blocked")
+                        self._record_task_event(
+                            stored_task_id,
+                            "task_blocked",
+                            {
+                                "iteration_index": iteration_index,
+                                "reason": "Runtime budget exhausted",
+                            },
+                            iteration_index=iteration_index,
+                            session=session,
+                            actor="supervisor",
+                            summary="Task blocked before verification: runtime budget exhausted",
+                            idempotency_key=f"task_blocked:{iteration_index}:before_verification",
+                        )
                     logger.warning(
                         "event=supervisor.runtime_budget_exhausted task_id=%s iteration=%s",
                         stored_task_id,
@@ -257,6 +431,17 @@ class Supervisor:
                         stored_task_id,
                         iteration_index,
                     )
+                    if stored_task_id is not None:
+                        self._record_task_event(
+                            stored_task_id,
+                            "task_cancelled",
+                            {"iteration_index": iteration_index},
+                            iteration_index=iteration_index,
+                            session=session,
+                            actor="supervisor",
+                            summary="Task cancelled before verification",
+                            idempotency_key=f"task_cancelled:{iteration_index}:before_verification",
+                        )
                     self._stop_session(session)
                     return SupervisorResult(
                         status="cancelled",
@@ -265,12 +450,75 @@ class Supervisor:
                     )
                 try:
                     self._progress(f"iteration {iteration_index}: verification started")
+                    if stored_task_id is not None:
+                        self._record_checkpoint(
+                            stored_task_id,
+                            phase="before_verification",
+                            status="started",
+                            iteration_index=iteration_index,
+                            session=session,
+                            idempotency_key=f"checkpoint:{iteration_index}:before_verification",
+                        )
+                        self._record_task_event(
+                            stored_task_id,
+                            "verification_started",
+                            {
+                                "iteration_index": iteration_index,
+                                "commands": [
+                                    command.name for command in self.verification_commands
+                                ],
+                            },
+                            iteration_index=iteration_index,
+                            session=session,
+                            actor="verification",
+                            summary=f"Verification started for iteration {iteration_index}",
+                            idempotency_key=f"verification_started:{iteration_index}",
+                        )
                     verification_results = self.verifier.run_many(
                         self.verification_commands,
                         cwd=repo,
                     )
+                    if stored_task_id is not None:
+                        self._record_task_event(
+                            stored_task_id,
+                            "verification_finished",
+                            {
+                                "iteration_index": iteration_index,
+                                "results": [
+                                    {
+                                        "name": verification.name,
+                                        "status": verification.status,
+                                        "exit_code": verification.exit_code,
+                                        "error": verification.error,
+                                    }
+                                    for verification in verification_results
+                                ],
+                            },
+                            iteration_index=iteration_index,
+                            session=session,
+                            actor="verification",
+                            summary=f"Verification finished for iteration {iteration_index}",
+                            idempotency_key=f"verification_finished:{iteration_index}",
+                        )
+                        self._record_checkpoint(
+                            stored_task_id,
+                            phase="after_verification",
+                            status="finished",
+                            iteration_index=iteration_index,
+                            session=session,
+                            idempotency_key=f"checkpoint:{iteration_index}:after_verification",
+                        )
                     self._progress(f"iteration {iteration_index}: verification finished")
                 except KeyboardInterrupt:
+                    if stored_task_id is not None:
+                        self._record_checkpoint(
+                            stored_task_id,
+                            phase="verification_interrupted",
+                            status="interrupted",
+                            iteration_index=iteration_index,
+                            session=session,
+                            idempotency_key=f"checkpoint:{iteration_index}:verification_interrupted",
+                        )
                     self._stop_session(session)
                     raise
             decision = self.decision_engine.decide(
@@ -330,7 +578,7 @@ class Supervisor:
                             iteration_index,
                             no_change_count,
                         )
-            stored_iteration = None
+            stored_iteration: StoredIteration | None = None
             if stored_task_id is not None and self.state_store is not None:
                 stored_iteration = self.state_store.add_iteration(
                     task_id=stored_task_id,
@@ -346,6 +594,32 @@ class Supervisor:
                     tool_actions=result.tool_actions,
                     exit_reason=result.exit_reason,
                     uncertainty=result.uncertainty,
+                )
+                self._record_task_event(
+                    stored_task_id,
+                    "decision_made",
+                    {
+                        "iteration_index": iteration_index,
+                        "iteration_id": stored_iteration.iteration_id,
+                        "status": decision.status,
+                        "reason": decision.reason,
+                        "follow_up_prompt": decision.follow_up_prompt,
+                    },
+                    iteration_id=stored_iteration.iteration_id,
+                    iteration_index=iteration_index,
+                    session=session,
+                    actor="supervisor",
+                    summary=f"Supervisor decision: {decision.status}",
+                    idempotency_key=f"decision:{iteration_index}",
+                )
+                self._record_checkpoint(
+                    stored_task_id,
+                    phase="after_supervisor_decision",
+                    status=decision.status,
+                    iteration_id=stored_iteration.iteration_id,
+                    iteration_index=iteration_index,
+                    session=session,
+                    idempotency_key=f"checkpoint:{iteration_index}:after_supervisor_decision",
                 )
                 for index, verification_result in enumerate(verification_results):
                     stored_verification = self.state_store.add_verification_run(
@@ -384,6 +658,22 @@ class Supervisor:
                     decision=decision,
                     verification_results=verification_results,
                 )
+                self._record_task_event(
+                    stored_task_id,
+                    "iteration_finished",
+                    {
+                        "iteration_index": iteration_index,
+                        "iteration_id": stored_iteration.iteration_id,
+                        "decision_status": decision.status,
+                        "agent_status": result.status,
+                    },
+                    iteration_id=stored_iteration.iteration_id,
+                    iteration_index=iteration_index,
+                    session=session,
+                    actor="supervisor",
+                    summary=f"Iteration {iteration_index} finished: {decision.status}",
+                    idempotency_key=f"iteration_finished:{iteration_index}",
+                )
 
             if decision.status == "done":
                 logger.debug(
@@ -393,6 +683,42 @@ class Supervisor:
                 )
                 if stored_task_id is not None and self.state_store is not None:
                     self.state_store.update_task_status(stored_task_id, "done")
+                    self._record_task_event(
+                        stored_task_id,
+                        "task_done",
+                        {
+                            "iteration_index": iteration_index,
+                            "iteration_id": (
+                                stored_iteration.iteration_id
+                                if stored_iteration is not None
+                                else None
+                            ),
+                            "reason": decision.reason,
+                        },
+                        iteration_id=(
+                            stored_iteration.iteration_id
+                            if stored_iteration is not None
+                            else None
+                        ),
+                        iteration_index=iteration_index,
+                        session=session,
+                        actor="supervisor",
+                        summary=f"Task done: {decision.reason}",
+                        idempotency_key=f"task_done:{iteration_index}",
+                    )
+                    self._record_checkpoint(
+                        stored_task_id,
+                        phase="task_status_transition",
+                        status="done",
+                        iteration_id=(
+                            stored_iteration.iteration_id
+                            if stored_iteration is not None
+                            else None
+                        ),
+                        iteration_index=iteration_index,
+                        session=session,
+                        idempotency_key=f"checkpoint:{iteration_index}:task_done",
+                    )
                 self._stop_session(session)
                 self._progress(f"iteration {iteration_index}: done")
                 return SupervisorResult(
@@ -409,6 +735,42 @@ class Supervisor:
                 )
                 if stored_task_id is not None and self.state_store is not None:
                     self.state_store.update_task_status(stored_task_id, "blocked")
+                    self._record_task_event(
+                        stored_task_id,
+                        "task_blocked",
+                        {
+                            "iteration_index": iteration_index,
+                            "iteration_id": (
+                                stored_iteration.iteration_id
+                                if stored_iteration is not None
+                                else None
+                            ),
+                            "reason": decision.reason,
+                        },
+                        iteration_id=(
+                            stored_iteration.iteration_id
+                            if stored_iteration is not None
+                            else None
+                        ),
+                        iteration_index=iteration_index,
+                        session=session,
+                        actor="supervisor",
+                        summary=f"Task blocked: {decision.reason}",
+                        idempotency_key=f"task_blocked:{iteration_index}",
+                    )
+                    self._record_checkpoint(
+                        stored_task_id,
+                        phase="task_status_transition",
+                        status="blocked",
+                        iteration_id=(
+                            stored_iteration.iteration_id
+                            if stored_iteration is not None
+                            else None
+                        ),
+                        iteration_index=iteration_index,
+                        session=session,
+                        idempotency_key=f"checkpoint:{iteration_index}:task_blocked",
+                    )
                 self._stop_session(session)
                 self._progress(f"iteration {iteration_index}: blocked")
                 return SupervisorResult(
@@ -421,6 +783,14 @@ class Supervisor:
 
         if stored_task_id is not None and self.state_store is not None:
             self.state_store.update_task_status(stored_task_id, "blocked")
+            self._record_task_event(
+                stored_task_id,
+                "task_blocked",
+                {"reason": "Max iterations exhausted"},
+                actor="supervisor",
+                summary="Task blocked: max iterations exhausted",
+                idempotency_key="task_blocked:max_iterations",
+            )
         logger.warning("event=supervisor.max_iterations_exhausted task_id=%s", stored_task_id)
         self._stop_session(session)
         self._progress("max iterations exhausted")
@@ -428,6 +798,70 @@ class Supervisor:
             status="blocked",
             summary="Max iterations exhausted",
             task_id=stored_task_id,
+        )
+
+    def _record_task_event(
+        self,
+        task_id: str,
+        event_type: str,
+        payload: dict[str, object] | None = None,
+        *,
+        session: SessionRef | None = None,
+        iteration_index: int | None = None,
+        iteration_id: int | None = None,
+        actor: str = "supervisor",
+        summary: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> None:
+        if self.state_store is None:
+            return
+
+        event_payload = dict(payload or {})
+        if iteration_index is not None:
+            event_payload.setdefault("iteration_index", iteration_index)
+        correlation_id = (
+            f"{task_id}:iteration:{iteration_index}"
+            if iteration_index is not None
+            else task_id
+        )
+        self.state_store.append_task_event(
+            task_id,
+            event_type,
+            event_payload,
+            session_id=session.session_id if session is not None else None,
+            iteration_id=iteration_id,
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+            actor=actor,
+            summary=summary,
+        )
+
+    def _record_checkpoint(
+        self,
+        task_id: str,
+        *,
+        phase: str,
+        status: str,
+        iteration_index: int | None = None,
+        iteration_id: int | None = None,
+        session: SessionRef | None = None,
+        idempotency_key: str | None = None,
+    ) -> None:
+        self._record_task_event(
+            task_id,
+            "checkpoint_saved",
+            {
+                "phase": phase,
+                "status": status,
+                "iteration_index": iteration_index,
+                "iteration_id": iteration_id,
+            },
+            session=session,
+            iteration_index=iteration_index,
+            iteration_id=iteration_id,
+            actor="supervisor",
+            summary=f"Checkpoint saved: {phase} ({status})",
+            idempotency_key=idempotency_key,
         )
 
     def _is_task_cancelled(self, task_id: str | None) -> bool:

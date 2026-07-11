@@ -77,6 +77,28 @@ def test_release_checks_require_linux_install_doc(tmp_path: Path) -> None:
     assert "docs/LINUX_INSTALL.md" in docs_result.detail
 
 
+def test_release_checks_require_mac_install_doc(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "MAC_INSTALL.md").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(item for item in results if item.name == "release-docs")
+    assert docs_result.status == "failed"
+    assert "docs/MAC_INSTALL.md" in docs_result.detail
+
+
+def test_release_checks_require_onboarding_content(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "INSTALL.md").write_text("# Install\n", encoding="utf-8")
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(item for item in results if item.name == "release-docs")
+    assert docs_result.status == "failed"
+    assert "pipx" in docs_result.detail
+
+
 def test_windows_installer_scripts_are_safe_repo_helpers() -> None:
     repo = Path(__file__).resolve().parents[1]
     ps1 = repo / "scripts" / "install_windows.ps1"
@@ -161,11 +183,29 @@ requires-python = ">=3.12"
     (repo / "ai_orchestrator" / "__init__.py").write_text("", encoding="utf-8")
     (repo / "ai_orchestrator" / "__main__.py").write_text("", encoding="utf-8")
     (repo / "ai_orchestrator" / "cli" / "app.py").write_text("", encoding="utf-8")
-    (repo / "README.md").write_text("# Demo\n", encoding="utf-8")
+    (repo / "README.md").write_text(
+        "# Demo\n\nRun `ai-orch demo`, `ai-orch onboard`, and `ai-orch fix`.\n",
+        encoding="utf-8",
+    )
     (repo / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
-    (repo / "docs" / "INSTALL.md").write_text("# Install\n", encoding="utf-8")
+    (repo / "docs" / "INSTALL.md").write_text(
+        "# Install\n\nUse `pipx install ai-orchestrator`.\n",
+        encoding="utf-8",
+    )
     (repo / "docs" / "LINUX_INSTALL.md").write_text(
         "# Linux Install\n",
+        encoding="utf-8",
+    )
+    (repo / "docs" / "MAC_INSTALL.md").write_text(
+        "# macOS Install\n",
+        encoding="utf-8",
+    )
+    (repo / "docs" / "ONBOARDING_GOAL_PLAN.md").write_text(
+        "# Onboarding Goal Plan\n",
+        encoding="utf-8",
+    )
+    (repo / "docs" / "V0_3_GOAL_PLAN.md").write_text(
+        "# v0.3 Goal Plan\n",
         encoding="utf-8",
     )
     (repo / "docs" / "WINDOWS_INSTALL.md").write_text(
@@ -175,5 +215,9 @@ requires-python = ">=3.12"
     (repo / "docs" / "RELEASE.md").write_text("# Release\n", encoding="utf-8")
     (repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md").write_text(
         "# Shipping\n",
+        encoding="utf-8",
+    )
+    (repo / "docs" / "USER_GUIDE.md").write_text(
+        "# User Guide\n\nRun `ai-orch demo`, `ai-orch onboard`, and `ai-orch fix`.\n",
         encoding="utf-8",
     )

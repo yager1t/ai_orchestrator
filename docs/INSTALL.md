@@ -1,7 +1,28 @@
 # Install Guide
 
-This project can be installed directly from the repository. The package exposes
-both module execution and the `ai-orch` console command.
+`ai-orch` exposes both module execution and the `ai-orch` console command. There
+are two install modes:
+
+- package-style install for end users;
+- repository-local install for contributors, release ZIPs, and smoke testing.
+
+## Package Install
+
+For packaged releases, prefer `pipx` because it installs command-line
+applications into isolated environments:
+
+```bash
+pipx install ai-orchestrator
+ai-orch --version
+ai-orch demo
+```
+
+Until the package is published, use the repository-local install below.
+
+WinGet and Homebrew remain planned platform channels until maintainable
+manifests/formulae exist. A Linux `curl | bash` install route should be treated
+as a future distribution artifact that requires the same release review as any
+installer script, not as an ad hoc command copied into docs.
 
 ## Development Install
 
@@ -23,6 +44,7 @@ python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 python -m pip install .
 ai-orch --help
+ai-orch demo
 ```
 
 The module entrypoint remains available:
@@ -67,6 +89,21 @@ bash INSTALL_LINUX.sh --install-python
 After installation, run `./ai-orch` from the repository root to see common next
 commands.
 
+## macOS Install
+
+See `docs/MAC_INSTALL.md` for the dedicated macOS path. The short local route is:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+ai-orch demo
+```
+
+Homebrew is the planned platform package channel for macOS and Linux once a tap
+exists. Until then, use `pipx` for packaged releases or the local install path
+from a checkout/release ZIP.
+
 ## Smoke Path
 
 After installation, initialize state and run the local mock path:
@@ -75,7 +112,9 @@ After installation, initialize state and run the local mock path:
 ai-orch setup
 ai-orch doctor
 ai-orch doctor agents --repo .
-ai-orch start --task "Check the install path" --repo .
+ai-orch demo
+ai-orch onboard
+ai-orch fix --task "Check the install path" --repo .
 ai-orch status TASK_ID --repo .
 ```
 

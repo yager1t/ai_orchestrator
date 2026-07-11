@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+- Added v0.4 AgentTrace durability metadata to task events, including run,
+  session, iteration, correlation, actor, summary, payload preview, and
+  idempotency fields with a schema migration for existing state stores.
+
+- Instrumented supervisor runs with durable lifecycle events and checkpoints for
+  task creation/resume, iteration start/finish, agent calls/results,
+  verification start/finish, supervisor decisions, terminal task states, and
+  interrupted execution inspection.
+
+- Added policy/tool audit events for brokered approvals, denials, command
+  starts, and command finishes, and expanded task reports with
+  recovery/checkpoint summaries.
+
+## 0.3.0 — first-run wizard and product commands
+
+- Added `ai-orch onboard`, a beginner-facing first-run wizard with text and
+  JSON output for config, state/report directories, worker CLI detection,
+  mock-vs-real mode, recommended next steps, and scenario commands.
+
+- Added product commands over the existing supervisor loop: `ai-orch fix`,
+  `ai-orch task`, `ai-orch analyze`, `ai-orch review`, and `ai-orch docs`.
+  They apply beginner role templates while preserving verification-gated
+  completion.
+
+- Improved first-run error guidance for missing config, missing verification,
+  and unavailable worker setup by printing concrete next commands.
+
+- Improved end-of-run CLI summaries with task id, result, files changed,
+  verification status, report path when written, and follow-up commands.
+
+- Updated v0.3 documentation and release checks so onboarding wizard and
+  product-command docs are release-gated.
+
+## 0.2.6 — product-ready onboarding
+
+- Added `ai-orch demo`, a safe first-value command that runs the bundled
+  docs-only quickstart through the real supervisor, verification, report, and
+  next-step flow without requiring external AI credentials.
+
+- Added setup presets with `--profile` for `codex-safe`, `python-project`,
+  `node-project`, `docs-project`, and `readonly-review`, plus clearer setup and
+  doctor readiness summaries that distinguish mock demo mode from real-worker
+  readiness and external CLI login expectations.
+
+- Reworked first-run documentation around two user paths: "try it safely" with
+  `ai-orch demo`, and "use it on my project" with Codex-first setup, doctor,
+  and start commands.
+
+- Added package-channel guidance for `pipx`, a dedicated macOS install guide,
+  and release checks that require the onboarding docs and key install/demo
+  content.
+
 ## 0.2.5 — connector diagnostics and Linux install
 
 - Added `ai-orch doctor agents` with text and JSON connector diagnostics for

@@ -51,6 +51,14 @@ class ToolBroker:
                 payload=call.action_payload(),
                 result=result.action_result(),
             )
+            self._record_call_event(
+                call,
+                "command_denied" if blocked_status == "policy_denied" else "command_requested",
+                action_id=action.action_id,
+                status=blocked_status,
+                reason=reason,
+                idempotency_suffix="blocked",
+            )
             if blocked_status == "needs_approval":
                 approval_id = self._approval_id_from_action(action)
                 if approval_id is not None:
@@ -102,6 +110,22 @@ class ToolBroker:
             policy_reason=policy_decision.reason,
             payload=call.action_payload(),
         )
+        self._record_call_event(
+            call,
+            "command_approved",
+            action_id=action.action_id,
+            status="approved",
+            reason=policy_decision.reason,
+            idempotency_suffix="approved",
+        )
+        self._record_call_event(
+            call,
+            "command_started",
+            action_id=action.action_id,
+            status="started",
+            reason=policy_decision.reason,
+            idempotency_suffix="started",
+        )
         try:
             result = self._result_from_executor_output(call, executor(call))
         except Exception as exc:
@@ -111,6 +135,14 @@ class ToolBroker:
             action.action_id,
             result.status,
             result=result.action_result(),
+        )
+        self._record_call_event(
+            call,
+            "command_finished",
+            action_id=action.action_id,
+            status=result.status,
+            reason=result.error,
+            idempotency_suffix="finished",
         )
         return result
 
@@ -155,6 +187,14 @@ class ToolBroker:
                 payload=retry_payload,
                 result=result.action_result(),
             )
+            self._record_call_event(
+                call,
+                "command_denied",
+                action_id=action.action_id,
+                status=result.status,
+                reason=policy_decision.reason,
+                idempotency_suffix=f"approval:{approval_id}:denied",
+            )
             result = self._with_approval_metadata(
                 result,
                 action_id=action.action_id,
@@ -178,6 +218,22 @@ class ToolBroker:
             policy_reason=self._approved_reason(policy_decision, approval_id),
             payload=retry_payload,
         )
+        self._record_call_event(
+            call,
+            "command_approved",
+            action_id=action.action_id,
+            status="approved",
+            reason=self._approved_reason(policy_decision, approval_id),
+            idempotency_suffix=f"approval:{approval_id}:approved",
+        )
+        self._record_call_event(
+            call,
+            "command_started",
+            action_id=action.action_id,
+            status="started",
+            reason=self._approved_reason(policy_decision, approval_id),
+            idempotency_suffix=f"approval:{approval_id}:started",
+        )
         try:
             result = self._result_from_executor_output(call, executor(call))
         except Exception as exc:
@@ -192,6 +248,14 @@ class ToolBroker:
             result.status,
             result=result.action_result(),
         )
+        self._record_call_event(
+            call,
+            "command_finished",
+            action_id=action.action_id,
+            status=result.status,
+            reason=result.error,
+            idempotency_suffix=f"approval:{approval_id}:finished",
+        )
         return result
 
     def record_result(
@@ -204,7 +268,7 @@ class ToolBroker:
 
         policy_decision, command_string = self._evaluate_policy(call)
         recorded_result = self._result_allowed_for_audit(call, result, policy_decision)
-        self.state_store.record_action(
+        action = self.state_store.record_action(
             task_id=call.task_id,
             iteration_id=call.iteration_id,
             idempotency_key=call.idempotency_key,
@@ -220,6 +284,33 @@ class ToolBroker:
             payload=call.action_payload(),
             result=recorded_result.action_result(),
         )
+        if recorded_result.status == "policy_denied":
+            self._record_call_event(
+                call,
+                "command_denied",
+                action_id=action.action_id,
+                status=recorded_result.status,
+                reason=policy_decision.reason,
+                idempotency_suffix="audit:denied",
+            )
+        elif recorded_result.status == "needs_approval":
+            self._record_call_event(
+                call,
+                "command_requested",
+                action_id=action.action_id,
+                status=recorded_result.status,
+                reason=recorded_result.error or policy_decision.reason,
+                idempotency_suffix="audit:approval",
+            )
+        else:
+            self._record_call_event(
+                call,
+                "command_finished",
+                action_id=action.action_id,
+                status=recorded_result.status,
+                reason=recorded_result.error,
+                idempotency_suffix="audit:finished",
+            )
         return recorded_result
 
     def _evaluate_policy(self, call: ToolCall) -> tuple[PolicyDecision, str]:
@@ -346,3 +437,33 @@ class ToolBroker:
                 error=policy_decision.reason,
             )
         return result
+
+    def _record_call_event(
+        self,
+        call: ToolCall,
+        event_type: str,
+        *,
+        action_id: int,
+        status: str,
+        reason: str | None,
+        idempotency_suffix: str,
+    ) -> None:
+        if call.task_id is None:
+            return
+        self.state_store.append_task_event(
+            call.task_id,
+            event_type,
+            {
+                "action_id": action_id,
+                "action_type": call.action_type,
+                "tool": call.spec.name,
+                "risk_tier": call.spec.risk_tier,
+                "status": status,
+                "reason": reason,
+            },
+            iteration_id=call.iteration_id,
+            correlation_id=call.idempotency_key,
+            idempotency_key=f"{call.idempotency_key}:{idempotency_suffix}",
+            actor="policy",
+            summary=f"{event_type}: {call.spec.name} ({status})",
+        )
