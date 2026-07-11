@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.5.5 — Trusted Publisher environment
+
+- Added the `pypi` GitHub Actions environment to the PyPI publish job so its
+  OIDC claims can match a Trusted Publisher configured with that environment.
+
 ## 0.5.4 — Trusted PyPI publishing
 
 - Switched the PyPI release workflow from an explicit `PYPI_API_TOKEN` secret

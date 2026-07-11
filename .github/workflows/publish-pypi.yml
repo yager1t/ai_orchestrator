@@ -18,6 +18,7 @@ jobs:
   publish:
     name: Build and publish package
     runs-on: ubuntu-latest
+    environment: pypi
     steps:
       - name: Resolve release tag
         id: release
