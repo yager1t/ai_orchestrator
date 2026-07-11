@@ -25,6 +25,8 @@ Use this checklist before tagging or publishing an `ai-orch` release.
   `docs/MAC_INSTALL.md` describe the same `pipx`, demo, and real-worker setup
   flow.
 - Follow `docs/INSTALL.md` for the install smoke path.
+- PyPI publishing uses `.github/workflows/publish-pypi.yml` and requires the
+  repository Actions secret `PYPI_API_TOKEN`.
 
 ## Verification
 
