@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.5.4 — Trusted PyPI publishing
+
+- Switched the PyPI release workflow from an explicit `PYPI_API_TOKEN` secret
+  to PyPI Trusted Publisher OIDC authentication.
+
 ## 0.5.3 — PyPI metadata
 
 - Added README-based PyPI long description metadata and disabled publish
