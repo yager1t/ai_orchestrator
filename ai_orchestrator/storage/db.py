@@ -220,7 +220,15 @@ class StoredPlanGraphNode:
     graph_id: int
     node_key: str
     title: str
+    task_text: str
+    acceptance_criteria: list[str]
+    verification_requirement: str | None
     status: str
+    blocked_reason: str | None
+    task_id: str | None
+    plan_item_id: int | None
+    source_node_id: int | None
+    node_type: str
     attempts: int
     created_at: str
     updated_at: str
@@ -232,6 +240,14 @@ class StoredPlanGraphDependency:
     node_id: int
     depends_on_node_id: int
     created_at: str
+
+
+@dataclass(frozen=True)
+class StoredPlanGraphNodeReadiness:
+    node: StoredPlanGraphNode
+    ready: bool
+    reason: str
+    blocking_dependencies: list[StoredPlanGraphNode] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -518,7 +534,15 @@ class StateStore:
                     graph_id INTEGER NOT NULL,
                     node_key TEXT NOT NULL,
                     title TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'done', 'blocked', 'skipped')),
+                    task_text TEXT NOT NULL DEFAULT '',
+                    acceptance_criteria_json TEXT NOT NULL DEFAULT '[]',
+                    verification_requirement TEXT,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'done', 'blocked', 'failed', 'skipped')),
+                    blocked_reason TEXT,
+                    task_id TEXT,
+                    plan_item_id INTEGER,
+                    source_node_id INTEGER,
+                    node_type TEXT NOT NULL DEFAULT 'task',
                     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -2129,17 +2153,28 @@ class StateStore:
                             graph_id,
                             node_key,
                             title,
+                            task_text,
+                            acceptance_criteria_json,
+                            verification_requirement,
                             status,
+                            blocked_reason,
+                            task_id,
+                            plan_item_id,
+                            source_node_id,
+                            node_type,
                             attempts,
                             created_at,
                             updated_at
                         )
-                        VALUES (?, ?, ?, 'pending', 0, ?, ?)
+                        VALUES (?, ?, ?, ?, '[]', NULL, 'pending', NULL, ?, NULL, ?, 'repair', 0, ?, ?)
                         """,
                         (
                             plan_graph_id,
                             node_key,
                             _replan_follow_up_node_title(replan_id, str(title_source)),
+                            redact_secrets(str(title_source)) or "",
+                            task_id,
+                            parent_node_id,
                             now,
                             now,
                         ),
@@ -3522,10 +3557,20 @@ class StateStore:
         status: str = "pending",
         attempts: int = 0,
         depends_on_node_ids: list[int] | None = None,
+        *,
+        task_text: str | None = None,
+        acceptance_criteria: list[str] | None = None,
+        verification_requirement: str | None = None,
+        blocked_reason: str | None = None,
+        task_id: str | None = None,
+        plan_item_id: int | None = None,
+        source_node_id: int | None = None,
+        node_type: str = "task",
     ) -> StoredPlanGraphNode:
         self.initialize()
         _validate_plan_graph_node_key(node_key)
         _validate_non_empty(title, "Plan graph node title")
+        _validate_non_empty(node_type, "Plan graph node type")
         _validate_plan_graph_node_status(status)
         _validate_plan_graph_attempts(attempts)
         dependency_ids = depends_on_node_ids or []
@@ -3534,24 +3579,43 @@ class StateStore:
             if not _plan_graph_exists(connection, graph_id):
                 raise ValueError(f"Plan graph not found: {graph_id}")
             _validate_plan_graph_dependency_ids(connection, graph_id, dependency_ids)
+            if source_node_id is not None:
+                _validate_plan_graph_dependency_ids(connection, graph_id, [source_node_id])
             cursor = connection.execute(
                 """
                 INSERT INTO plan_graph_nodes (
                     graph_id,
                     node_key,
                     title,
+                    task_text,
+                    acceptance_criteria_json,
+                    verification_requirement,
                     status,
+                    blocked_reason,
+                    task_id,
+                    plan_item_id,
+                    source_node_id,
+                    node_type,
                     attempts,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     graph_id,
                     node_key.strip(),
                     redact_secrets(title) or "",
+                    redact_secrets(task_text if task_text is not None else title)
+                    or "",
+                    _encode_json_list(acceptance_criteria),
+                    redact_secrets(verification_requirement),
                     status,
+                    redact_secrets(blocked_reason),
+                    task_id,
+                    plan_item_id,
+                    source_node_id,
+                    redact_secrets(node_type) or "",
                     attempts,
                     now,
                     now,
@@ -3593,7 +3657,15 @@ class StateStore:
                     graph_id,
                     node_key,
                     title,
+                    task_text,
+                    acceptance_criteria_json,
+                    verification_requirement,
                     status,
+                    blocked_reason,
+                    task_id,
+                    plan_item_id,
+                    source_node_id,
+                    node_type,
                     attempts,
                     created_at,
                     updated_at
@@ -3604,7 +3676,7 @@ class StateStore:
             ).fetchone()
         if row is None:
             return None
-        return StoredPlanGraphNode(**dict(row))
+        return _stored_plan_graph_node_from_row(row)
 
     def list_plan_graph_nodes(
         self,
@@ -3620,7 +3692,15 @@ class StateStore:
                 graph_id,
                 node_key,
                 title,
+                task_text,
+                acceptance_criteria_json,
+                verification_requirement,
                 status,
+                blocked_reason,
+                task_id,
+                plan_item_id,
+                source_node_id,
+                node_type,
                 attempts,
                 created_at,
                 updated_at
@@ -3635,7 +3715,7 @@ class StateStore:
 
         with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
-        return [StoredPlanGraphNode(**dict(row)) for row in rows]
+        return [_stored_plan_graph_node_from_row(row) for row in rows]
 
     def list_ready_plan_graph_nodes(
         self,
@@ -3643,9 +3723,71 @@ class StateStore:
         limit: int | None = None,
     ) -> list[StoredPlanGraphNode]:
         """Return pending PlanGraph nodes whose dependencies are all done."""
-        self.initialize()
         if limit is not None and limit < 0:
             raise ValueError("Ready PlanGraph node limit cannot be negative")
+
+        ready_nodes = [
+            readiness.node
+            for readiness in self.list_plan_graph_node_readiness(graph_id)
+            if readiness.ready
+        ]
+        if limit is not None:
+            return ready_nodes[:limit]
+        return ready_nodes
+
+    def list_plan_graph_node_readiness(
+        self,
+        graph_id: int,
+    ) -> list[StoredPlanGraphNodeReadiness]:
+        """Return readiness decisions for every node in deterministic node order."""
+        nodes = self.list_plan_graph_nodes(graph_id)
+        dependencies = self.list_plan_graph_dependencies(graph_id)
+        nodes_by_id = {node.node_id: node for node in nodes}
+        dependencies_by_node: dict[int, list[int]] = {}
+        for dependency in dependencies:
+            dependencies_by_node.setdefault(dependency.node_id, []).append(
+                dependency.depends_on_node_id
+            )
+
+        readiness: list[StoredPlanGraphNodeReadiness] = []
+        for node in nodes:
+            blocking_dependencies = [
+                dependency_node
+                for dependency_node_id in dependencies_by_node.get(node.node_id, [])
+                if (
+                    dependency_node := nodes_by_id.get(dependency_node_id)
+                ) is not None
+                and dependency_node.status != "done"
+            ]
+            if node.status != "pending":
+                ready = False
+                reason = f"node_status_{node.status}"
+            elif blocking_dependencies:
+                ready = False
+                reason = "blocked_dependencies"
+            else:
+                ready = True
+                reason = "ready"
+            readiness.append(
+                StoredPlanGraphNodeReadiness(
+                    node=node,
+                    ready=ready,
+                    reason=reason,
+                    blocking_dependencies=blocking_dependencies,
+                )
+            )
+        return readiness
+
+    def list_stale_plan_graph_nodes(
+        self,
+        graph_id: int,
+        older_than_hours: int | None = None,
+        now: datetime | None = None,
+    ) -> list[StoredPlanGraphNode]:
+        """Return in-progress PlanGraph nodes that are candidates for recovery."""
+        self.initialize()
+        if older_than_hours is not None and older_than_hours < 0:
+            raise ValueError("Plan graph stale node age cannot be negative")
 
         query = """
             SELECT
@@ -3653,32 +3795,33 @@ class StateStore:
                 graph_id,
                 node_key,
                 title,
+                task_text,
+                acceptance_criteria_json,
+                verification_requirement,
                 status,
+                blocked_reason,
+                task_id,
+                plan_item_id,
+                source_node_id,
+                node_type,
                 attempts,
                 created_at,
                 updated_at
-            FROM plan_graph_nodes AS node
-            WHERE node.graph_id = ?
-              AND node.status = 'pending'
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM plan_graph_dependencies AS dependency
-                  JOIN plan_graph_nodes AS dependency_node
-                    ON dependency_node.node_id = dependency.depends_on_node_id
-                  WHERE dependency.graph_id = node.graph_id
-                    AND dependency.node_id = node.node_id
-                    AND dependency_node.status <> 'done'
-              )
-            ORDER BY node.node_id ASC
+            FROM plan_graph_nodes
+            WHERE graph_id = ?
+              AND status = 'in_progress'
         """
         params: list[object] = [graph_id]
-        if limit is not None:
-            query += " LIMIT ?"
-            params.append(limit)
+        if older_than_hours is not None:
+            reference = now or datetime.now(UTC)
+            cutoff = reference - timedelta(hours=older_than_hours)
+            query += " AND updated_at <= ?"
+            params.append(cutoff.isoformat())
+        query += " ORDER BY node_id ASC"
 
         with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
-        return [StoredPlanGraphNode(**dict(row)) for row in rows]
+        return [_stored_plan_graph_node_from_row(row) for row in rows]
 
     def update_plan_graph_node_status(
         self,
@@ -3686,6 +3829,9 @@ class StateStore:
         status: str,
         attempts: int | None = None,
         increment_attempts: bool = False,
+        blocked_reason: str | None = None,
+        task_id: str | None = None,
+        plan_item_id: int | None = None,
     ) -> StoredPlanGraphNode | None:
         self.initialize()
         _validate_plan_graph_node_status(status)
@@ -3702,6 +3848,15 @@ class StateStore:
             params.append(attempts)
         elif increment_attempts:
             set_clause += ", attempts = attempts + 1"
+        if blocked_reason is not None:
+            set_clause += ", blocked_reason = ?"
+            params.append(redact_secrets(blocked_reason))
+        if task_id is not None:
+            set_clause += ", task_id = ?"
+            params.append(task_id)
+        if plan_item_id is not None:
+            set_clause += ", plan_item_id = ?"
+            params.append(plan_item_id)
         params.append(node_id)
 
         with self._connect() as connection:
@@ -3744,6 +3899,13 @@ class StateStore:
                 graph_id,
                 [depends_on_node_id],
             )
+            if _plan_graph_dependency_creates_cycle(
+                connection,
+                graph_id,
+                node_id,
+                depends_on_node_id,
+            ):
+                raise ValueError("Plan graph dependency would create a cycle")
             connection.execute(
                 """
                 INSERT OR IGNORE INTO plan_graph_dependencies (
@@ -3823,7 +3985,14 @@ def _validate_plan_graph_status(status: str) -> None:
 
 
 def _validate_plan_graph_node_status(status: str) -> None:
-    if status not in {"pending", "in_progress", "done", "blocked", "skipped"}:
+    if status not in {
+        "pending",
+        "in_progress",
+        "done",
+        "blocked",
+        "failed",
+        "skipped",
+    }:
         raise ValueError(f"Unsupported plan graph node status: {status}")
 
 
@@ -3892,6 +4061,35 @@ def _validate_plan_graph_dependency_ids(
         )
 
 
+def _plan_graph_dependency_creates_cycle(
+    connection: sqlite3.Connection,
+    graph_id: int,
+    node_id: int,
+    depends_on_node_id: int,
+) -> bool:
+    row = connection.execute(
+        """
+        WITH RECURSIVE upstream(node_id) AS (
+            SELECT depends_on_node_id
+            FROM plan_graph_dependencies
+            WHERE graph_id = ?
+              AND node_id = ?
+            UNION
+            SELECT dependency.depends_on_node_id
+            FROM plan_graph_dependencies AS dependency
+            JOIN upstream ON upstream.node_id = dependency.node_id
+            WHERE dependency.graph_id = ?
+        )
+        SELECT 1
+        FROM upstream
+        WHERE node_id = ?
+        LIMIT 1
+        """,
+        (graph_id, depends_on_node_id, graph_id, node_id),
+    ).fetchone()
+    return row is not None
+
+
 def _replan_follow_up_node_title(replan_id: int, source: str) -> str:
     summary = " ".join(source.split())
     if not summary:
@@ -3952,6 +4150,14 @@ def _decode_json_list(value: str | None) -> list[str]:
     if not isinstance(decoded, list):
         return []
     return [str(item) for item in decoded if isinstance(item, str)]
+
+
+def _stored_plan_graph_node_from_row(row: sqlite3.Row) -> StoredPlanGraphNode:
+    data = dict(row)
+    data["acceptance_criteria"] = _decode_json_list(
+        data.pop("acceptance_criteria_json", None)
+    )
+    return StoredPlanGraphNode(**data)
 
 
 def _encode_json_int_list(values: list[int] | None) -> str:

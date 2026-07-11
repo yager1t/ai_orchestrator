@@ -563,6 +563,7 @@ Add nodes and dependencies:
 
 ```bash
 ai-orch autopilot plan add-node <graph-id> --repo . --key release-checks --title "Run release checks"
+ai-orch autopilot plan add-node <graph-id> --repo . --key repair-tests --title "Repair tests" --task-text "Fix failing tests" --acceptance-criterion "pytest passes" --verification-requirement "python -m pytest" --source-node-id <node-id> --node-type repair
 ai-orch autopilot plan add-dependency <graph-id> --repo . --node-id <node-id> --depends-on-node-id <dependency-id>
 ```
 
@@ -570,14 +571,34 @@ Show ready nodes:
 
 ```bash
 ai-orch autopilot plan ready <graph-id> --repo .
+ai-orch autopilot plan ready <graph-id> --repo . --json
 ```
+
+Ready-node selection is deterministic by `node_id`. Only `done` dependencies
+satisfy downstream nodes; `pending`, `in_progress`, `blocked`, `failed`, and
+`skipped` dependencies keep dependents non-ready. JSON and text output include
+readiness reasons and blocking dependency ids.
 
 Preview or execute ready nodes:
 
 ```bash
 ai-orch autopilot plan run-next <graph-id> --repo .
 ai-orch autopilot plan run-next <graph-id> --repo . --execute --allow-dirty
+ai-orch autopilot plan run-batch <graph-id> --repo . --max-items 2
 ```
+
+Inspect or recover interrupted graph nodes:
+
+```bash
+ai-orch autopilot plan recover <graph-id> --repo .
+ai-orch autopilot plan recover <graph-id> --repo . --json
+ai-orch autopilot plan recover <graph-id> --repo . --apply --reason "operator recovery after interrupted node"
+```
+
+PlanGraph execution remains serial. A ready node runs through the normal
+supervisor and verification path. Reports and JSON trace exports include linked
+graph/node status, readiness, dependencies, acceptance criteria, verification
+requirements, blocked reason, source/repair links, and graph progress.
 
 ## 12. Run Evaluations
 
@@ -623,7 +644,8 @@ ai-orch export <task-id> --repo .
 
 Reports and trace exports include the final supervisor decision, event timeline,
 verification runs, approval/denial visibility, typed action journal data,
-redacted command output previews, and recovery/checkpoint details.
+PlanGraph node context, redacted command output previews, and
+recovery/checkpoint details.
 
 ## 14. Normal Operating Loop
 

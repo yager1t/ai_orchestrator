@@ -11,6 +11,8 @@ from ai_orchestrator.storage.db import (
     StoredIteration,
     StoredMemoryInfluence,
     StoredMemoryLesson,
+    StoredPlanGraph,
+    StoredPlanGraphNode,
     StoredPlanItem,
     StoredReplanDecision,
     StoredReflectionRecord,
@@ -43,6 +45,7 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
     checkpoint_events = _checkpoint_events(task_events)
     recovery_events = _recovery_events(task_events)
     plan_item = _plan_item_for_task(store, task.task_id)
+    plan_graph_context = _plan_graph_context_for_task(store, task.task_id, plan_item)
     final_iteration = iterations[-1] if iterations else None
     final_verification_runs = (
         store.list_verification_runs(task.task_id, final_iteration.iteration_id)
@@ -84,6 +87,9 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
                 f"- Final reason: {final_iteration.decision_reason}",
             ]
         )
+
+    lines.extend(["", "## PlanGraph", ""])
+    lines.extend(_render_plan_graph_context_lines(store, plan_graph_context))
 
     lines.extend(["", "## Timeline", ""])
     lines.extend(_render_timeline_entry_lines(timeline_entries))
@@ -175,6 +181,106 @@ def _queue_worktree_lines(plan_item: StoredPlanItem | None) -> list[str]:
     if plan_item is None or not plan_item.selected_worktree_path:
         return []
     return [f"- Queue worktree: `{plan_item.selected_worktree_path}`"]
+
+
+def _plan_graph_context_for_task(
+    store: StateStore,
+    task_id: str,
+    plan_item: StoredPlanItem | None,
+) -> tuple[StoredPlanGraph, StoredPlanGraphNode | None] | None:
+    for graph in store.list_plan_graphs():
+        nodes = store.list_plan_graph_nodes(graph.graph_id)
+        for node in nodes:
+            if node.task_id == task_id:
+                return graph, node
+        if graph.task_id == task_id:
+            return graph, None
+
+    if plan_item is None or plan_item.plan_graph_id is None:
+        return None
+    linked_graph = store.get_plan_graph(plan_item.plan_graph_id)
+    if linked_graph is None:
+        return None
+    if plan_item.plan_graph_root_node_id is None:
+        return linked_graph, None
+    linked_node = store.get_plan_graph_node(plan_item.plan_graph_root_node_id)
+    return linked_graph, linked_node
+
+
+def _render_plan_graph_context_lines(
+    store: StateStore,
+    context: tuple[StoredPlanGraph, StoredPlanGraphNode | None] | None,
+) -> list[str]:
+    if context is None:
+        return ["No PlanGraph link recorded."]
+
+    graph, node = context
+    nodes = store.list_plan_graph_nodes(graph.graph_id)
+    dependencies = store.list_plan_graph_dependencies(graph.graph_id)
+    readiness = {
+        item.node.node_id: item for item in store.list_plan_graph_node_readiness(graph.graph_id)
+    }
+    lines = [
+        f"- Graph: `{graph.graph_id}` status=`{graph.status}` title={graph.title}",
+        f"- Graph progress: {_plan_graph_progress(nodes)}",
+    ]
+    if node is None:
+        return lines
+
+    lines.extend(
+        [
+            (
+                f"- Node: `{node.node_id}` key=`{node.node_key}` "
+                f"status=`{node.status}` attempts=`{node.attempts}`"
+            ),
+            f"- Node type: `{node.node_type}`",
+            f"- Node task: {node.task_text or node.title}",
+        ]
+    )
+    node_readiness = readiness.get(node.node_id)
+    if node_readiness is not None:
+        lines.append(
+            f"- Node readiness: `{node_readiness.reason}` ready=`{node_readiness.ready}`"
+        )
+        if node_readiness.blocking_dependencies:
+            blockers = ", ".join(
+                f"`{dependency.node_id}:{dependency.status}`"
+                for dependency in node_readiness.blocking_dependencies
+            )
+            lines.append(f"- Blocking dependencies: {blockers}")
+    node_dependencies = [
+        dependency.depends_on_node_id
+        for dependency in dependencies
+        if dependency.node_id == node.node_id
+    ]
+    if node_dependencies:
+        lines.append(
+            "- Dependencies: "
+            + ", ".join(f"`{dependency_id}`" for dependency_id in node_dependencies)
+        )
+    if node.acceptance_criteria:
+        lines.append(
+            "- Acceptance criteria: "
+            + "; ".join(redact_secrets(item) or "" for item in node.acceptance_criteria)
+        )
+    if node.verification_requirement:
+        lines.append(
+            f"- Verification requirement: {redact_secrets(node.verification_requirement) or ''}"
+        )
+    if node.blocked_reason:
+        lines.append(f"- Blocked reason: {redact_secrets(node.blocked_reason) or ''}")
+    if node.source_node_id is not None:
+        lines.append(f"- Source node: `{node.source_node_id}`")
+    if node.plan_item_id is not None:
+        lines.append(f"- Queue item: `{node.plan_item_id}`")
+    return lines
+
+
+def _plan_graph_progress(nodes: Sequence[StoredPlanGraphNode]) -> str:
+    if not nodes:
+        return "`0` nodes"
+    counts = Counter(node.status for node in nodes)
+    return ", ".join(f"`{status}`: {count}" for status, count in sorted(counts.items()))
 
 
 def _verification_excerpt(stderr: str, stdout: str, error: str | None, limit: int = 1200) -> str:
