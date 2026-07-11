@@ -108,7 +108,7 @@ mode rather than real AI work.
 For future packaged releases, the universal end-user path is `pipx`:
 
 ```bash
-pipx install ai-orchestrator
+pipx install ai-orch
 ai-orch --help
 ```
 

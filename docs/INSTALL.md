@@ -12,12 +12,13 @@ For packaged releases, prefer `pipx` because it installs command-line
 applications into isolated environments:
 
 ```bash
-pipx install ai-orchestrator
+pipx install ai-orch
 ai-orch --version
 ai-orch demo
 ```
 
-Until the package is published, use the repository-local install below.
+The Python import package remains `ai_orchestrator`; the published
+distribution and console command are both named `ai-orch`.
 
 WinGet and Homebrew remain planned platform channels until maintainable
 manifests/formulae exist. A Linux `curl | bash` install route should be treated

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.5.1 — PyPI package channel
+
+- Changed the public PyPI distribution name to `ai-orch` because
+  `ai-orchestrator` is already owned by a different PyPI project. The Python
+  import package remains `ai_orchestrator`, and the console command remains
+  `ai-orch`.
+
 ## 0.5.0 — Typed Action Broker and policy tiers
 
 - Added the v0.5 typed action broker envelope and action journal enrichment for

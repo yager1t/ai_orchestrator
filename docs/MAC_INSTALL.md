@@ -11,12 +11,13 @@ For packaged releases, prefer `pipx`:
 ```bash
 python3 -m pip install --user pipx
 python3 -m pipx ensurepath
-pipx install ai-orchestrator
+pipx install ai-orch
 ai-orch --version
 ai-orch demo
 ```
 
-If `ai-orchestrator` is not published yet, use the local repository path below.
+The Python import package remains `ai_orchestrator`; the published
+distribution and console command are both named `ai-orch`.
 
 ## Local Repository Install
 

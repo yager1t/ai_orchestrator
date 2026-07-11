@@ -18,12 +18,13 @@ verification checks are.
 For packaged releases, prefer `pipx`:
 
 ```bash
-pipx install ai-orchestrator
+pipx install ai-orch
 ai-orch --version
 ai-orch demo
 ```
 
-Until the package is published, install from a checkout or release ZIP.
+The Python import package remains `ai_orchestrator`; the published
+distribution and console command are both named `ai-orch`.
 
 From the repository root:
 
