@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.0 — Typed Action Broker and policy tiers
+
 - Added the v0.5 typed action broker envelope and action journal enrichment for
   brokered actions, including request, risk, provenance, policy decision,
   approval reference, execution outcome, and redacted stdout/stderr previews.
