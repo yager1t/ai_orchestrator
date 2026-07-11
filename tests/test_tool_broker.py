@@ -37,6 +37,78 @@ def test_tool_broker_runs_read_tool_and_records_action(tmp_path) -> None:
     assert actions[0].policy_action == "allow"
     assert actions[0].payload["risk_tier"] == "read"
     assert actions[0].result["status"] == "succeeded"
+    assert actions[0].payload["action_request"]["risk"]["action_type"] == "read"
+    assert actions[0].payload["action_request"]["provenance"]["task_id"] == task.task_id
+    assert actions[0].result["action_decision"] == {
+        "action": "allow",
+        "reason": "No blocking policy matched",
+        "policy_name": "PolicyEngine",
+    }
+    assert actions[0].result["action_result"]["summary"] == "fs.read succeeded"
+
+
+def test_tool_broker_records_redacted_output_preview(tmp_path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    broker = ToolBroker(store, PolicyEngine())
+    call = ToolCall(
+        spec=ToolSpec("process.run", "read"),
+        idempotency_key="tool:process.run:preview",
+        arguments={"argv": ["python", "-m", "pytest"]},
+        task_id=task.task_id,
+    )
+
+    result = broker.run(
+        call,
+        lambda _call: ToolResult(
+            call=call,
+            status="succeeded",
+            output={
+                "stdout": "OPENAI_API_KEY=sk-demo1234 " + ("x" * 450),
+                "stderr": "warning",
+                "exit_code": 0,
+            },
+        ),
+    )
+    action = store.list_action_records(task.task_id)[0]
+    preview = action.result["action_result"]["output_preview"]
+
+    assert result.status == "succeeded"
+    assert preview["stdout"].startswith("OPENAI_API_KEY=***REDACTED***")
+    assert preview["stdout"].endswith("...")
+    assert "sk-demo1234" not in preview["stdout"]
+    assert preview["stderr"] == "warning"
+    assert preview["exit_code"] == 0
+
+
+def test_tool_broker_replays_completed_action_without_executor(tmp_path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    broker = ToolBroker(store, PolicyEngine())
+    call = ToolCall(
+        spec=ToolSpec("fs.read", "read"),
+        idempotency_key="tool:fs.read:replay",
+        arguments={"path": "README.md"},
+        task_id=task.task_id,
+    )
+    executed = 0
+
+    def executor(_call: ToolCall) -> dict[str, object]:
+        nonlocal executed
+        executed += 1
+        return {"content": "hello"}
+
+    first = broker.run(call, executor)
+    second = broker.run(call, executor)
+    actions = store.list_action_records(task.task_id)
+    events = store.list_task_events(task.task_id)
+
+    assert first.status == "succeeded"
+    assert second.status == "succeeded"
+    assert second.output == {"content": "hello"}
+    assert executed == 1
+    assert len(actions) == 1
+    assert any(event.event_type == "command_replayed" for event in events)
 
 
 def test_tool_broker_denies_policy_blocked_call_without_executor(tmp_path) -> None:
@@ -66,7 +138,42 @@ def test_tool_broker_denies_policy_blocked_call_without_executor(tmp_path) -> No
     assert actions[0].status == "policy_denied"
     assert actions[0].policy_action == "deny"
     assert actions[0].command_string == "cat ~/.codex/auth.json"
+    assert (
+        actions[0].payload["action_request"]["risk"]["action_type"]
+        == "secret_sensitive"
+    )
+    assert actions[0].result["action_decision"]["action"] == "deny"
     assert approvals == []
+
+
+def test_tool_broker_denies_dangerous_classification_without_executor(tmp_path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    broker = ToolBroker(store, PolicyEngine())
+    executed = False
+    call = ToolCall(
+        spec=ToolSpec("fs.delete", "destructive"),
+        idempotency_key="tool:fs.delete:danger",
+        arguments={"path": "build"},
+        task_id=task.task_id,
+    )
+
+    def executor(_call: ToolCall) -> dict[str, object]:
+        nonlocal executed
+        executed = True
+        return {"deleted": True}
+
+    result = broker.run(call, executor)
+    action = store.list_action_records(task.task_id)[0]
+
+    assert not executed
+    assert result.status == "policy_denied"
+    assert result.error == "Denied by action classification: dangerous"
+    assert action.policy_action == "deny"
+    assert action.payload["action_request"]["risk"]["action_type"] == "dangerous"
+    assert action.result["action_decision"]["reason"] == (
+        "Denied by action classification: dangerous"
+    )
 
 
 def test_tool_broker_requires_approval_for_write_risk_without_executor(tmp_path) -> None:
@@ -113,6 +220,14 @@ def test_tool_broker_requires_approval_for_write_risk_without_executor(tmp_path)
     assert actions[0].policy_action == "allow"
     assert actions[0].policy_reason == "Tool risk tier requires approval: write"
     assert actions[0].payload["risk_tier"] == "write"
+    assert actions[0].payload["action_request"]["risk"] == {
+        "action_type": "write",
+        "risk_tier": "write",
+        "requires_approval": True,
+        "reasons": ["Tool risk tier: write"],
+    }
+    assert actions[0].result["action_decision"]["action"] == "allow"
+    assert actions[0].result["action_result"]["status"] == "needs_approval"
     assert actions[0].result["output"]["approval_id"] == approvals[0].approval_id
     assert len(approvals) == 1
     assert approvals[0].iteration_id == iteration.iteration_id
@@ -154,7 +269,41 @@ def test_tool_broker_runs_approved_write_risk_and_records_retry_action(tmp_path)
     assert actions[1].idempotency_key == f"{call.idempotency_key}:approval:{approval_id}"
     assert actions[1].payload["approved_retry"] is True
     assert actions[1].payload["approval_id"] == approval_id
+    assert actions[1].payload["action_request"]["risk"]["action_type"] == "write"
+    assert actions[1].result["action_decision"]["approval_id"] == approval_id
     assert actions[1].result["output"]["tool_output"] == {"bytes": 7}
+
+
+def test_tool_broker_replays_completed_approved_action_without_executor(tmp_path) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    broker = ToolBroker(store, PolicyEngine())
+    call = ToolCall(
+        spec=ToolSpec("fs.write", "write"),
+        idempotency_key="tool:fs.write:approved-replay",
+        arguments={"path": "README.md", "content": "updated"},
+        task_id=task.task_id,
+    )
+    requested = broker.run(call, lambda _call: {"bytes": 7})
+    approval_id = requested.output["approval_id"]
+    executed = 0
+
+    def executor(_call: ToolCall) -> ToolResult:
+        nonlocal executed
+        executed += 1
+        return ToolResult(call=call, status="succeeded", output={"bytes": 7})
+
+    assert isinstance(approval_id, int)
+    first = broker.run_approved(call, executor, approval_id=approval_id)
+    second = broker.run_approved(call, executor, approval_id=approval_id)
+    actions = store.list_action_records(task.task_id)
+
+    assert first.status == "succeeded"
+    assert second.status == "succeeded"
+    assert second.output["approval_id"] == approval_id
+    assert second.output["tool_output"] == {"bytes": 7}
+    assert executed == 1
+    assert [action.status for action in actions] == ["needs_approval", "succeeded"]
 
 
 def test_tool_broker_approved_retry_does_not_override_deny_rules(tmp_path) -> None:
@@ -182,6 +331,36 @@ def test_tool_broker_approved_retry_does_not_override_deny_rules(tmp_path) -> No
     assert result.output["approval_id"] == 1
     assert actions[0].status == "policy_denied"
     assert actions[0].policy_action == "deny"
+
+
+def test_tool_broker_approved_retry_does_not_override_dangerous_classification(
+    tmp_path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo", repo_path=tmp_path)
+    broker = ToolBroker(store, PolicyEngine())
+    executed = False
+    call = ToolCall(
+        spec=ToolSpec("fs.delete", "destructive"),
+        idempotency_key="tool:fs.delete:approved-danger",
+        arguments={"path": "build"},
+        task_id=task.task_id,
+    )
+
+    def executor(_call: ToolCall) -> dict[str, object]:
+        nonlocal executed
+        executed = True
+        return {"deleted": True}
+
+    result = broker.run_approved(call, executor, approval_id=1)
+    action = store.list_action_records(task.task_id)[0]
+
+    assert not executed
+    assert result.status == "policy_denied"
+    assert result.output["approval_id"] == 1
+    assert action.status == "policy_denied"
+    assert action.policy_action == "deny"
+    assert action.result["action_decision"]["approval_id"] == 1
 
 
 def test_tool_broker_records_failed_executor_result(tmp_path) -> None:

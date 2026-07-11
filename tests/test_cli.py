@@ -1077,11 +1077,23 @@ def test_approvals_retry_runs_approved_request(
     assert "retry history: count=1 last_status=passed last_exit=0" in output
     assert "retry ok" in output
     assert captured == [(["retry-token", "command"], tmp_path)]
+    actions = store.list_action_records(task.task_id)
     loaded = store.get_approval_request(approval.approval_id)
     assert loaded is not None
     assert loaded.retry_count == 1
     assert loaded.last_retry_status == "passed"
     assert loaded.last_retry_exit_code == 0
+    assert len(actions) == 1
+    assert actions[0].action_type == "process.approval_retry"
+    assert actions[0].status == "succeeded"
+    assert actions[0].payload["approved_retry"] is True
+    assert actions[0].payload["action_request"]["risk"]["action_type"] == "shell"
+    assert actions[0].result["action_decision"]["approval_id"] == approval.approval_id
+    assert actions[0].result["action_result"]["output_preview"] == {
+        "stdout": "retry ok",
+        "stderr": "",
+        "exit_code": 0,
+    }
 
 
 def test_approvals_retry_runs_approved_tool_broker_request(
@@ -1737,6 +1749,7 @@ def test_recover_dry_run_reports_interrupted_state(capsys, tmp_path: Path) -> No
     assert "Recovery" in output
     assert "running_tasks: 1" in output
     assert "expired_action_leases: 1" in output
+    assert "stale_started_actions: 0" in output
     assert "dry_run: use --apply --reason" in output
     assert store.get_task(task.task_id).status == "running"  # type: ignore[union-attr]
     assert store.get_action_record(action.action_id).status == "started"  # type: ignore[union-attr]
@@ -1822,7 +1835,56 @@ def test_recover_json_reports_counts(capsys, tmp_path: Path) -> None:
     assert payload["running_tasks"]["items"][0]["task_id"] == task.task_id
     assert payload["expired_action_leases"]["count"] == 1
     assert payload["expired_action_leases"]["items"][0]["action_id"] == action.action_id
+    assert payload["stale_started_actions"]["count"] == 0
     assert payload["recovered"] == {"blocked_tasks": 0, "failed_actions": 0}
+
+
+def test_recover_reports_and_applies_stale_started_actions_without_lease(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("stale action task", repo_path=tmp_path)
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="recover-stale-action",
+        action_type="process.approval_retry",
+    )
+    old_timestamp = "2026-01-01T00:00:00+00:00"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE action_records SET updated_at = ? WHERE action_id = ?",
+            (old_timestamp, action.action_id),
+        )
+
+    dry_run_code = main(["recover", "--repo", str(tmp_path)])
+    dry_run_output = capsys.readouterr().out
+
+    assert dry_run_code == 0
+    assert "expired_action_leases: 0" in dry_run_output
+    assert "stale_started_actions: 1" in dry_run_output
+    assert f"[stale_action] {action.action_id}: process.approval_retry" in dry_run_output
+    assert store.get_action_record(action.action_id).status == "started"  # type: ignore[union-attr]
+
+    apply_code = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--apply",
+            "--reason",
+            "operator recovered stale action",
+        ]
+    )
+    apply_output = capsys.readouterr().out
+    recovered_action = store.get_action_record(action.action_id)
+
+    assert apply_code == 0
+    assert "failed_actions: 1" in apply_output
+    assert recovered_action is not None
+    assert recovered_action.status == "failed"
+    assert recovered_action.result["recovered"] is True
+    assert recovered_action.result["reason"] == "operator recovered stale action"
 
 
 def test_timeline_prints_replay_read_model(capsys, tmp_path: Path) -> None:
@@ -1909,6 +1971,19 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
         payload={"name": "unit"},
         result={"exit_code": 0},
     )
+    broker = ToolBroker(store, PolicyEngine())
+    broker_call = make_process_tool_call(
+        "process.read",
+        "read",
+        argv=["python", "-m", "pytest"],
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        idempotency_key="export-action-brokered",
+    )
+    broker.run(
+        broker_call,
+        lambda _call: {"stdout": "broker ok", "stderr": "", "exit_code": 0},
+    )
     leased_action = store.record_action(
         task_id=task.task_id,
         iteration_id=iteration.iteration_id,
@@ -1979,7 +2054,7 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
     assert trace_path.exists()
 
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
-    assert trace["metadata"]["schema_version"] == "1.1"
+    assert trace["metadata"]["schema_version"] == "1.2"
     assert trace["metadata"]["task_id"] == task.task_id
     assert trace["metadata"]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["metadata"]["unsafe_action_count"] == 0
@@ -1994,21 +2069,47 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
     assert any(entry["event_type"] == "replan.decision" for entry in trace["timeline"])
     assert any(entry["event_type"] == "reflection.failed_verification" for entry in trace["timeline"])
     assert any(entry["event_type"] == "memory.influence" for entry in trace["timeline"])
-    assert len(trace["task_events"]) == 1
+    assert len(trace["task_events"]) == 4
     assert trace["task_events"][0]["sequence"] == 1
     assert trace["task_events"][0]["event_type"] == "task.created"
     assert trace["task_events"][0]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["task_events"][0]["payload"] == {"source": "export-test"}
-    assert len(trace["action_records"]) == 2
+    assert [event["event_type"] for event in trace["task_events"][1:]] == [
+        "command_approved",
+        "command_started",
+        "command_finished",
+    ]
+    assert len(trace["action_records"]) == 3
     assert trace["action_records"][0]["idempotency_key"] == "export-action-1"
     assert trace["action_records"][0]["action_type"] == "verification_command"
     assert trace["action_records"][0]["status"] == "succeeded"
     assert trace["action_records"][0]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["action_records"][0]["result"] == {"exit_code": 0}
-    assert trace["action_records"][1]["idempotency_key"] == "export-action-lease"
-    assert trace["action_records"][1]["lease_owner"] == "worker-1"
-    assert trace["action_records"][1]["lease_expires_at"] == "2026-01-01T00:00:30+00:00"
-    assert trace["action_records"][1]["heartbeat_at"] == "2026-01-01T00:00:00+00:00"
+    assert trace["action_records"][1]["idempotency_key"] == "export-action-brokered"
+    assert trace["action_records"][1]["payload"]["action_request"]["risk"] == {
+        "action_type": "shell",
+        "risk_tier": "read",
+        "requires_approval": False,
+        "reasons": [],
+    }
+    assert trace["action_records"][2]["idempotency_key"] == "export-action-lease"
+    assert trace["action_records"][2]["lease_owner"] == "worker-1"
+    assert trace["action_records"][2]["lease_expires_at"] == "2026-01-01T00:00:30+00:00"
+    assert trace["action_records"][2]["heartbeat_at"] == "2026-01-01T00:00:00+00:00"
+    assert len(trace["action_journal"]) == 3
+    assert trace["action_journal"][0]["requested_action"] is None
+    assert trace["action_journal"][1]["requested_action"] == "process.read"
+    assert trace["action_journal"][1]["category"] == "shell"
+    assert trace["action_journal"][1]["risk_tier"] == "read"
+    assert trace["action_journal"][1]["policy_action"] == "allow"
+    assert trace["action_journal"][1]["decision"]["action"] == "allow"
+    assert trace["action_journal"][1]["output_preview"] == {
+        "stdout": "broker ok",
+        "stderr": "",
+        "exit_code": 0,
+    }
+    assert trace["action_journal"][1]["provenance"]["task_id"] == task.task_id
+    assert trace["action_journal"][2]["lease"]["owner"] == "worker-1"
     assert len(trace["replan_decisions"]) == 1
     assert trace["replan_decisions"][0]["status"] == "continue"
     assert trace["replan_decisions"][0]["failed_checks"][0]["name"] == "unit"

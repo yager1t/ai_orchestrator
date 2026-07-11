@@ -208,6 +208,10 @@ requires-python = ">=3.12"
         "# v0.3 Goal Plan\n",
         encoding="utf-8",
     )
+    (repo / "docs" / "V0_5_GOAL_PLAN.md").write_text(
+        "# v0.5 Typed Action Broker Goal Plan\n",
+        encoding="utf-8",
+    )
     (repo / "docs" / "WINDOWS_INSTALL.md").write_text(
         "# Windows Install\n",
         encoding="utf-8",
@@ -218,6 +222,9 @@ requires-python = ">=3.12"
         encoding="utf-8",
     )
     (repo / "docs" / "USER_GUIDE.md").write_text(
-        "# User Guide\n\nRun `ai-orch demo`, `ai-orch onboard`, and `ai-orch fix`.\n",
+        (
+            "# User Guide\n\nRun `ai-orch demo`, `ai-orch onboard`, and "
+            "`ai-orch fix`. Trace exports include `action_journal`.\n"
+        ),
         encoding="utf-8",
     )

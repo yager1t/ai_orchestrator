@@ -145,6 +145,7 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
         repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md",
         repo / "docs" / "USER_GUIDE.md",
         repo / "docs" / "V0_3_GOAL_PLAN.md",
+        repo / "docs" / "V0_5_GOAL_PLAN.md",
     ]
     missing = [_relative_label(path, repo) for path in required_docs if not path.exists()]
     if missing:
@@ -170,6 +171,8 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
         (repo / "docs" / "USER_GUIDE.md", "ai-orch demo"),
         (repo / "docs" / "USER_GUIDE.md", "ai-orch onboard"),
         (repo / "docs" / "USER_GUIDE.md", "ai-orch fix"),
+        (repo / "docs" / "USER_GUIDE.md", "action_journal"),
+        (repo / "docs" / "V0_5_GOAL_PLAN.md", "Typed Action Broker"),
         (repo / "docs" / "MAC_INSTALL.md", "macOS"),
     ]
     missing_content = [
@@ -188,7 +191,8 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
         status="passed",
         detail=(
             "README, changelog, platform install guides, onboarding plan, "
-            "user guide, release checklist, and shipping template present"
+            "v0.5 action broker plan, user guide, release checklist, and "
+            "shipping template present"
         ),
     )
 

@@ -2,10 +2,19 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Callable
+from typing import cast
 
 from ai_orchestrator.policy.engine import PolicyDecision, PolicyEngine
 from ai_orchestrator.storage.db import StateStore, StoredActionRecord
-from ai_orchestrator.tools.types import ToolCall, ToolResult, ToolResultStatus
+from ai_orchestrator.storage.redaction import redact_secrets
+from ai_orchestrator.tools.types import (
+    TOOL_RESULT_STATUSES,
+    ActionDecision,
+    ActionDecisionAction,
+    ToolCall,
+    ToolResult,
+    ToolResultStatus,
+)
 
 ToolExecutorOutput = dict[str, object] | ToolResult
 ToolExecutor = Callable[[ToolCall], ToolExecutorOutput]
@@ -31,6 +40,7 @@ class ToolBroker:
             raise ValueError("ToolCall task_id is required for broker audit")
 
         policy_decision, command_string = self._evaluate_policy(call)
+        policy_decision = self._effective_policy_decision(call, policy_decision)
         blocked_status = self._blocked_status(call, policy_decision)
         if blocked_status is not None:
             reason = self._blocked_reason(call, policy_decision)
@@ -48,8 +58,11 @@ class ToolBroker:
                 command_string=command_string,
                 policy_action=policy_decision.action,
                 policy_reason=reason,
-                payload=call.action_payload(),
-                result=result.action_result(),
+                payload=self._action_payload(call, command_string=command_string),
+                result=self._action_result_payload(
+                    result,
+                    policy_decision=policy_decision,
+                ),
             )
             self._record_call_event(
                 call,
@@ -74,7 +87,11 @@ class ToolBroker:
                     self.state_store.complete_action_record(
                         action.action_id,
                         result.status,
-                        result=result.action_result(),
+                        result=self._action_result_payload(
+                            result,
+                            policy_decision=policy_decision,
+                            approval_id=approval_id,
+                        ),
                     )
                 else:
                     approval_id = self._create_approval_request(
@@ -95,7 +112,11 @@ class ToolBroker:
                         self.state_store.complete_action_record(
                             action.action_id,
                             result.status,
-                            result=result.action_result(),
+                            result=self._action_result_payload(
+                                result,
+                                policy_decision=policy_decision,
+                                approval_id=approval_id,
+                            ),
                         )
             return result
 
@@ -108,8 +129,19 @@ class ToolBroker:
             command_string=command_string,
             policy_action=policy_decision.action,
             policy_reason=policy_decision.reason,
-            payload=call.action_payload(),
+            payload=self._action_payload(call, command_string=command_string),
         )
+        replayed_result = self._completed_result_from_action(call, action)
+        if replayed_result is not None:
+            self._record_call_event(
+                call,
+                "command_replayed",
+                action_id=action.action_id,
+                status=replayed_result.status,
+                reason="Skipped executor for completed action record",
+                idempotency_suffix="replayed",
+            )
+            return replayed_result
         self._record_call_event(
             call,
             "command_approved",
@@ -134,7 +166,10 @@ class ToolBroker:
         self.state_store.complete_action_record(
             action.action_id,
             result.status,
-            result=result.action_result(),
+            result=self._action_result_payload(
+                result,
+                policy_decision=policy_decision,
+            ),
         )
         self._record_call_event(
             call,
@@ -159,6 +194,7 @@ class ToolBroker:
             raise ValueError("Approval id must be positive")
 
         policy_decision, command_string = self._evaluate_policy(call)
+        policy_decision = self._effective_policy_decision(call, policy_decision)
         retry_idempotency_key = f"{call.idempotency_key}:approval:{approval_id}"
         retry_payload = {
             **call.action_payload(),
@@ -184,8 +220,16 @@ class ToolBroker:
                 command_string=command_string,
                 policy_action=policy_decision.action,
                 policy_reason=policy_decision.reason,
-                payload=retry_payload,
-                result=result.action_result(),
+                payload=self._action_payload(
+                    call,
+                    command_string=command_string,
+                    extra=retry_payload,
+                ),
+                result=self._action_result_payload(
+                    result,
+                    policy_decision=policy_decision,
+                    approval_id=approval_id,
+                ),
             )
             self._record_call_event(
                 call,
@@ -203,7 +247,11 @@ class ToolBroker:
             self.state_store.complete_action_record(
                 action.action_id,
                 result.status,
-                result=result.action_result(),
+                result=self._action_result_payload(
+                    result,
+                    policy_decision=policy_decision,
+                    approval_id=approval_id,
+                ),
             )
             return result
 
@@ -216,8 +264,23 @@ class ToolBroker:
             command_string=command_string,
             policy_action=policy_decision.action,
             policy_reason=self._approved_reason(policy_decision, approval_id),
-            payload=retry_payload,
+            payload=self._action_payload(
+                call,
+                command_string=command_string,
+                extra=retry_payload,
+            ),
         )
+        replayed_result = self._completed_result_from_action(call, action)
+        if replayed_result is not None:
+            self._record_call_event(
+                call,
+                "command_replayed",
+                action_id=action.action_id,
+                status=replayed_result.status,
+                reason="Skipped executor for completed approved action record",
+                idempotency_suffix=f"approval:{approval_id}:replayed",
+            )
+            return replayed_result
         self._record_call_event(
             call,
             "command_approved",
@@ -246,7 +309,11 @@ class ToolBroker:
         self.state_store.complete_action_record(
             action.action_id,
             result.status,
-            result=result.action_result(),
+            result=self._action_result_payload(
+                result,
+                policy_decision=policy_decision,
+                approval_id=approval_id,
+            ),
         )
         self._record_call_event(
             call,
@@ -267,6 +334,7 @@ class ToolBroker:
             raise ValueError("ToolCall task_id is required for broker audit")
 
         policy_decision, command_string = self._evaluate_policy(call)
+        policy_decision = self._effective_policy_decision(call, policy_decision)
         recorded_result = self._result_allowed_for_audit(call, result, policy_decision)
         action = self.state_store.record_action(
             task_id=call.task_id,
@@ -281,8 +349,11 @@ class ToolBroker:
                 if policy_decision.action in {"ask", "deny"}
                 else None
             ),
-            payload=call.action_payload(),
-            result=recorded_result.action_result(),
+            payload=self._action_payload(call, command_string=command_string),
+            result=self._action_result_payload(
+                recorded_result,
+                policy_decision=policy_decision,
+            ),
         )
         if recorded_result.status == "policy_denied":
             self._record_call_event(
@@ -340,6 +411,21 @@ class ToolBroker:
         if call.spec.risk_tier != "read":
             return "needs_approval"
         return None
+
+    def _effective_policy_decision(
+        self,
+        call: ToolCall,
+        policy_decision: PolicyDecision,
+    ) -> PolicyDecision:
+        if policy_decision.action == "deny":
+            return policy_decision
+        action_type = call.classified_action_type
+        if action_type in {"dangerous", "secret_sensitive"}:
+            return PolicyDecision(
+                "deny",
+                f"Denied by action classification: {action_type}",
+            )
+        return policy_decision
 
     def _blocked_reason(
         self,
@@ -437,6 +523,126 @@ class ToolBroker:
                 error=policy_decision.reason,
             )
         return result
+
+    def _completed_result_from_action(
+        self,
+        call: ToolCall,
+        action: StoredActionRecord,
+    ) -> ToolResult | None:
+        if action.status == "started":
+            return None
+        status = action.result.get("status")
+        if not isinstance(status, str):
+            status = action.status
+        if status not in TOOL_RESULT_STATUSES:
+            return None
+
+        output = action.result.get("output")
+        if isinstance(output, dict) and all(isinstance(key, str) for key in output):
+            result_output = cast(dict[str, object], output)
+        else:
+            result_output = action.result
+
+        error = action.result.get("error")
+        return ToolResult(
+            call=call,
+            status=cast(ToolResultStatus, status),
+            output=result_output,
+            error=error if isinstance(error, str) else None,
+        )
+
+    def _action_payload(
+        self,
+        call: ToolCall,
+        *,
+        command_string: str,
+        extra: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        payload = call.action_payload()
+        if extra is not None:
+            payload.update(extra)
+        payload["action_request"] = call.action_request(
+            command_string=command_string,
+        ).to_payload()
+        return payload
+
+    def _action_result_payload(
+        self,
+        result: ToolResult,
+        *,
+        policy_decision: PolicyDecision,
+        approval_id: int | None = None,
+    ) -> dict[str, object]:
+        payload = result.action_result()
+        payload["action_decision"] = ActionDecision(
+            action=self._typed_policy_action(policy_decision),
+            reason=policy_decision.reason or f"Policy decision: {policy_decision.action}",
+            approval_id=approval_id,
+            policy_name="PolicyEngine",
+        ).to_payload()
+        action_result = result.typed_action_result().to_payload()
+        output_preview = self._action_output_preview(result.output)
+        if output_preview:
+            action_result["output_preview"] = output_preview
+        payload["action_result"] = action_result
+        return payload
+
+    def _action_output_preview(self, output: dict[str, object]) -> dict[str, object]:
+        preview: dict[str, object] = {}
+        stdout = self._first_string_value(output, "stdout")
+        stderr = self._first_string_value(output, "stderr")
+        exit_code = self._first_int_value(output, "exit_code")
+        if stdout is not None:
+            preview["stdout"] = self._preview_text(stdout)
+        if stderr is not None:
+            preview["stderr"] = self._preview_text(stderr)
+        if exit_code is not None:
+            preview["exit_code"] = exit_code
+        return preview
+
+    def _first_string_value(
+        self,
+        output: dict[str, object],
+        key: str,
+    ) -> str | None:
+        value = output.get(key)
+        if isinstance(value, str):
+            return value
+        nested = output.get("tool_output")
+        if isinstance(nested, dict):
+            nested_value = nested.get(key)
+            if isinstance(nested_value, str):
+                return nested_value
+        return None
+
+    def _first_int_value(
+        self,
+        output: dict[str, object],
+        key: str,
+    ) -> int | None:
+        value = output.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        nested = output.get("tool_output")
+        if isinstance(nested, dict):
+            nested_value = nested.get(key)
+            if isinstance(nested_value, int) and not isinstance(nested_value, bool):
+                return nested_value
+        return None
+
+    def _preview_text(self, value: str, limit: int = 400) -> str:
+        redacted = redact_secrets(value) or ""
+        if len(redacted) <= limit:
+            return redacted
+        return f"{redacted[:limit]}..."
+
+    def _typed_policy_action(
+        self,
+        policy_decision: PolicyDecision,
+    ) -> ActionDecisionAction:
+        if policy_decision.action not in {"allow", "ask", "deny"}:
+            raise ValueError(f"Unsupported policy action: {policy_decision.action}")
+        return cast(ActionDecisionAction, policy_decision.action)
 
     def _record_call_event(
         self,

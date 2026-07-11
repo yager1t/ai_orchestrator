@@ -1172,6 +1172,52 @@ class StateStore:
             ).fetchall()
         return [_stored_action_record_from_row(row) for row in rows]
 
+    def list_stale_action_records(
+        self,
+        cutoff_at: str | None = None,
+    ) -> list[StoredActionRecord]:
+        self.initialize()
+        cutoff = cutoff_at or (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+        now = _now()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    action_id,
+                    task_id,
+                    iteration_id,
+                    idempotency_key,
+                    action_type,
+                    status,
+                    command_string,
+                    policy_action,
+                    policy_reason,
+                    payload_json,
+                    result_json,
+                    lease_owner,
+                    lease_expires_at,
+                    heartbeat_at,
+                    created_at,
+                    updated_at
+                FROM action_records
+                WHERE status = 'started'
+                  AND (
+                    (
+                      lease_owner IS NOT NULL
+                      AND lease_expires_at IS NOT NULL
+                      AND lease_expires_at <= ?
+                    )
+                    OR (
+                      (lease_owner IS NULL OR lease_expires_at IS NULL)
+                      AND updated_at <= ?
+                    )
+                  )
+                ORDER BY updated_at ASC, action_id ASC
+                """,
+                (now, cutoff),
+            ).fetchall()
+        return [_stored_action_record_from_row(row) for row in rows]
+
     def get_action_record(self, action_id: int) -> StoredActionRecord | None:
         self.initialize()
         with self._connect() as connection:

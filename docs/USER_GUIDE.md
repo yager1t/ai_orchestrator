@@ -376,6 +376,12 @@ ai-orch export <task-id> --repo .
 ai-orch export <task-id> --repo . --redact
 ```
 
+Trace exports keep the raw `action_records` for backward compatibility and add
+an `action_journal` view for v0.5. The journal normalizes each brokered action
+into requested action, category, risk tier, policy decision, approval reference,
+execution outcome, redacted output preview, provenance, lease state, and
+idempotency key.
+
 ## 6. Run Verification Directly
 
 ```bash
@@ -402,6 +408,11 @@ git diff --check
 
 Commands matching `policy.require_approval` create approval requests or require
 an exact command approval. Deny rules always win over approvals.
+
+Brokered actions are classified before execution as `read`, `write`, `shell`,
+`git`, `network`, `verification`, `dangerous`, or `secret_sensitive`.
+Dangerous and secret-sensitive classifications are denied before an executor is
+called, including approved retries.
 
 List approvals:
 
@@ -594,8 +605,9 @@ Apply recovery only with an operator reason:
 ai-orch recover --repo . --apply --reason "operator recovery after interrupted run"
 ```
 
-Recovery can block interrupted running tasks and fail expired action records so
-they do not look active forever.
+Recovery can block interrupted running tasks, fail expired action records, and
+fail stale `started` actions that have no active lease. This makes interrupted
+or replayed broker work visible instead of leaving silent in-progress state.
 
 Every supervisor-run task also writes durable lifecycle events and checkpoints
 to the local state store. Use the replay views after an interruption or policy
@@ -608,8 +620,8 @@ ai-orch export <task-id> --repo .
 ```
 
 Reports and trace exports include the final supervisor decision, event timeline,
-verification runs, approval/denial visibility, action records, and
-recovery/checkpoint details.
+verification runs, approval/denial visibility, typed action journal data,
+redacted command output previews, and recovery/checkpoint details.
 
 ## 14. Normal Operating Loop
 

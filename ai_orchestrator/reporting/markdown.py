@@ -308,13 +308,74 @@ def _render_action_record_lines(action_records: Sequence[StoredActionRecord]) ->
             lines.append(f"  - Lease expires: `{action.lease_expires_at}`")
         if action.heartbeat_at:
             lines.append(f"  - Heartbeat: `{action.heartbeat_at}`")
-        if action.payload:
+        if _has_action_envelope(action):
+            lines.extend(_render_action_envelope_lines(action))
+        elif action.payload:
             payload = json.dumps(action.payload, ensure_ascii=False, sort_keys=True)
             lines.append(f"  - Payload: `{redact_secrets(payload) or ''}`")
-        if action.result:
+        if action.result and not _has_action_envelope(action):
             result = json.dumps(action.result, ensure_ascii=False, sort_keys=True)
             lines.append(f"  - Result: `{redact_secrets(result) or ''}`")
     return lines
+
+
+def _has_action_envelope(action: StoredActionRecord) -> bool:
+    return isinstance(action.payload.get("action_request"), dict) or isinstance(
+        action.result.get("action_result"),
+        dict,
+    )
+
+
+def _render_action_envelope_lines(action: StoredActionRecord) -> list[str]:
+    request = _dict_value(action.payload, "action_request")
+    risk = _dict_value(request, "risk")
+    provenance = _dict_value(request, "provenance")
+    decision = _dict_value(action.result, "action_decision")
+    action_result = _dict_value(action.result, "action_result")
+    output_preview = _dict_value(action_result, "output_preview")
+    lines: list[str] = []
+
+    requested_action = request.get("name") or action.payload.get("tool_name")
+    if requested_action:
+        lines.append(f"  - Requested action: `{requested_action}`")
+    if risk:
+        lines.append(
+            (
+                f"  - Risk: category=`{risk.get('action_type', 'unknown')}` "
+                f"tier=`{risk.get('risk_tier', 'unknown')}` "
+                f"approval_required=`{risk.get('requires_approval', 'unknown')}`"
+            )
+        )
+    if decision:
+        approval = decision.get("approval_id")
+        approval_text = f" approval=`{approval}`" if approval is not None else ""
+        reason = redact_secrets(str(decision.get("reason", ""))) or ""
+        lines.append(
+            f"  - Decision: `{decision.get('action', 'unknown')}`{approval_text} reason={reason}"
+        )
+    if action_result:
+        summary = redact_secrets(str(action_result.get("summary", ""))) or ""
+        lines.append(
+            f"  - Outcome: `{action_result.get('status', action.status)}` summary={summary}"
+        )
+    if output_preview:
+        preview = json.dumps(output_preview, ensure_ascii=False, sort_keys=True)
+        lines.append(f"  - Output preview: `{redact_secrets(preview) or ''}`")
+    if provenance:
+        lines.append(
+            (
+                f"  - Provenance: source=`{provenance.get('source', 'unknown')}` "
+                f"actor=`{provenance.get('actor', 'unknown')}`"
+            )
+        )
+    return lines
+
+
+def _dict_value(payload: dict[str, object], key: str) -> dict[str, object]:
+    value = payload.get(key)
+    if isinstance(value, dict) and all(isinstance(item_key, str) for item_key in value):
+        return value
+    return {}
 
 
 def _render_replan_decision_lines(
