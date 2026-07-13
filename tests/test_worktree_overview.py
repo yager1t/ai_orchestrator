@@ -110,6 +110,7 @@ def test_inspect_worktree_cleanup_status_for_candidate(tmp_path: Path) -> None:
     overview = inspect_worktree(wt1, repo=repo)
     assert overview is not None
     assert overview.cleanup_status == "candidate"
+    assert overview.recovery_recommendation == "cleanup"
 
 
 def test_inspect_worktree_cleanup_status_for_needs_review(tmp_path: Path) -> None:
@@ -126,6 +127,7 @@ def test_inspect_worktree_cleanup_status_for_needs_review(tmp_path: Path) -> Non
     overview = inspect_worktree(wt2, repo=repo)
     assert overview is not None
     assert overview.cleanup_status == "needs_review"
+    assert overview.recovery_recommendation == "inspect_branch"
 
 
 def test_inspect_worktree_cleanup_status_for_do_not_remove(tmp_path: Path) -> None:
@@ -140,6 +142,7 @@ def test_inspect_worktree_cleanup_status_for_do_not_remove(tmp_path: Path) -> No
     overview = inspect_worktree(wt1, repo=repo)
     assert overview is not None
     assert overview.cleanup_status == "do_not_remove"
+    assert overview.recovery_recommendation == "inspect_resume_or_block"
 
 
 def test_inspect_worktree_cleanup_status_for_merge_in_progress(tmp_path: Path) -> None:
@@ -169,6 +172,7 @@ def test_inspect_worktree_cleanup_status_for_merge_in_progress(tmp_path: Path) -
     assert overview is not None
     assert overview.merge_in_progress is True
     assert overview.cleanup_status == "do_not_remove"
+    assert overview.recovery_recommendation == "inspect_resume_or_block"
 
 
 def test_gather_worktree_overviews_unlinked_repo_reports_linked_false(tmp_path: Path) -> None:
@@ -187,6 +191,7 @@ def test_gather_worktree_overviews_unlinked_repo_reports_linked_false(tmp_path: 
     overviews = gather_worktree_overviews(base, repo=repo)
     assert len(overviews) == 1
     assert overviews[0].linked is False
+    assert overviews[0].recovery_recommendation == "inspect_requeue_or_block"
 
 
 def test_format_worktree_overview_includes_cleanup_summary(tmp_path: Path) -> None:
@@ -203,6 +208,8 @@ def test_format_worktree_overview_includes_cleanup_summary(tmp_path: Path) -> No
 
     assert "Cleanup summary:" in output
     assert "candidate=1 needs_review=0 do_not_remove=1" in output
+    assert "cleanup" in output
+    assert "inspect_resume_or_block" in output
 
 
 def test_format_cleanup_summary_counts_by_status() -> None:
@@ -320,6 +327,31 @@ def test_cli_worktree_overview(capsys, tmp_path: Path) -> None:
     assert "Cleanup summary:" in output
 
 
+def test_cli_worktree_status_top_level_alias(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "worktree",
+        "status",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Worktree overview" in output
+    assert "wt-main" in output
+    assert "wt-feature" in output
+    assert "Cleanup summary:" in output
+
+
 def test_cli_worktree_overview_missing_base_dir(capsys, tmp_path: Path) -> None:
     exit_code = main([
         "autopilot",
@@ -333,6 +365,35 @@ def test_cli_worktree_overview_missing_base_dir(capsys, tmp_path: Path) -> None:
 
     assert exit_code == 1
     assert "Base directory does not exist" in output
+
+
+def test_cli_worktree_cleanup_is_dry_run_candidate_view(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _wt1, wt2 = _create_worktrees(repo, base)
+    (wt2 / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(wt2, "add", "feature.txt")
+    _git(wt2, "commit", "-m", "feature change")
+
+    exit_code = main([
+        "worktree",
+        "cleanup",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Worktree cleanup dry run: no worktrees will be removed." in output
+    assert "Showing cleanup candidates only." in output
+    assert "wt-main" in output
+    assert "wt-feature" not in output
+    assert "candidate" in output
 
 
 def test_cli_worktree_overview_dirty_only(capsys, tmp_path: Path) -> None:
@@ -1017,7 +1078,9 @@ def test_worktree_overview_data_reports_rows_and_counts() -> None:
     rows = data["worktrees"]
     assert isinstance(rows, list)
     assert rows[0]["cleanup_status"] == "candidate"
+    assert rows[0]["recovery_recommendation"] == "inspect"
     assert rows[1]["dirty_count"] == 2
+    assert rows[1]["recovery_recommendation"] == "inspect"
 
 
 def test_cli_worktree_overview_json_reports_limited_rows_and_counts(
@@ -1057,6 +1120,42 @@ def test_cli_worktree_overview_json_reports_limited_rows_and_counts(
         "needs_review",
         "do_not_remove",
     }
+    assert result["worktrees"][0]["recovery_recommendation"] in {
+        "cleanup",
+        "inspect_resume_or_block",
+        "inspect_requeue_or_block",
+        "inspect_branch",
+        "inspect",
+    }
+
+
+def test_cli_worktree_inspect_json_top_level(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    base = tmp_path / "worktrees"
+    _create_worktrees(repo, base)
+
+    exit_code = main([
+        "worktree",
+        "inspect",
+        "--repo",
+        str(repo),
+        "--base-dir",
+        str(base),
+        "--limit",
+        "1",
+        "--json",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    result = json.loads(output)
+    assert result["base_dir"] == str(base.resolve())
+    assert result["repo"] == str(repo.resolve())
+    assert result["summary"]["total"] == 2
+    assert result["summary"]["shown"] == 1
 
 
 def test_cli_worktree_overview_json_reports_empty_filtered_result(

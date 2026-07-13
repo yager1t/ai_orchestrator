@@ -448,9 +448,6 @@ class StateStore:
                 CREATE INDEX IF NOT EXISTS idx_plan_items_status_id
                 ON plan_items (status, plan_item_id);
 
-                CREATE INDEX IF NOT EXISTS idx_plan_items_plan_graph
-                ON plan_items (plan_graph_id, plan_graph_root_node_id, plan_item_id);
-
                 CREATE TABLE IF NOT EXISTS task_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id TEXT NOT NULL,
@@ -589,9 +586,6 @@ class StateStore:
                 CREATE INDEX IF NOT EXISTS idx_replan_decisions_task_iteration
                 ON replan_decisions (task_id, iteration_id, replan_id);
 
-                CREATE INDEX IF NOT EXISTS idx_replan_decisions_plan_graph
-                ON replan_decisions (plan_graph_id, plan_graph_node_id, replan_id);
-
                 CREATE TABLE IF NOT EXISTS memory_lessons (
                     lesson_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_task_id TEXT NOT NULL,
@@ -687,6 +681,7 @@ class StateStore:
                 """
             )
             migrate_schema(connection)
+            _ensure_current_indexes(connection)
         logger.debug("state store initialized schema_version=%s", SCHEMA_VERSION)
 
     def schema_version(self) -> int:
@@ -3965,6 +3960,21 @@ class StateStore:
 def _validate_plan_item_status(status: str) -> None:
     if status not in {"created", "in_progress", "done", "blocked", "skipped"}:
         raise ValueError(f"Unsupported plan item status: {status}")
+
+
+def _ensure_current_indexes(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_plan_items_plan_graph
+        ON plan_items (plan_graph_id, plan_graph_root_node_id, plan_item_id);
+
+        CREATE INDEX IF NOT EXISTS idx_replan_decisions_plan_graph
+        ON replan_decisions (plan_graph_id, plan_graph_node_id, replan_id);
+
+        CREATE INDEX IF NOT EXISTS idx_plan_graph_nodes_links
+        ON plan_graph_nodes (task_id, plan_item_id, source_node_id);
+        """
+    )
 
 
 def _validate_autopilot_loop_mode(mode: str) -> None:

@@ -19,6 +19,21 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class SandboxConfig:
+    writable_paths: list[str] = field(default_factory=list)
+    forbidden_paths: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    provider: str = ""
+    command: list[str] = field(default_factory=lambda: ["codebase-memory-mcp", "cli"])
+    project: str = ""
+    timeout_sec: int = 120
+    max_lessons: int = 5
+
+
+@dataclass(frozen=True)
 class ProjectConfig:
     verification_commands: list[VerificationCommand] = field(default_factory=list)
     verification_strict: bool = False
@@ -31,16 +46,8 @@ class ProjectConfig:
     agents: dict[str, AgentConfig] = field(default_factory=dict)
     policy_deny_patterns: list[str] = field(default_factory=list)
     policy_ask_patterns: list[str] = field(default_factory=list)
-    memory: MemoryConfig = field(default_factory=lambda: MemoryConfig())
-
-
-@dataclass(frozen=True)
-class MemoryConfig:
-    provider: str = ""
-    command: list[str] = field(default_factory=lambda: ["codebase-memory-mcp", "cli"])
-    project: str = ""
-    timeout_sec: int = 120
-    max_lessons: int = 5
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
 
 
 def find_project_config(start: Path | None = None) -> Path | None:
@@ -77,6 +84,7 @@ def load_project_config(start: Path | None = None) -> ProjectConfig:
         policy_deny_patterns=parsed.policy_deny_patterns,
         policy_ask_patterns=parsed.policy_ask_patterns,
         memory=parsed.memory,
+        sandbox=parsed.sandbox,
     )
 
 
@@ -116,6 +124,8 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
     verification_strict = False
     policy_deny_patterns: list[str] = []
     policy_ask_patterns: list[str] = []
+    sandbox_writable_paths: list[str] = []
+    sandbox_forbidden_paths: list[str] = []
     memory_provider = ""
     memory_command: list[str] = []
     memory_project = ""
@@ -128,6 +138,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
     in_verification_commands = False
     in_fallback_agents = False
     policy_list: str | None = None
+    sandbox_list: str | None = None
 
     for raw_line in content.splitlines():
         if not raw_line.strip() or raw_line.lstrip().startswith("#"):
@@ -154,6 +165,7 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
             in_verification_argv = False
             in_fallback_agents = False
             policy_list = None
+            sandbox_list = None
             in_agent_args = False
             in_profile_args = False
             in_agent_env = False
@@ -331,6 +343,18 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
                 policy_ask_patterns.append(value)
             continue
 
+        if section == "sandbox" and stripped in {"writable_paths:", "forbidden_paths:"}:
+            sandbox_list = stripped[:-1]
+            continue
+
+        if section == "sandbox" and sandbox_list is not None and stripped.startswith("- "):
+            value = _strip_quotes(stripped[2:].strip())
+            if sandbox_list == "writable_paths":
+                sandbox_writable_paths.append(value)
+            if sandbox_list == "forbidden_paths":
+                sandbox_forbidden_paths.append(value)
+            continue
+
         if section == "memory" and stripped.startswith("provider:"):
             in_memory_command = False
             memory_provider = _value_after_colon(stripped)
@@ -416,6 +440,10 @@ def _parse_minimal_config(content: str) -> ProjectConfig:
             project=memory_project,
             timeout_sec=memory_timeout_sec,
             max_lessons=memory_max_lessons,
+        ),
+        sandbox=SandboxConfig(
+            writable_paths=sandbox_writable_paths,
+            forbidden_paths=sandbox_forbidden_paths,
         ),
     )
 

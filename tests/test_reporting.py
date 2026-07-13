@@ -233,6 +233,37 @@ def test_render_task_report_includes_selected_queue_worktree_path(
     assert f"- Queue worktree: `{worktree}`" in report
 
 
+def test_render_task_report_includes_worktree_execution_profile(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state.db")
+    task = store.create_task("demo worktree profile", repo_path=tmp_path)
+    worktree = tmp_path / "worktrees" / "task-1"
+    store.append_task_event(
+        task.task_id,
+        "worktree.execution_profile",
+        {
+            "profile": {
+                "task_id": task.task_id,
+                "worktree_path": str(worktree),
+                "branch": "codex/demo",
+                "base_ref": "main",
+                "dirty": False,
+                "cleanup_eligible": True,
+            }
+        },
+    )
+
+    report = render_task_report(store, task.task_id)
+
+    assert report is not None
+    assert f"- Worktree execution: `{worktree}`" in report
+    assert (
+        "- Worktree profile: branch=`codex/demo` base_ref=`main` "
+        "dirty=`False` cleanup_eligible=`True`"
+    ) in report
+
+
 def test_render_task_report_includes_failed_verification_excerpt(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo failure", repo_path=tmp_path)

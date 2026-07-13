@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- Added the first v0.7 policy-level sandbox/path-scope foundation for local file
+  tools, including default secret-like path denial and configurable writable
+  scopes.
+
+- Added `.ai-orch/config.yaml` sandbox scope parsing for file-tool retries via
+  `sandbox.writable_paths` and `sandbox.forbidden_paths`.
+
+- Added durable `sandbox.decision` task events for denied file-tool sandbox
+  outcomes, including the action id and sandbox profile payload.
+
+- Added read-only worktree recovery recommendations to worktree overview JSON
+  and table output.
+
+- Added `recover` detection for stale running worktree-backed tasks, with
+  durable `worktree.recovery_recommendation` events when recovery is applied.
+
+- Added queue item and PlanGraph node context to stale worktree recovery
+  candidates, including operator recommendations for inspect/resume/requeue/block
+  or cleanup review.
+
+- Added advisory recovery action plans for stale worktree candidates, including
+  dry-run inspect/cleanup commands and explicit apply-gated resume/requeue/block
+  commands.
+
+- Added `recover --apply-recommendation requeue` to dry-run or explicitly apply
+  a safe stale-worktree queue requeue recommendation.
+
+- Added worktree execution profile task events for autopilot worktree runs and
+  surfaced the captured worktree provenance in Markdown reports.
+
+- Added top-level read-only `worktree status`, `worktree inspect`, and
+  dry-run `worktree cleanup` commands for v0.7 worktree inspection.
+
 ## 0.6.0 — PlanGraph v1
 
 - Added v0.6 PlanGraph node metadata for task text, acceptance criteria,

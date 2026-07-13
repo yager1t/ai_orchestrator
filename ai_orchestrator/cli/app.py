@@ -6,7 +6,7 @@ import logging
 import shutil
 import sys
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -32,6 +32,7 @@ from ai_orchestrator.autopilot.worktree_overview import (
     format_worktree_overview,
     format_worktree_summary,
     gather_worktree_overviews,
+    inspect_worktree,
     worktree_overview_data,
 )
 from ai_orchestrator.config.loader import AgentConfig, ProjectConfig, load_project_config
@@ -44,6 +45,11 @@ from ai_orchestrator.evaluation import (
 )
 from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
 from ai_orchestrator.policy.engine import PolicyEngine
+from ai_orchestrator.policy.sandbox import (
+    DEFAULT_FORBIDDEN_PATH_MARKERS,
+    SandboxProfile,
+    WorktreeExecutionProfile,
+)
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.reporting.markdown import render_task_report
 from ai_orchestrator.storage.db import (
@@ -114,6 +120,28 @@ _AGENT_DEFAULT_COMMANDS = {
     "generic": "(configured)",
     "mock": "(internal)",
 }
+
+
+@dataclass(frozen=True)
+class WorktreeRecoveryCandidate:
+    task_id: str
+    task: str
+    status: str
+    updated_at: str
+    stale_minutes: int
+    worktree_path: str
+    branch: str | None
+    dirty: bool | None
+    cleanup_eligible: bool
+    recommendation: str
+    operator_recommendation: str
+    queue_item: dict[str, object] | None
+    plan_graph_node: dict[str, object] | None
+    action_plan: dict[str, object]
+    profile: dict[str, object]
+
+    def to_payload(self) -> dict[str, object]:
+        return asdict(self)
 _AGENT_DEFAULT_TYPES = {
     "codex": "codex_exec",
     "claude": "claude_headless",
@@ -219,6 +247,27 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--repo", default=".")
     doctor.add_argument("--json", action="store_true", help="Print machine-readable output")
 
+    worktree = sub.add_parser(
+        "worktree",
+        help="Inspect worktree and sandbox status without making changes",
+    )
+    worktree_sub = worktree.add_subparsers(dest="worktree_command")
+    worktree_status = worktree_sub.add_parser(
+        "status",
+        help="Show read-only worktree status under a base directory",
+    )
+    _add_worktree_status_arguments(worktree_status)
+    worktree_inspect = worktree_sub.add_parser(
+        "inspect",
+        help="Inspect worktrees with optional filters and JSON output",
+    )
+    _add_worktree_status_arguments(worktree_inspect)
+    worktree_cleanup = worktree_sub.add_parser(
+        "cleanup",
+        help="Show cleanup candidates without removing worktrees",
+    )
+    _add_worktree_cleanup_arguments(worktree_cleanup)
+
     start = sub.add_parser("start", help="Start a task with the mock agent")
     start.add_argument("--task", required=True)
     start.add_argument("--repo", default=".")
@@ -314,6 +363,28 @@ def build_parser() -> argparse.ArgumentParser:
     recover.add_argument(
         "--reason",
         help="Required with --apply; persisted in recovery events and action results",
+    )
+    recover.add_argument(
+        "--apply-recommendation",
+        choices=("requeue",),
+        help=(
+            "Dry-run or apply one stale worktree recovery recommendation. "
+            "Currently supports requeue only; combine with --task-id and --apply to mutate state."
+        ),
+    )
+    recover.add_argument(
+        "--task-id",
+        help="Task id for --apply-recommendation",
+    )
+    recover.add_argument(
+        "--worktree-stale-minutes",
+        type=int,
+        default=60,
+        metavar="N",
+        help=(
+            "Report running worktree-backed tasks not updated for at least N minutes "
+            "(default: 60)"
+        ),
     )
     recover.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
@@ -1359,6 +1430,89 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_worktree_status_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--repo", default=".")
+    parser.add_argument(
+        "--base-dir",
+        required=True,
+        help="Directory containing candidate git worktrees to inspect",
+    )
+    parser.add_argument(
+        "--dirty-only",
+        action="store_true",
+        help="Show only worktrees with uncommitted or untracked changes",
+    )
+    parser.add_argument(
+        "--branch-filter",
+        metavar="TEXT",
+        help="Show only worktrees whose branch name contains TEXT",
+    )
+    parser.add_argument(
+        "--unlinked-only",
+        action="store_true",
+        help="Show only worktrees not linked to the review repo",
+    )
+    parser.add_argument(
+        "--merged-only",
+        action="store_true",
+        help="Show only worktrees whose branch is merged into the review repo HEAD",
+    )
+    parser.add_argument(
+        "--cleanup-status",
+        dest="cleanup_status",
+        metavar="STATUS",
+        choices=CLEANUP_STATUSES,
+        help="Show only worktrees with the given cleanup status",
+    )
+    parser.add_argument(
+        "--older-than-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Show only worktrees last modified at least N days ago",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Show at most the first N filtered rows; 0 means all rows (default: 0)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the read-only worktree status as machine-readable JSON",
+    )
+
+
+def _add_worktree_cleanup_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--repo", default=".")
+    parser.add_argument(
+        "--base-dir",
+        required=True,
+        help="Directory containing candidate git worktrees to inspect",
+    )
+    parser.add_argument(
+        "--older-than-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Show only cleanup candidates last modified at least N days ago",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Show at most the first N cleanup candidates; 0 means all rows (default: 0)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit cleanup candidates as machine-readable JSON",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1377,6 +1531,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return _run_doctor_command(args)
+
+    if args.command == "worktree":
+        return _run_worktree_command(args, parser)
 
     if args.command == "demo":
         return _run_demo_command(args)
@@ -1852,6 +2009,11 @@ def _unsafe_action_count(action_records: list[dict[str, object]]) -> int:
 
 def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
     running_tasks = [task for task in store.list_tasks() if task.status == "running"]
+    worktree_recovery_candidates = _worktree_recovery_candidates(
+        store,
+        running_tasks,
+        stale_minutes=max(0, args.worktree_stale_minutes),
+    )
     expired_actions = store.list_expired_action_leases()
     stale_started_actions = [
         action
@@ -1860,13 +2022,37 @@ def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
     ]
     recover_actions = [*expired_actions, *stale_started_actions]
 
+    if args.apply_recommendation is not None:
+        return _run_recover_apply_recommendation(
+            args,
+            store,
+            worktree_recovery_candidates,
+        )
+
     if args.apply and not args.reason:
         print("--reason is required when --apply is set")
         return 1
 
     blocked_tasks = 0
     failed_actions = 0
+    marked_worktree_recoveries = 0
     if args.apply:
+        for candidate in worktree_recovery_candidates:
+            store.append_task_event(
+                candidate.task_id,
+                "worktree.recovery_recommendation",
+                {
+                    **candidate.to_payload(),
+                    "reason": args.reason,
+                    "previous_status": candidate.status,
+                },
+                actor="supervisor",
+                summary=f"Worktree recovery recommendation: {candidate.recommendation}",
+                idempotency_key=(
+                    f"worktree-recovery:{candidate.task_id}:{candidate.updated_at}"
+                ),
+            )
+            marked_worktree_recoveries += 1
         for task in running_tasks:
             store.update_task_status(task.task_id, "blocked")
             store.append_task_event(
@@ -1917,25 +2103,57 @@ def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
             reason=args.reason if args.apply else None,
             blocked_tasks=blocked_tasks,
             failed_actions=failed_actions,
+            worktree_recovery_candidates=worktree_recovery_candidates,
+            marked_worktree_recoveries=marked_worktree_recoveries,
         )
         return 0
 
     print("Recovery")
     print(f"  running_tasks: {len(running_tasks)}")
+    print(f"  worktree_recovery_candidates: {len(worktree_recovery_candidates)}")
     print(f"  expired_action_leases: {len(expired_actions)}")
     print(f"  stale_started_actions: {len(stale_started_actions)}")
     if args.apply:
         print(f"  blocked_tasks: {blocked_tasks}")
         print(f"  failed_actions: {failed_actions}")
+        print(f"  marked_worktree_recoveries: {marked_worktree_recoveries}")
         print(f"  reason: {args.reason}")
     else:
         print("  dry_run: use --apply --reason '...' to recover")
-    if not running_tasks and not recover_actions:
+    if not running_tasks and not recover_actions and not worktree_recovery_candidates:
         print("  No interrupted runs or stale action records found.")
         return 0
 
     for task in running_tasks:
         print(f"  [running_task] {task.task_id}: {task.task}")
+    for candidate in worktree_recovery_candidates:
+        queue_item_id = (
+            candidate.queue_item.get("plan_item_id")
+            if candidate.queue_item is not None
+            else None
+        )
+        node_id = (
+            candidate.plan_graph_node.get("node_id")
+            if candidate.plan_graph_node is not None
+            else None
+        )
+        commands = candidate.action_plan.get("commands")
+        next_action = "-"
+        if isinstance(commands, list) and commands:
+            first_command = commands[0]
+            if isinstance(first_command, dict):
+                name = first_command.get("name")
+                if isinstance(name, str):
+                    next_action = name
+        print(
+            (
+                f"  [worktree_recovery] {candidate.task_id}: "
+                f"{candidate.recommendation} operator={candidate.operator_recommendation} "
+                f"queue_item={queue_item_id or '-'} node={node_id or '-'} "
+                f"next={next_action} "
+                f"worktree={candidate.worktree_path} updated={candidate.updated_at}"
+            )
+        )
     for action in expired_actions:
         owner = action.lease_owner or "none"
         expires = action.lease_expires_at or "none"
@@ -1957,6 +2175,430 @@ def _run_recover(args: argparse.Namespace, store: StateStore) -> int:
     return 0
 
 
+def _run_recover_apply_recommendation(
+    args: argparse.Namespace,
+    store: StateStore,
+    candidates: list[WorktreeRecoveryCandidate],
+) -> int:
+    if not args.task_id:
+        print("--task-id is required with --apply-recommendation")
+        return 1
+    if args.apply and not args.reason:
+        print("--reason is required when --apply is set")
+        return 1
+
+    candidate = next(
+        (item for item in candidates if item.task_id == args.task_id),
+        None,
+    )
+    if candidate is None:
+        print(f"No stale worktree recovery candidate found for task: {args.task_id}")
+        return 1
+    if candidate.operator_recommendation != args.apply_recommendation:
+        print(
+            "Recovery recommendation mismatch: "
+            f"candidate recommends {candidate.operator_recommendation}, "
+            f"requested {args.apply_recommendation}"
+        )
+        return 1
+
+    if args.apply_recommendation == "requeue":
+        return _run_recover_apply_requeue(args, store, candidate)
+
+    print(f"Unsupported recovery recommendation: {args.apply_recommendation}")
+    return 1
+
+
+def _run_recover_apply_requeue(
+    args: argparse.Namespace,
+    store: StateStore,
+    candidate: WorktreeRecoveryCandidate,
+) -> int:
+    queue_item = candidate.queue_item
+    if queue_item is None:
+        print(f"Recovery candidate has no queue item: {candidate.task_id}")
+        return 1
+    plan_item_id = queue_item.get("plan_item_id")
+    if not isinstance(plan_item_id, int):
+        print(f"Recovery candidate queue item is invalid: {candidate.task_id}")
+        return 1
+
+    if not args.apply:
+        if args.json:
+            payload = {
+                "apply": False,
+                "dry_run": True,
+                "recommendation": "requeue",
+                "task_id": candidate.task_id,
+                "plan_item_id": plan_item_id,
+                "candidate": candidate.to_payload(),
+            }
+            print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+            return 0
+        print("Recovery recommendation dry run")
+        print("  recommendation: requeue")
+        print(f"  task_id: {candidate.task_id}")
+        print(f"  plan_item_id: {plan_item_id}")
+        print("  dry_run: add --apply --reason '...' to requeue this item")
+        return 0
+
+    updated = store.requeue_plan_item(plan_item_id)
+    if updated is None:
+        print(f"Unable to requeue blocked queue item: {plan_item_id}")
+        return 1
+    store.update_task_status(candidate.task_id, "blocked")
+    store.append_task_event(
+        candidate.task_id,
+        "worktree.recovery_applied",
+        {
+            "recommendation": "requeue",
+            "task_id": candidate.task_id,
+            "plan_item_id": plan_item_id,
+            "reason": args.reason,
+            "candidate": candidate.to_payload(),
+            "queue_item": asdict(updated),
+        },
+        actor="supervisor",
+        summary="Applied worktree recovery recommendation: requeue",
+        idempotency_key=f"worktree-recovery-apply:requeue:{candidate.task_id}",
+    )
+    if args.json:
+        payload = {
+            "apply": True,
+            "dry_run": False,
+            "recommendation": "requeue",
+            "task_id": candidate.task_id,
+            "plan_item_id": plan_item_id,
+            "queue_item": asdict(updated),
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        return 0
+    print("Recovery recommendation applied")
+    print("  recommendation: requeue")
+    print(f"  task_id: {candidate.task_id}")
+    print(f"  plan_item_id: {plan_item_id}")
+    print(f"  queue_status: {updated.status}")
+    print(f"  reason: {args.reason}")
+    return 0
+
+
+def _worktree_recovery_candidates(
+    store: StateStore,
+    running_tasks: list[StoredTask],
+    *,
+    stale_minutes: int,
+    now: datetime | None = None,
+) -> list[WorktreeRecoveryCandidate]:
+    current_time = now or datetime.now(UTC)
+    cutoff = current_time - timedelta(minutes=stale_minutes)
+    candidates: list[WorktreeRecoveryCandidate] = []
+    for task in running_tasks:
+        updated_at = _parse_iso_datetime(task.updated_at)
+        if updated_at is None or updated_at > cutoff:
+            continue
+        profile = _latest_worktree_execution_profile(store, task.task_id)
+        if profile is None:
+            continue
+        worktree_path = profile.get("worktree_path")
+        if not isinstance(worktree_path, str) or not worktree_path:
+            continue
+        queue_item, plan_graph_node = _worktree_recovery_context(store, task.task_id)
+        operator_recommendation = _operator_recovery_recommendation(
+            profile,
+            queue_item=queue_item,
+            plan_graph_node=plan_graph_node,
+        )
+        candidates.append(
+            WorktreeRecoveryCandidate(
+                task_id=task.task_id,
+                task=task.task,
+                status=task.status,
+                updated_at=task.updated_at,
+                stale_minutes=stale_minutes,
+                worktree_path=worktree_path,
+                branch=_optional_str(profile.get("branch")),
+                dirty=_optional_bool(profile.get("dirty")),
+                cleanup_eligible=profile.get("cleanup_eligible") is True,
+                recommendation=_worktree_recovery_recommendation(profile),
+                operator_recommendation=operator_recommendation,
+                queue_item=_plan_item_payload(queue_item),
+                plan_graph_node=_plan_graph_node_payload(plan_graph_node),
+                action_plan=_worktree_recovery_action_plan(
+                    task=task,
+                    worktree_path=worktree_path,
+                    branch=_optional_str(profile.get("branch")),
+                    operator_recommendation=operator_recommendation,
+                    queue_item=queue_item,
+                ),
+                profile=profile,
+            )
+        )
+    return candidates
+
+
+def _worktree_recovery_context(
+    store: StateStore,
+    task_id: str,
+) -> tuple[StoredPlanItem | None, StoredPlanGraphNode | None]:
+    queue_item = next(
+        (item for item in store.list_plan_items() if item.task_id == task_id),
+        None,
+    )
+    if queue_item is None:
+        return None, None
+
+    plan_graph_node: StoredPlanGraphNode | None = None
+    if queue_item.plan_graph_root_node_id is not None:
+        plan_graph_node = store.get_plan_graph_node(queue_item.plan_graph_root_node_id)
+    if plan_graph_node is None and queue_item.plan_graph_id is not None:
+        plan_graph_node = next(
+            (
+                node
+                for node in store.list_plan_graph_nodes(queue_item.plan_graph_id)
+                if node.plan_item_id == queue_item.plan_item_id
+                or node.task_id == task_id
+            ),
+            None,
+        )
+    return queue_item, plan_graph_node
+
+
+def _latest_worktree_execution_profile(
+    store: StateStore,
+    task_id: str,
+) -> dict[str, object] | None:
+    for event in reversed(store.list_task_events(task_id)):
+        if event.event_type != "worktree.execution_profile":
+            continue
+        profile = event.payload.get("profile")
+        if isinstance(profile, dict) and all(isinstance(key, str) for key in profile):
+            return cast(dict[str, object], profile)
+    return None
+
+
+def _worktree_recovery_recommendation(profile: dict[str, object]) -> str:
+    if profile.get("dirty") is True:
+        return "inspect_resume_or_block"
+    if profile.get("cleanup_eligible") is True:
+        return "cleanup"
+    branch = profile.get("branch")
+    if not isinstance(branch, str) or not branch.strip():
+        return "inspect_requeue_or_block"
+    return "inspect_branch"
+
+
+def _operator_recovery_recommendation(
+    profile: dict[str, object],
+    *,
+    queue_item: StoredPlanItem | None,
+    plan_graph_node: StoredPlanGraphNode | None,
+) -> str:
+    if profile.get("cleanup_eligible") is True:
+        return "cleanup_candidate"
+    if profile.get("dirty") is True:
+        return "inspect"
+    if queue_item is None and plan_graph_node is None:
+        return "block"
+    if queue_item is not None and queue_item.status == "blocked":
+        return "requeue"
+    if plan_graph_node is not None and plan_graph_node.status == "blocked":
+        return "requeue"
+    if queue_item is not None and queue_item.status == "in_progress":
+        return "resume"
+    if plan_graph_node is not None and plan_graph_node.status == "in_progress":
+        return "resume"
+    return "inspect"
+
+
+def _worktree_recovery_action_plan(
+    *,
+    task: StoredTask,
+    worktree_path: str,
+    branch: str | None,
+    operator_recommendation: str,
+    queue_item: StoredPlanItem | None,
+) -> dict[str, object]:
+    repo = task.repo_path
+    base_dir = str(Path(worktree_path).parent)
+    inspect_worktree_command = [
+        "python",
+        "-m",
+        "ai_orchestrator.cli.app",
+        "worktree",
+        "inspect",
+        "--repo",
+        repo,
+        "--base-dir",
+        base_dir,
+    ]
+    if branch:
+        inspect_worktree_command.extend(["--branch-filter", branch])
+    timeline_command = [
+        "python",
+        "-m",
+        "ai_orchestrator.cli.app",
+        "timeline",
+        task.task_id,
+        "--repo",
+        repo,
+    ]
+
+    commands: list[dict[str, object]] = [
+        {
+            "name": "inspect_task_timeline",
+            "argv": timeline_command,
+            "mutates_state": False,
+            "requires_explicit_apply": False,
+        },
+        {
+            "name": "inspect_worktree",
+            "argv": inspect_worktree_command,
+            "mutates_state": False,
+            "requires_explicit_apply": False,
+        },
+    ]
+
+    if operator_recommendation == "resume":
+        commands.append(
+            {
+                "name": "resume_task",
+                "argv": [
+                    "python",
+                    "-m",
+                    "ai_orchestrator.cli.app",
+                    "resume",
+                    task.task_id,
+                    "--repo",
+                    repo,
+                ],
+                "mutates_state": True,
+                "requires_explicit_apply": True,
+            }
+        )
+    elif operator_recommendation == "requeue" and queue_item is not None:
+        dry_run = [
+            "python",
+            "-m",
+            "ai_orchestrator.cli.app",
+            "autopilot",
+            "queue",
+            "requeue",
+            str(queue_item.plan_item_id),
+            "--repo",
+            repo,
+        ]
+        commands.append(
+            {
+                "name": "requeue_item_dry_run",
+                "argv": dry_run,
+                "mutates_state": False,
+                "requires_explicit_apply": False,
+            }
+        )
+        commands.append(
+            {
+                "name": "requeue_item_apply",
+                "argv": [*dry_run, "--apply"],
+                "mutates_state": True,
+                "requires_explicit_apply": True,
+            }
+        )
+    elif operator_recommendation == "block":
+        commands.append(
+            {
+                "name": "block_task_manual_review",
+                "argv": [],
+                "mutates_state": True,
+                "requires_explicit_apply": True,
+                "available": False,
+                "note": (
+                    "Task-specific block apply is not implemented yet; "
+                    "inspect the task and block manually instead of running "
+                    "generic recover --apply for all running tasks."
+                ),
+            }
+        )
+    elif operator_recommendation == "cleanup_candidate":
+        commands.append(
+            {
+                "name": "cleanup_candidates_dry_run",
+                "argv": [
+                    "python",
+                    "-m",
+                    "ai_orchestrator.cli.app",
+                    "worktree",
+                    "cleanup",
+                    "--repo",
+                    repo,
+                    "--base-dir",
+                    base_dir,
+                ],
+                "mutates_state": False,
+                "requires_explicit_apply": False,
+            }
+        )
+
+    return {
+        "operator_recommendation": operator_recommendation,
+        "commands": commands,
+        "note": "Commands are advisory; recover does not execute them automatically.",
+    }
+
+
+def _plan_item_payload(item: StoredPlanItem | None) -> dict[str, object] | None:
+    if item is None:
+        return None
+    return {
+        "plan_item_id": item.plan_item_id,
+        "plan_path": item.plan_path,
+        "line_number": item.line_number,
+        "section": item.section,
+        "text": item.text,
+        "status": item.status,
+        "task_id": item.task_id,
+        "selected_worktree_path": item.selected_worktree_path,
+        "blocked_reason": item.blocked_reason,
+        "plan_graph_id": item.plan_graph_id,
+        "plan_graph_root_node_id": item.plan_graph_root_node_id,
+    }
+
+
+def _plan_graph_node_payload(
+    node: StoredPlanGraphNode | None,
+) -> dict[str, object] | None:
+    if node is None:
+        return None
+    return {
+        "node_id": node.node_id,
+        "graph_id": node.graph_id,
+        "node_key": node.node_key,
+        "title": node.title,
+        "status": node.status,
+        "task_id": node.task_id,
+        "plan_item_id": node.plan_item_id,
+        "attempts": node.attempts,
+        "blocked_reason": node.blocked_reason,
+    }
+
+
+def _parse_iso_datetime(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _optional_bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 def _print_recover_json(
     *,
     running_tasks: list[StoredTask],
@@ -1966,6 +2608,8 @@ def _print_recover_json(
     reason: str | None,
     blocked_tasks: int,
     failed_actions: int,
+    worktree_recovery_candidates: list[WorktreeRecoveryCandidate],
+    marked_worktree_recoveries: int,
 ) -> None:
     payload = {
         "apply": apply,
@@ -1983,9 +2627,16 @@ def _print_recover_json(
             "count": len(stale_started_actions),
             "items": [asdict(action) for action in stale_started_actions],
         },
+        "worktree_recovery_candidates": {
+            "count": len(worktree_recovery_candidates),
+            "items": [
+                candidate.to_payload() for candidate in worktree_recovery_candidates
+            ],
+        },
         "recovered": {
             "blocked_tasks": blocked_tasks,
             "failed_actions": failed_actions,
+            "marked_worktree_recoveries": marked_worktree_recoveries,
         },
     }
     print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
@@ -3477,10 +4128,11 @@ def _tool_executor_registry(
     config: ProjectConfig | None = None,
     approved_call: ToolCall | None = None,
 ) -> ToolExecutorRegistry:
+    fs_executor = file_tool_executor(repo, sandbox_profile=_sandbox_profile(repo, config))
     registry = (
         ToolExecutorRegistry()
         .register_prefix("process.", process_tool_executor(repo))
-        .register_prefix("fs.", file_tool_executor(repo))
+        .register_prefix("fs.", fs_executor)
     )
     if config is None:
         return registry
@@ -3494,6 +4146,19 @@ def _tool_executor_registry(
     memory_client = _memory_client(config, approved_commands=approved_commands)
     return (
         registry.register_prefix("memory.", memory_tool_executor(memory_client, cwd=repo))
+    )
+
+
+def _sandbox_profile(repo: Path, config: ProjectConfig | None) -> SandboxProfile | None:
+    if config is None:
+        return None
+    forbidden_markers = tuple(
+        dict.fromkeys((*DEFAULT_FORBIDDEN_PATH_MARKERS, *config.sandbox.forbidden_paths))
+    )
+    return SandboxProfile(
+        root=repo,
+        writable_paths=tuple(Path(path) for path in config.sandbox.writable_paths),
+        forbidden_path_markers=forbidden_markers,
     )
 
 
@@ -3734,6 +4399,29 @@ def _run_autopilot_worktree_overview(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_worktree_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.worktree_command is None:
+        parser.print_help()
+        return 1
+
+    if args.worktree_command in {"status", "inspect"}:
+        return _run_autopilot_worktree_overview(args)
+
+    if args.worktree_command == "cleanup":
+        args.cleanup_status = "candidate"
+        args.dirty_only = False
+        args.branch_filter = None
+        args.unlinked_only = False
+        args.merged_only = False
+        if not args.json:
+            print("Worktree cleanup dry run: no worktrees will be removed.")
+            print("Showing cleanup candidates only.")
+        return _run_autopilot_worktree_overview(args)
+
+    parser.print_help()
+    return 1
+
+
 def _run_autopilot_loop_history(
     args: argparse.Namespace,
     plan_path: Path,
@@ -3848,9 +4536,67 @@ def _run_autopilot_task(
         memory_lesson_limit=config.memory.max_lessons,
     )
     result = supervisor.run_once(task=task.to_prompt(), repo=execution_repo)
+    if result.task_id is not None and args.worktree:
+        _record_worktree_execution_profile(
+            store=store,
+            task_id=result.task_id,
+            repo=repo,
+            execution_repo=execution_repo,
+        )
     task_prefix = f"{result.task_id}: " if result.task_id else ""
     print(f"{task_prefix}{result.summary}")
     return result
+
+
+def _record_worktree_execution_profile(
+    *,
+    store: StateStore,
+    task_id: str,
+    repo: Path,
+    execution_repo: Path,
+) -> None:
+    if store.get_task(task_id) is None:
+        return
+    profile = _worktree_execution_profile(
+        task_id=task_id,
+        repo=repo,
+        execution_repo=execution_repo,
+    )
+    sandbox = SandboxProfile(root=execution_repo, worktree=profile)
+    store.append_task_event(
+        task_id,
+        "worktree.execution_profile",
+        {
+            "profile": profile.to_payload(),
+            "sandbox": sandbox.to_payload(),
+        },
+        actor="supervisor",
+        summary=f"Worktree execution profile captured for {execution_repo}",
+        idempotency_key=f"worktree-execution-profile:{task_id}",
+    )
+
+
+def _worktree_execution_profile(
+    *,
+    task_id: str,
+    repo: Path,
+    execution_repo: Path,
+) -> WorktreeExecutionProfile:
+    overview = inspect_worktree(execution_repo, repo=repo)
+    if overview is None:
+        return WorktreeExecutionProfile(
+            task_id=task_id,
+            worktree_path=execution_repo,
+            base_ref=_git_ref_name(repo),
+        )
+    return WorktreeExecutionProfile(
+        task_id=task_id,
+        worktree_path=overview.path,
+        branch=overview.branch,
+        base_ref=_git_ref_name(repo),
+        dirty=overview.dirty,
+        cleanup_eligible=overview.cleanup_status == "candidate",
+    )
 
 
 def _autopilot_execution_repo(repo: Path, worktree: str | None) -> Path:
@@ -3900,6 +4646,18 @@ def _git_rev_parse_path(repo: Path, flag: str) -> Path | None:
     if not value:
         return None
     return Path(value[0]).resolve()
+
+
+def _git_ref_name(repo: Path) -> str | None:
+    result = ProcessRunner().run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo,
+        options=RunOptions(timeout_sec=30),
+    )
+    if result.status != "success":
+        return None
+    value = result.stdout.strip()
+    return value or None
 
 
 def _resolve_plan_path(repo: Path, plan_path: Path) -> Path:

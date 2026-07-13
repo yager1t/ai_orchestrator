@@ -5,6 +5,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ai_orchestrator.memory import CodebaseMemoryClient, CodebaseMemoryResult
+from ai_orchestrator.policy.sandbox import (
+    PathScopePolicy,
+    SandboxDecision,
+    SandboxProfile,
+)
 from ai_orchestrator.process.runner import ProcessRunner, RunOptions
 from ai_orchestrator.tools.broker import ToolExecutor, ToolExecutorOutput
 from ai_orchestrator.tools.types import ToolCall, ToolResult, ToolResultStatus
@@ -183,8 +188,13 @@ def _memory_result_status(result: CodebaseMemoryResult) -> ToolResultStatus:
     return "failed"
 
 
-def file_tool_executor(repo: Path) -> ToolExecutor:
+def file_tool_executor(
+    repo: Path,
+    *,
+    sandbox_profile: SandboxProfile | None = None,
+) -> ToolExecutor:
     repo_root = repo.resolve()
+    path_policy = PathScopePolicy(sandbox_profile or SandboxProfile(root=repo_root))
 
     def execute(call: ToolCall) -> ToolResult:
         if call.spec.name not in _SUPPORTED_FILE_TOOLS:
@@ -203,10 +213,32 @@ def file_tool_executor(repo: Path) -> ToolExecutor:
             )
 
         if call.spec.name == "fs.read":
+            decision = path_policy.evaluate_read(resolved_path)
+            if decision.action == "deny":
+                return _sandbox_denied_result(call, decision, path_policy.profile)
             return _run_fs_read(call, resolved_path, repo_root)
+        decision = path_policy.evaluate_write(resolved_path)
+        if decision.action == "deny":
+            return _sandbox_denied_result(call, decision, path_policy.profile)
         return _run_fs_write(call, resolved_path, repo_root)
 
     return execute
+
+
+def _sandbox_denied_result(
+    call: ToolCall,
+    decision: SandboxDecision,
+    profile: SandboxProfile,
+) -> ToolResult:
+    return ToolResult(
+        call=call,
+        status="policy_denied",
+        output={
+            "sandbox_decision": decision.to_payload(),
+            "sandbox_profile": profile.to_payload(),
+        },
+        error=decision.reason,
+    )
 
 
 def _run_fs_read(call: ToolCall, path: Path, repo_root: Path) -> ToolResult:

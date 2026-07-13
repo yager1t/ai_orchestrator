@@ -44,6 +44,14 @@ policy:
     - "secret-tool"
   require_approval:
     - "deploy"
+
+sandbox:
+  writable_paths:
+    - "docs"
+    - "tasks"
+  forbidden_paths:
+    - ".env"
+    - "private.key"
 """.lstrip(),
         encoding="utf-8",
     )
@@ -67,6 +75,8 @@ policy:
     assert config.verification_commands[0].timeout_sec == 30
     assert config.policy_deny_patterns == ["secret-tool"]
     assert config.policy_ask_patterns == ["deploy"]
+    assert config.sandbox.writable_paths == ["docs", "tasks"]
+    assert config.sandbox.forbidden_paths == [".env", "private.key"]
 
 
 def test_load_project_config_reads_generic_adapter_profiles(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from ai_orchestrator.memory import CodebaseMemoryResult
+from ai_orchestrator.policy import SandboxProfile
 from ai_orchestrator.process.runner import ProcessResult, RunOptions
 from ai_orchestrator.tools import (
     ACTION_TYPES,
@@ -385,6 +386,56 @@ def test_file_tool_executor_rejects_paths_outside_repo(tmp_path) -> None:
     assert result.status == "failed"
     assert result.error == "File tool path must be inside the repository"
     assert not outside.exists()
+
+
+def test_file_tool_executor_denies_secret_like_read(tmp_path) -> None:
+    secret = tmp_path / ".env"
+    secret.write_text("TOKEN=secret", encoding="utf-8")
+    call = ToolCall(
+        ToolSpec("fs.read", "read"),
+        "tool:fs.read:secret",
+        arguments={"path": ".env"},
+    )
+
+    result = file_tool_executor(tmp_path)(call)
+
+    assert result.status == "policy_denied"
+    assert "forbidden sandbox marker" in (result.error or "")
+    assert result.output["sandbox_decision"] == {
+        "action": "deny",
+        "reason": "Path matches forbidden sandbox marker: .env",
+        "path": str(secret),
+    }
+
+
+def test_file_tool_executor_denies_write_outside_writable_scope(tmp_path) -> None:
+    call = ToolCall(
+        ToolSpec("fs.write", "write"),
+        "tool:fs.write:scope",
+        arguments={"path": "src/example.py", "content": "print('nope')"},
+    )
+    executor = file_tool_executor(
+        tmp_path,
+        sandbox_profile=SandboxProfile(root=tmp_path, writable_paths=(Path("docs"),)),
+    )
+
+    result = executor(call)
+
+    assert result.status == "policy_denied"
+    assert "outside writable sandbox scope" in (result.error or "")
+    assert result.output["sandbox_profile"] == {
+        "root": str(tmp_path.resolve()),
+        "writable_paths": [str((tmp_path / "docs").resolve(strict=False))],
+        "forbidden_path_markers": [
+            ".env",
+            ".ssh",
+            ".codex/auth.json",
+            "auth.json",
+            "id_rsa",
+            "id_ed25519",
+        ],
+    }
+    assert not (tmp_path / "src" / "example.py").exists()
 
 
 def test_memory_tool_executor_runs_memory_namespaced_tool(tmp_path) -> None:

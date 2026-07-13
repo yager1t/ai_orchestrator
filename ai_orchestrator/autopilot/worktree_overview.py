@@ -21,6 +21,7 @@ class WorktreeOverview:
     untracked_count: int
     last_modified: datetime | None
     cleanup_status: str
+    recovery_recommendation: str = "inspect"
 
 
 CLEANUP_STATUSES = ("candidate", "needs_review", "do_not_remove")
@@ -41,6 +42,19 @@ def _cleanup_status(overview: WorktreeOverview) -> str:
     if overview.linked is True and overview.merged is True:
         return "candidate"
     return "needs_review"
+
+
+def _recovery_recommendation(overview: WorktreeOverview) -> str:
+    """Recommend the next read-only operator step for recovery decisions."""
+    if overview.merge_in_progress or overview.dirty:
+        return "inspect_resume_or_block"
+    if overview.cleanup_status == "candidate":
+        return "cleanup"
+    if overview.linked is False:
+        return "inspect_requeue_or_block"
+    if overview.merged is False:
+        return "inspect_branch"
+    return "inspect"
 
 
 def _git_output(cwd: Path, args: list[str]) -> str | None:
@@ -149,7 +163,14 @@ def inspect_worktree(path: Path, repo: Path | None = None) -> WorktreeOverview |
         last_modified=_last_modified(path),
         cleanup_status="needs_review",
     )
-    return replace(overview, cleanup_status=_cleanup_status(overview))
+    cleanup_status = _cleanup_status(overview)
+    return replace(
+        overview,
+        cleanup_status=cleanup_status,
+        recovery_recommendation=_recovery_recommendation(
+            replace(overview, cleanup_status=cleanup_status)
+        ),
+    )
 
 
 def gather_worktree_overviews(
@@ -259,6 +280,7 @@ def worktree_overview_data(
                 "dirty_count": overview.dirty_count,
                 "untracked_count": overview.untracked_count,
                 "cleanup_status": overview.cleanup_status,
+                "recovery_recommendation": overview.recovery_recommendation,
                 "last_modified": (
                     overview.last_modified.isoformat()
                     if overview.last_modified is not None
@@ -279,6 +301,12 @@ Review hint:
     candidate     = linked, merged, clean, and no merge in progress
     needs_review  = not merged, unlinked, or status uncertain
     do_not_remove = dirty or merge in progress (review manually first)
+  The 'recovery' column is a read-only next-step recommendation:
+    cleanup                  = cleanup candidate after explicit approval
+    inspect_resume_or_block  = dirty/merge state; inspect, then resume or block
+    inspect_requeue_or_block = unlinked state; inspect, then requeue or block
+    inspect_branch           = linked but not merged; inspect branch diff first
+    inspect                  = no stronger recommendation available
   Before cleanup, confirm the branch state with:
     git log --oneline HEAD..<branch>
     git diff --stat HEAD...<branch>
@@ -314,7 +342,8 @@ def format_worktree_overview(
         lines.append("")
     header = (
         f"{'path':<50} {'branch':<20} {'linked':<7} {'merged':<7} {'merge':<6} "
-        f"{'dirty':<6} {'changes':<8} {'untracked':<10} {'cleanup':<14} {'last_modified'}"
+        f"{'dirty':<6} {'changes':<8} {'untracked':<10} {'cleanup':<14} "
+        f"{'recovery':<24} {'last_modified'}"
     )
     lines.append(header)
     lines.append("-" * len(header))
@@ -342,7 +371,8 @@ def format_worktree_overview(
         lines.append(
             f"{path_str:<50} {overview.branch:<20} {linked:<7} {merged:<7} {merge:<6} "
             f"{dirty_display:<6} {overview.dirty_count:<8} {overview.untracked_count:<10} "
-            f"{overview.cleanup_status:<14} {last_modified}"
+            f"{overview.cleanup_status:<14} {overview.recovery_recommendation:<24} "
+            f"{last_modified}"
         )
     lines.append("")
     lines.append(_REVIEW_HINT)

@@ -139,6 +139,49 @@ def test_state_store_creates_plan_item_graph_link_columns_and_index(
     assert "idx_plan_items_plan_graph" in indexes
 
 
+def test_state_store_initializes_existing_v12_plan_items_before_graph_index(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE plan_items (
+                plan_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_path TEXT NOT NULL,
+                line_number INTEGER NOT NULL,
+                section TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                task_id TEXT,
+                selected_worktree_path TEXT,
+                blocked_reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute("PRAGMA user_version = 12")
+
+    store = StateStore(db_path)
+    store.initialize()
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(plan_items)").fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in connection.execute("PRAGMA index_list(plan_items)").fetchall()
+        }
+        version = schema_version(connection)
+
+    assert version == SCHEMA_VERSION
+    assert {"plan_graph_id", "plan_graph_root_node_id"}.issubset(columns)
+    assert "idx_plan_items_plan_graph" in indexes
+
+
 def test_state_store_records_memory_reflection_and_influence(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state.db")
     task = store.create_task("demo", repo_path=tmp_path)

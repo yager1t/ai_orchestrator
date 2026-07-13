@@ -44,6 +44,7 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
     timeline_entries = store.list_task_timeline(task.task_id)
     checkpoint_events = _checkpoint_events(task_events)
     recovery_events = _recovery_events(task_events)
+    worktree_profile_event = _latest_worktree_profile_event(task_events)
     plan_item = _plan_item_for_task(store, task.task_id)
     plan_graph_context = _plan_graph_context_for_task(store, task.task_id, plan_item)
     final_iteration = iterations[-1] if iterations else None
@@ -62,6 +63,7 @@ def render_task_report(store: StateStore, task_id: str) -> str | None:
         f"- Status: `{task.status}`",
         f"- Repository: `{task.repo_path}`",
         *_queue_worktree_lines(plan_item),
+        *_worktree_execution_lines(worktree_profile_event),
         f"- Task: {task.task}",
         f"- Iterations: `{len(iterations)}`",
         f"- Verification runs: `{len(verification_runs)}`{_status_summary(verification_runs)}",
@@ -181,6 +183,44 @@ def _queue_worktree_lines(plan_item: StoredPlanItem | None) -> list[str]:
     if plan_item is None or not plan_item.selected_worktree_path:
         return []
     return [f"- Queue worktree: `{plan_item.selected_worktree_path}`"]
+
+
+def _latest_worktree_profile_event(
+    task_events: Sequence[StoredTaskEvent],
+) -> StoredTaskEvent | None:
+    for event in reversed(task_events):
+        if event.event_type == "worktree.execution_profile":
+            return event
+    return None
+
+
+def _worktree_execution_lines(event: StoredTaskEvent | None) -> list[str]:
+    if event is None:
+        return []
+    profile = event.payload.get("profile")
+    if not isinstance(profile, dict):
+        return []
+    worktree_path = profile.get("worktree_path")
+    if not isinstance(worktree_path, str) or not worktree_path:
+        return []
+
+    lines = [f"- Worktree execution: `{redact_secrets(worktree_path) or ''}`"]
+    branch = profile.get("branch")
+    base_ref = profile.get("base_ref")
+    dirty = profile.get("dirty")
+    cleanup_eligible = profile.get("cleanup_eligible")
+    details: list[str] = []
+    if isinstance(branch, str) and branch:
+        details.append(f"branch=`{redact_secrets(branch) or ''}`")
+    if isinstance(base_ref, str) and base_ref:
+        details.append(f"base_ref=`{redact_secrets(base_ref) or ''}`")
+    if isinstance(dirty, bool):
+        details.append(f"dirty=`{dirty}`")
+    if isinstance(cleanup_eligible, bool):
+        details.append(f"cleanup_eligible=`{cleanup_eligible}`")
+    if details:
+        lines.append("- Worktree profile: " + " ".join(details))
+    return lines
 
 
 def _plan_graph_context_for_task(

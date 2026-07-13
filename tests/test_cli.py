@@ -1277,6 +1277,63 @@ def test_approvals_retry_runs_approved_fs_write_request(
     }
 
 
+def test_approvals_retry_applies_configured_sandbox_writable_paths(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    write_config(tmp_path)
+    config_path = tmp_path / ".ai-orch" / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + """
+sandbox:
+  writable_paths:
+    - "docs"
+""",
+        encoding="utf-8",
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    broker = ToolBroker(store, PolicyEngine())
+    call = make_fs_write_call(
+        "src/example.py",
+        "print('blocked')",
+        create_parents=True,
+        task_id=task.task_id,
+        idempotency_key="tool:fs.write:sandbox",
+    )
+    requested = broker.run(call, lambda _call: {"unused": True})
+    approval_id = requested.output["approval_id"]
+    assert isinstance(approval_id, int)
+    store.resolve_approval_request(approval_id, "approved", resolution="looks safe")
+
+    exit_code = main(["approvals", "retry", str(approval_id), "--repo", str(tmp_path)])
+    output = capsys.readouterr().out
+    loaded = store.get_approval_request(approval_id)
+    actions = store.list_action_records(task.task_id)
+    events = store.list_task_events(task.task_id)
+    sandbox_events = [
+        event for event in events if event.event_type == "sandbox.decision"
+    ]
+
+    assert exit_code == 1
+    assert "retry: policy_denied exit=None" in output
+    assert "outside writable sandbox scope" in output
+    assert not (tmp_path / "src" / "example.py").exists()
+    assert loaded is not None
+    assert loaded.retry_count == 1
+    assert loaded.last_retry_status == "policy_denied"
+    assert len(sandbox_events) == 1
+    assert sandbox_events[0].payload["action_id"] == actions[1].action_id
+    assert sandbox_events[0].payload["tool_name"] == "fs.write"
+    assert sandbox_events[0].payload["status"] == "policy_denied"
+    assert sandbox_events[0].payload["decision"] == {
+        "action": "deny",
+        "reason": f"Path is outside writable sandbox scope: {tmp_path / 'docs'}",
+        "path": str(tmp_path / "src" / "example.py"),
+    }
+
+
 def test_approvals_retry_runs_approved_memory_tool_request(
     capsys,
     monkeypatch,
@@ -1916,7 +1973,430 @@ def test_recover_json_reports_counts(capsys, tmp_path: Path) -> None:
     assert payload["expired_action_leases"]["count"] == 1
     assert payload["expired_action_leases"]["items"][0]["action_id"] == action.action_id
     assert payload["stale_started_actions"]["count"] == 0
-    assert payload["recovered"] == {"blocked_tasks": 0, "failed_actions": 0}
+    assert payload["worktree_recovery_candidates"]["count"] == 0
+    assert payload["recovered"] == {
+        "blocked_tasks": 0,
+        "failed_actions": 0,
+        "marked_worktree_recoveries": 0,
+    }
+
+
+def test_recover_reports_stale_worktree_execution(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("stale worktree task", repo_path=tmp_path, status="running")
+    worktree = tmp_path / "worktree"
+    profile = {
+        "task_id": task.task_id,
+        "worktree_path": str(worktree),
+        "branch": "codex/stale",
+        "base_ref": "main",
+        "dirty": True,
+        "cleanup_eligible": False,
+    }
+    store.append_task_event(
+        task.task_id,
+        "worktree.execution_profile",
+        {"profile": profile, "sandbox": {"root": str(worktree)}},
+        actor="supervisor",
+    )
+    old_timestamp = "2026-01-01T00:00:00+00:00"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+            (old_timestamp, task.task_id),
+        )
+
+    exit_code = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--worktree-stale-minutes",
+            "1",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "worktree_recovery_candidates: 1" in output
+    assert (
+        f"[worktree_recovery] {task.task_id}: inspect_resume_or_block "
+        f"operator=inspect queue_item=- node=- "
+        f"next=inspect_task_timeline "
+        f"worktree={worktree} updated={old_timestamp}"
+    ) in output
+    assert store.get_task(task.task_id).status == "running"  # type: ignore[union-attr]
+
+
+def test_recover_apply_marks_stale_worktree_execution(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("stale clean worktree", repo_path=tmp_path, status="running")
+    worktree = tmp_path / "worktree"
+    profile = {
+        "task_id": task.task_id,
+        "worktree_path": str(worktree),
+        "branch": "codex/merged",
+        "base_ref": "main",
+        "dirty": False,
+        "cleanup_eligible": True,
+    }
+    store.append_task_event(
+        task.task_id,
+        "worktree.execution_profile",
+        {"profile": profile, "sandbox": {"root": str(worktree)}},
+        actor="supervisor",
+    )
+    old_timestamp = "2026-01-01T00:00:00+00:00"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+            (old_timestamp, task.task_id),
+        )
+
+    exit_code = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--worktree-stale-minutes",
+            "1",
+            "--apply",
+            "--reason",
+            "operator reviewed stale worktree",
+        ]
+    )
+    output = capsys.readouterr().out
+    events = store.list_task_events(task.task_id)
+    worktree_events = [
+        event for event in events if event.event_type == "worktree.recovery_recommendation"
+    ]
+    recovered_task = store.get_task(task.task_id)
+
+    assert exit_code == 0
+    assert "marked_worktree_recoveries: 1" in output
+    assert recovered_task is not None
+    assert recovered_task.status == "blocked"
+    assert len(worktree_events) == 1
+    assert worktree_events[0].payload["recommendation"] == "cleanup"
+    assert worktree_events[0].payload["operator_recommendation"] == "cleanup_candidate"
+    assert (
+        worktree_events[0].payload["action_plan"]["commands"][-1]["name"]
+        == "cleanup_candidates_dry_run"
+    )
+    assert worktree_events[0].payload["worktree_path"] == str(worktree)
+    assert worktree_events[0].payload["previous_status"] == "running"
+    assert worktree_events[0].payload["reason"] == "operator reviewed stale worktree"
+
+
+def test_recover_json_reports_stale_worktree_execution(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("stale unlinked worktree", repo_path=tmp_path, status="running")
+    worktree = tmp_path / "worktree"
+    profile = {
+        "task_id": task.task_id,
+        "worktree_path": str(worktree),
+        "branch": None,
+        "base_ref": "main",
+        "dirty": None,
+        "cleanup_eligible": False,
+    }
+    store.append_task_event(
+        task.task_id,
+        "worktree.execution_profile",
+        {"profile": profile, "sandbox": {"root": str(worktree)}},
+        actor="supervisor",
+    )
+    old_timestamp = "2026-01-01T00:00:00+00:00"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+            (old_timestamp, task.task_id),
+        )
+
+    exit_code = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--worktree-stale-minutes",
+            "1",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+
+    assert exit_code == 0
+    assert payload["worktree_recovery_candidates"]["count"] == 1
+    item = payload["worktree_recovery_candidates"]["items"][0]
+    assert item["task_id"] == task.task_id
+    assert item["recommendation"] == "inspect_requeue_or_block"
+    assert item["operator_recommendation"] == "block"
+    assert item["worktree_path"] == str(worktree)
+    assert item["queue_item"] is None
+    assert item["plan_graph_node"] is None
+    assert item["action_plan"]["operator_recommendation"] == "block"
+    assert item["action_plan"]["commands"][0]["name"] == "inspect_task_timeline"
+    assert item["action_plan"]["commands"][-1]["name"] == "block_task_manual_review"
+    assert item["action_plan"]["commands"][-1]["requires_explicit_apply"] is True
+    assert item["action_plan"]["commands"][-1]["available"] is False
+
+
+def test_recover_links_stale_worktree_execution_to_queue_and_plan_graph(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("linked stale worktree", repo_path=tmp_path, status="running")
+    worktree = tmp_path / "worktree"
+    profile = {
+        "task_id": task.task_id,
+        "worktree_path": str(worktree),
+        "branch": "codex/linked",
+        "base_ref": "main",
+        "dirty": False,
+        "cleanup_eligible": False,
+    }
+    store.append_task_event(
+        task.task_id,
+        "worktree.execution_profile",
+        {"profile": profile, "sandbox": {"root": str(worktree)}},
+        actor="supervisor",
+    )
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=7,
+        section="v0.7",
+        text="Run linked worktree task",
+        status="in_progress",
+        task_id=task.task_id,
+        selected_worktree_path=worktree,
+    )
+    graph = store.create_plan_graph(task_id=task.task_id, title="Linked graph")
+    node = store.add_plan_graph_node(
+        graph_id=graph.graph_id,
+        node_key="root",
+        title="Root",
+        task_text="Run linked worktree task",
+        status="in_progress",
+        task_id=task.task_id,
+        plan_item_id=item.plan_item_id,
+    )
+    store.link_plan_item_to_plan_graph(
+        item.plan_item_id,
+        graph.graph_id,
+        plan_graph_root_node_id=node.node_id,
+    )
+    old_timestamp = "2026-01-01T00:00:00+00:00"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+            (old_timestamp, task.task_id),
+        )
+
+    text_exit = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--worktree-stale-minutes",
+            "1",
+        ]
+    )
+    text_output = capsys.readouterr().out
+    json_exit = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--worktree-stale-minutes",
+            "1",
+            "--json",
+        ]
+    )
+    json_output = capsys.readouterr().out
+    payload = json.loads(json_output)
+    linked = payload["worktree_recovery_candidates"]["items"][0]
+
+    assert text_exit == 0
+    assert json_exit == 0
+    assert (
+        f"[worktree_recovery] {task.task_id}: inspect_branch operator=resume "
+        f"queue_item={item.plan_item_id} node={node.node_id} "
+        f"next=inspect_task_timeline"
+    ) in text_output
+    assert linked["operator_recommendation"] == "resume"
+    assert linked["queue_item"]["plan_item_id"] == item.plan_item_id
+    assert linked["queue_item"]["status"] == "in_progress"
+    assert linked["queue_item"]["selected_worktree_path"] == str(worktree)
+    assert linked["plan_graph_node"]["node_id"] == node.node_id
+    assert linked["plan_graph_node"]["status"] == "in_progress"
+    assert linked["action_plan"]["commands"][0]["name"] == "inspect_task_timeline"
+    assert linked["action_plan"]["commands"][1]["name"] == "inspect_worktree"
+    assert linked["action_plan"]["commands"][2]["name"] == "resume_task"
+    assert linked["action_plan"]["commands"][2]["argv"] == [
+        "python",
+        "-m",
+        "ai_orchestrator.cli.app",
+        "resume",
+        task.task_id,
+        "--repo",
+        str(tmp_path),
+    ]
+
+
+def test_recover_apply_recommendation_requeue_dry_run(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("blocked linked worktree", repo_path=tmp_path, status="running")
+    worktree = tmp_path / "worktree"
+    store.append_task_event(
+        task.task_id,
+        "worktree.execution_profile",
+        {
+            "profile": {
+                "task_id": task.task_id,
+                "worktree_path": str(worktree),
+                "branch": "codex/requeue",
+                "base_ref": "main",
+                "dirty": False,
+                "cleanup_eligible": False,
+            }
+        },
+        actor="supervisor",
+    )
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=9,
+        section="v0.7",
+        text="Requeue linked worktree task",
+        status="blocked",
+        task_id=task.task_id,
+        selected_worktree_path=worktree,
+    )
+    old_timestamp = "2026-01-01T00:00:00+00:00"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+            (old_timestamp, task.task_id),
+        )
+
+    exit_code = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--worktree-stale-minutes",
+            "1",
+            "--apply-recommendation",
+            "requeue",
+            "--task-id",
+            task.task_id,
+        ]
+    )
+    output = capsys.readouterr().out
+    loaded_task = store.get_task(task.task_id)
+    loaded_item = store.get_plan_item(item.plan_item_id)
+
+    assert exit_code == 0
+    assert "Recovery recommendation dry run" in output
+    assert "recommendation: requeue" in output
+    assert f"plan_item_id: {item.plan_item_id}" in output
+    assert loaded_task is not None
+    assert loaded_task.status == "running"
+    assert loaded_item is not None
+    assert loaded_item.status == "blocked"
+    assert loaded_item.task_id == task.task_id
+
+
+def test_recover_apply_recommendation_requeue_apply_json(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("apply requeue worktree", repo_path=tmp_path, status="running")
+    worktree = tmp_path / "worktree"
+    store.append_task_event(
+        task.task_id,
+        "worktree.execution_profile",
+        {
+            "profile": {
+                "task_id": task.task_id,
+                "worktree_path": str(worktree),
+                "branch": "codex/requeue",
+                "base_ref": "main",
+                "dirty": False,
+                "cleanup_eligible": False,
+            }
+        },
+        actor="supervisor",
+    )
+    item = store.record_plan_item(
+        plan_path=tmp_path / "ROADMAP.md",
+        line_number=10,
+        section="v0.7",
+        text="Apply requeue linked worktree task",
+        status="blocked",
+        task_id=task.task_id,
+        selected_worktree_path=worktree,
+        blocked_reason="stale worktree execution",
+    )
+    old_timestamp = "2026-01-01T00:00:00+00:00"
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE tasks SET updated_at = ? WHERE task_id = ?",
+            (old_timestamp, task.task_id),
+        )
+
+    exit_code = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--worktree-stale-minutes",
+            "1",
+            "--apply-recommendation",
+            "requeue",
+            "--task-id",
+            task.task_id,
+            "--apply",
+            "--reason",
+            "operator accepted requeue recommendation",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    loaded_task = store.get_task(task.task_id)
+    loaded_item = store.get_plan_item(item.plan_item_id)
+    events = store.list_task_events(task.task_id)
+    applied_events = [
+        event for event in events if event.event_type == "worktree.recovery_applied"
+    ]
+
+    assert exit_code == 0
+    assert payload["apply"] is True
+    assert payload["recommendation"] == "requeue"
+    assert payload["plan_item_id"] == item.plan_item_id
+    assert payload["queue_item"]["status"] == "created"
+    assert loaded_task is not None
+    assert loaded_task.status == "blocked"
+    assert loaded_item is not None
+    assert loaded_item.status == "created"
+    assert loaded_item.task_id is None
+    assert loaded_item.selected_worktree_path is None
+    assert loaded_item.blocked_reason is None
+    assert len(applied_events) == 1
+    assert applied_events[0].payload["recommendation"] == "requeue"
+    assert applied_events[0].payload["reason"] == "operator accepted requeue recommendation"
 
 
 def test_recover_reports_and_applies_stale_started_actions_without_lease(
@@ -6233,12 +6713,39 @@ def test_autopilot_queue_run_batch_fixed_worktree_persists_and_reports(
     assert item.status == "done"
     assert item.task_id == "fixed-task-1"
     assert item.selected_worktree_path == str(worktree.resolve())
+    events = store.list_task_events("fixed-task-1")
+    worktree_events = [
+        event for event in events if event.event_type == "worktree.execution_profile"
+    ]
+    assert len(worktree_events) == 1
+    assert worktree_events[0].payload["profile"] == {
+        "task_id": "fixed-task-1",
+        "worktree_path": str(worktree.resolve()),
+        "branch": None,
+        "base_ref": None,
+        "dirty": None,
+        "cleanup_eligible": False,
+    }
+    assert worktree_events[0].payload["sandbox"] == {
+        "root": str(worktree.resolve()),
+        "writable_paths": [str(worktree.resolve())],
+        "forbidden_path_markers": [
+            ".env",
+            ".ssh",
+            ".codex/auth.json",
+            "auth.json",
+            "id_rsa",
+            "id_ed25519",
+        ],
+        "worktree": worktree_events[0].payload["profile"],
+    }
 
     report_path = tmp_path / ".ai-orch" / "reports" / "fixed-task-1.md"
     assert report_path.exists()
-    assert f"- Queue worktree: `{worktree.resolve()}`" in report_path.read_text(
-        encoding="utf-8"
-    )
+    report_text = report_path.read_text(encoding="utf-8")
+    assert f"- Queue worktree: `{worktree.resolve()}`" in report_text
+    assert f"- Worktree execution: `{worktree.resolve()}`" in report_text
+    assert "- Worktree profile: cleanup_eligible=`False`" in report_text
     assert "=== Batch summary ===" in output
     assert "Processed: 1 item(s)" in output
     assert "Status counts: done=1" in output

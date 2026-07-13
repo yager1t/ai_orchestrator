@@ -171,6 +171,7 @@ class ToolBroker:
                 policy_decision=policy_decision,
             ),
         )
+        self._record_sandbox_decision_event(call, action.action_id, result)
         self._record_call_event(
             call,
             "command_finished",
@@ -315,6 +316,7 @@ class ToolBroker:
                 approval_id=approval_id,
             ),
         )
+        self._record_sandbox_decision_event(call, action.action_id, result)
         self._record_call_event(
             call,
             "command_finished",
@@ -356,6 +358,7 @@ class ToolBroker:
             ),
         )
         if recorded_result.status == "policy_denied":
+            self._record_sandbox_decision_event(call, action.action_id, recorded_result)
             self._record_call_event(
                 call,
                 "command_denied",
@@ -374,6 +377,7 @@ class ToolBroker:
                 idempotency_suffix="audit:approval",
             )
         else:
+            self._record_sandbox_decision_event(call, action.action_id, recorded_result)
             self._record_call_event(
                 call,
                 "command_finished",
@@ -383,6 +387,69 @@ class ToolBroker:
                 idempotency_suffix="audit:finished",
             )
         return recorded_result
+
+    def _record_sandbox_decision_event(
+        self,
+        call: ToolCall,
+        action_id: int,
+        result: ToolResult,
+    ) -> None:
+        if call.task_id is None:
+            return
+        sandbox_decision = self._sandbox_decision_payload(result.output)
+        if sandbox_decision is None or sandbox_decision.get("action") != "deny":
+            return
+
+        payload: dict[str, object] = {
+            "action_id": action_id,
+            "tool_name": call.spec.name,
+            "risk_tier": call.spec.risk_tier,
+            "status": result.status,
+            "decision": sandbox_decision,
+        }
+        sandbox_profile = self._sandbox_profile_payload(result.output)
+        if sandbox_profile is not None:
+            payload["sandbox_profile"] = sandbox_profile
+        self.state_store.append_task_event(
+            call.task_id,
+            "sandbox.decision",
+            payload,
+            actor="tool_broker",
+            summary=f"Sandbox denied {call.spec.name}",
+            idempotency_key=f"sandbox-decision:{action_id}",
+        )
+
+    def _sandbox_decision_payload(
+        self,
+        output: dict[str, object],
+    ) -> dict[str, object] | None:
+        decision = output.get("sandbox_decision")
+        if isinstance(decision, dict) and all(isinstance(key, str) for key in decision):
+            return cast(dict[str, object], decision)
+        nested = output.get("tool_output")
+        if isinstance(nested, dict):
+            nested_decision = nested.get("sandbox_decision")
+            if isinstance(nested_decision, dict) and all(
+                isinstance(key, str) for key in nested_decision
+            ):
+                return cast(dict[str, object], nested_decision)
+        return None
+
+    def _sandbox_profile_payload(
+        self,
+        output: dict[str, object],
+    ) -> dict[str, object] | None:
+        profile = output.get("sandbox_profile")
+        if isinstance(profile, dict) and all(isinstance(key, str) for key in profile):
+            return cast(dict[str, object], profile)
+        nested = output.get("tool_output")
+        if isinstance(nested, dict):
+            nested_profile = nested.get("sandbox_profile")
+            if isinstance(nested_profile, dict) and all(
+                isinstance(key, str) for key in nested_profile
+            ):
+                return cast(dict[str, object], nested_profile)
+        return None
 
     def _evaluate_policy(self, call: ToolCall) -> tuple[PolicyDecision, str]:
         argv = call.arguments.get("argv")
