@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.0 - Worktree + Sandbox Isolation
+
+Date: 2026-07-13
+
 - Added the first v0.7 policy-level sandbox/path-scope foundation for local file
   tools, including default secret-like path denial and configurable writable
   scopes.

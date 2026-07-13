@@ -1,7 +1,7 @@
 # v0.7 Goal Plan: Worktree + Sandbox Isolation
 
 Date: 2026-07-12
-Status: active goal plan
+Status: completed for v0.7.0 release on 2026-07-13
 Baseline: v0.6.0 PlanGraph v1 released and published
 
 ## Progress
