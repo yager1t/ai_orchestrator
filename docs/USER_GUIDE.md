@@ -344,6 +344,7 @@ Inspect status:
 
 ```bash
 ai-orch status <task-id> --repo .
+ai-orch status <task-id> --repo . --json
 ```
 
 Resume a blocked or unfinished task:
@@ -420,12 +421,14 @@ List approvals:
 
 ```bash
 ai-orch approvals list --repo .
+ai-orch approvals list --repo . --json
 ```
 
 Inspect one approval:
 
 ```bash
 ai-orch approvals show <approval-id> --repo .
+ai-orch approvals show <approval-id> --repo . --json
 ```
 
 Approve or reject:
@@ -433,12 +436,15 @@ Approve or reject:
 ```bash
 ai-orch approvals approve <approval-id> --repo . --resolution "approved by operator"
 ai-orch approvals reject <approval-id> --repo . --resolution "not safe"
+ai-orch approvals approve <approval-id> --repo . --resolution "approved by operator" --json
+ai-orch approvals reject <approval-id> --repo . --resolution "not safe" --json
 ```
 
 Retry an approved request:
 
 ```bash
 ai-orch approvals retry <approval-id> --repo .
+ai-orch approvals retry <approval-id> --repo . --json
 ```
 
 Mark old pending approvals stale:
@@ -518,6 +524,7 @@ Use the persisted queue:
 ai-orch doctor agents --repo .
 ai-orch autopilot queue sync --repo . --plan docs/BACKLOG.md
 ai-orch autopilot queue status --repo . --plan docs/BACKLOG.md
+ai-orch autopilot queue status --repo . --plan docs/BACKLOG.md --json
 ai-orch autopilot queue readiness --repo . --plan docs/BACKLOG.md
 ai-orch autopilot queue preflight --repo . --plan docs/BACKLOG.md
 ai-orch autopilot queue run-batch --repo . --plan docs/BACKLOG.md --max-items 1
@@ -647,7 +654,32 @@ verification runs, approval/denial visibility, typed action journal data,
 PlanGraph node context, redacted command output previews, and
 recovery/checkpoint details.
 
-## 14. Normal Operating Loop
+## 14. External Local Operator Workflow
+
+Use this workflow when another local tool, editor integration, shell script, or
+future MCP/ACP adapter drives `ai-orch`.
+
+1. Start or queue one bounded task with the same CLI commands a human operator
+   would use. External tools must not mark tasks done directly.
+2. Poll state with `ai-orch status <task-id> --repo . --json`.
+3. Inspect replay detail with `ai-orch timeline <task-id> --repo . --json`.
+4. Inspect approvals with `ai-orch approvals list --repo . --json` and
+   `ai-orch approvals show <approval-id> --repo . --json`.
+5. Resolve approvals with `approve`, `reject`, or `retry` using `--json`.
+   Deny rules remain stronger than approvals, and `retry --json` returns a
+   non-zero exit with `retry_status=policy_denied` when policy blocks the
+   action.
+6. Inspect queue state with `ai-orch autopilot queue status --repo . --json`,
+   `queue show --json`, `queue readiness --json`, or `queue preflight --json`.
+7. Recover interrupted work with `ai-orch recover --repo . --json`; mutate only
+   with `--apply --reason`.
+8. Export the audit artifact with `ai-orch export <task-id> --repo . --redact`
+   when the trace may leave the local review context.
+
+The completion rule is unchanged: the worker agent executes, but the supervisor
+and verification checks decide whether the task is `done`.
+
+## 15. Normal Operating Loop
 
 Use this loop for real work:
 
@@ -660,7 +692,7 @@ Use this loop for real work:
 7. Run the full quality gate.
 8. Commit manually after review.
 
-## 15. Safety Rules
+## 16. Safety Rules
 
 - Deny rules are stronger than approvals.
 - Keep execution dry-run-first for autopilot.

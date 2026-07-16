@@ -185,6 +185,44 @@ _PRODUCT_COMMAND_DEFAULT_TASKS = {
 
 # Schema version for the JSON trace produced by ``ai-orch export``.
 TRACE_SCHEMA_VERSION = "1.2"
+CONTROL_JSON_SCHEMA_VERSION = "1.0"
+
+
+def _control_json_payload(
+    command: str,
+    *,
+    ok: bool = True,
+    error: dict[str, object] | None = None,
+    **fields: object,
+) -> dict[str, object]:
+    return {
+        "schema_version": CONTROL_JSON_SCHEMA_VERSION,
+        "command": command,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "ok": ok,
+        "error": error,
+        **fields,
+    }
+
+
+def _print_control_json(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+
+
+def _print_control_json_error(
+    command: str,
+    *,
+    code: str,
+    message: str,
+    **details: object,
+) -> None:
+    _print_control_json(
+        _control_json_payload(
+            command,
+            ok=False,
+            error={"code": code, "message": message, **details},
+        )
+    )
 
 
 def _add_max_runtime_sec_argument(parser: Any) -> None:
@@ -341,6 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status", help="Show stored task status")
     status.add_argument("task_id")
     status.add_argument("--repo", default=".")
+    status.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     cancel = sub.add_parser("cancel", help="Mark a stored task as cancelled")
     cancel.add_argument("task_id")
@@ -472,20 +511,25 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["pending", "approved", "rejected", "stale", "all"],
         default="pending",
     )
+    approvals_list.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     approvals_show = approvals_sub.add_parser("show", help="Show approval request details")
     approvals_show.add_argument("approval_id", type=int)
     approvals_show.add_argument("--repo", default=".")
+    approvals_show.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     approvals_approve = approvals_sub.add_parser("approve", help="Approve an approval request")
     approvals_approve.add_argument("approval_id", type=int)
     approvals_approve.add_argument("--repo", default=".")
     approvals_approve.add_argument("--resolution", default="approved by operator")
+    approvals_approve.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     approvals_reject = approvals_sub.add_parser("reject", help="Reject an approval request")
     approvals_reject.add_argument("approval_id", type=int)
     approvals_reject.add_argument("--repo", default=".")
     approvals_reject.add_argument("--resolution", default="rejected by operator")
+    approvals_reject.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     approvals_retry = approvals_sub.add_parser("retry", help="Retry an approved request")
     approvals_retry.add_argument("approval_id", type=int)
     approvals_retry.add_argument("--repo", default=".")
+    approvals_retry.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     approvals_stale = approvals_sub.add_parser(
         "stale",
         help="Mark old pending approval requests as stale",
@@ -494,6 +538,7 @@ def build_parser() -> argparse.ArgumentParser:
     approvals_stale.add_argument("--task-id")
     approvals_stale.add_argument("--older-than-hours", type=int, default=24)
     approvals_stale.add_argument("--resolution", default="marked stale by operator")
+    approvals_stale.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     autopilot = sub.add_parser("autopilot", help="Run roadmap tasks through the supervisor")
     autopilot_sub = autopilot.add_subparsers(dest="autopilot_command")
@@ -1012,6 +1057,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
         help="Number of recent items to show per status (default: 5)",
+    )
+    autopilot_queue_status.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON object instead of the default text summary",
     )
     autopilot_queue_readiness = autopilot_queue_sub.add_parser(
         "readiness",
@@ -1617,10 +1667,40 @@ def main(argv: list[str] | None = None) -> int:
         store = _state_store_for_repo(Path(args.repo))
         task = store.get_task(args.task_id)
         if task is None:
+            if args.json:
+                _print_control_json_error(
+                    "status",
+                    code="task_not_found",
+                    message=f"Task not found: {args.task_id}",
+                    task_id=args.task_id,
+                )
+                return 1
             print(f"Task not found: {args.task_id}")
             return 1
 
         iterations = store.list_iterations(task.task_id)
+        if args.json:
+            iteration_payloads = []
+            for iteration in iterations:
+                checks = store.list_verification_runs(
+                    task.task_id,
+                    iteration.iteration_id,
+                )
+                iteration_payloads.append(
+                    {
+                        **asdict(iteration),
+                        "verification_runs": [asdict(check) for check in checks],
+                    }
+                )
+            _print_control_json(
+                _control_json_payload(
+                    "status",
+                    task=asdict(task),
+                    iteration_count=len(iterations),
+                    iterations=iteration_payloads,
+                )
+            )
+            return 0
         print(f"Task: {task.task_id}")
         print(f"Status: {task.status}")
         print(f"Repo: {task.repo_path}")
@@ -2645,6 +2725,14 @@ def _print_recover_json(
 def _run_timeline(args: argparse.Namespace, store: StateStore) -> int:
     task = store.get_task(args.task_id)
     if task is None:
+        if args.json:
+            _print_control_json_error(
+                "timeline",
+                code="task_not_found",
+                message=f"Task not found: {args.task_id}",
+                task_id=args.task_id,
+            )
+            return 1
         print(f"Task not found: {args.task_id}")
         return 1
 
@@ -3874,6 +3962,17 @@ def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentPa
     if args.approvals_command == "list":
         status = None if args.status == "all" else args.status
         approvals = store.list_approval_requests(task_id=args.task_id, status=status)
+        if args.json:
+            _print_control_json(
+                _control_json_payload(
+                    "approvals list",
+                    status_filter=args.status,
+                    task_id=args.task_id,
+                    count=len(approvals),
+                    approvals=[_approval_json(approval) for approval in approvals],
+                )
+            )
+            return 0
         if not approvals:
             print("No approval requests found.")
             return 0
@@ -3884,8 +3983,24 @@ def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentPa
     if args.approvals_command == "show":
         shown_approval = store.get_approval_request(args.approval_id)
         if shown_approval is None:
+            if args.json:
+                _print_control_json_error(
+                    "approvals show",
+                    code="approval_not_found",
+                    message=f"Approval request not found: {args.approval_id}",
+                    approval_id=args.approval_id,
+                )
+                return 1
             print(f"Approval request not found: {args.approval_id}")
             return 1
+        if args.json:
+            _print_control_json(
+                _control_json_payload(
+                    "approvals show",
+                    approval=_approval_json(shown_approval),
+                )
+            )
+            return 0
         print(_format_approval_detail(shown_approval), end="")
         return 0
 
@@ -3897,20 +4012,53 @@ def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentPa
             resolution=args.resolution,
         )
         if resolved_approval is None:
+            if args.json:
+                _print_control_json_error(
+                    f"approvals {args.approvals_command}",
+                    code="approval_not_found",
+                    message=f"Approval request not found: {args.approval_id}",
+                    approval_id=args.approval_id,
+                )
+                return 1
             print(f"Approval request not found: {args.approval_id}")
             return 1
+        if args.json:
+            _print_control_json(
+                _control_json_payload(
+                    f"approvals {args.approvals_command}",
+                    approval=_approval_json(resolved_approval),
+                    resolution=args.resolution,
+                )
+            )
+            return 0
         print(_format_approval_summary(resolved_approval))
         return 0
 
     if args.approvals_command == "retry":
         retried_approval = store.get_approval_request(args.approval_id)
         if retried_approval is None:
+            if args.json:
+                _print_control_json_error(
+                    "approvals retry",
+                    code="approval_not_found",
+                    message=f"Approval request not found: {args.approval_id}",
+                    approval_id=args.approval_id,
+                )
+                return 1
             print(f"Approval request not found: {args.approval_id}")
             return 1
-        return _retry_approval_request(store, retried_approval)
+        return _retry_approval_request(store, retried_approval, json_output=args.json)
 
     if args.approvals_command == "stale":
         if args.older_than_hours < 1:
+            if args.json:
+                _print_control_json_error(
+                    "approvals stale",
+                    code="invalid_older_than_hours",
+                    message="--older-than-hours must be at least 1",
+                    older_than_hours=args.older_than_hours,
+                )
+                return 1
             print("--older-than-hours must be at least 1")
             return 1
         cutoff = datetime.now(UTC) - timedelta(hours=args.older_than_hours)
@@ -3919,6 +4067,18 @@ def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentPa
             task_id=args.task_id,
             resolution=args.resolution,
         )
+        if args.json:
+            _print_control_json(
+                _control_json_payload(
+                    "approvals stale",
+                    task_id=args.task_id,
+                    older_than_hours=args.older_than_hours,
+                    resolution=args.resolution,
+                    count=len(stale_approvals),
+                    approvals=[_approval_json(approval) for approval in stale_approvals],
+                )
+            )
+            return 0
         if not stale_approvals:
             print("No stale approval requests found.")
             return 0
@@ -3928,6 +4088,10 @@ def _run_approvals_command(args: argparse.Namespace, parser: argparse.ArgumentPa
 
     parser.print_help()
     return 1
+
+
+def _approval_json(approval: StoredApprovalRequest) -> dict[str, object]:
+    return asdict(approval)
 
 
 def _format_approval_summary(approval: StoredApprovalRequest) -> str:
@@ -3970,8 +4134,22 @@ def _format_approval_detail(approval: StoredApprovalRequest) -> str:
 def _retry_approval_request(
     store: StateStore,
     approval: StoredApprovalRequest,
+    *,
+    json_output: bool = False,
 ) -> int:
     if approval.status != "approved":
+        if json_output:
+            _print_control_json_error(
+                "approvals retry",
+                code="approval_not_approved",
+                message=(
+                    "Approval request is not approved: "
+                    f"{approval.approval_id} status={approval.status}"
+                ),
+                approval_id=approval.approval_id,
+                status=approval.status,
+            )
+            return 1
         print(
             "Approval request is not approved: "
             f"{approval.approval_id} status={approval.status}"
@@ -3980,11 +4158,25 @@ def _retry_approval_request(
 
     task = store.get_task(approval.task_id)
     if task is None:
+        if json_output:
+            _print_control_json_error(
+                "approvals retry",
+                code="task_not_found",
+                message=f"Task not found for approval request: {approval.task_id}",
+                approval_id=approval.approval_id,
+                task_id=approval.task_id,
+            )
+            return 1
         print(f"Task not found for approval request: {approval.task_id}")
         return 1
 
     if approval.source == "tool_broker":
-        return _retry_tool_broker_approval_request(store, approval, task)
+        return _retry_tool_broker_approval_request(
+            store,
+            approval,
+            task,
+            json_output=json_output,
+        )
 
     repo = Path(task.repo_path)
     config = load_project_config(repo)
@@ -4022,6 +4214,15 @@ def _retry_approval_request(
         exit_code=exit_code,
         error=result.error or _tool_retry_stderr(result),
     )
+    if json_output:
+        _print_approval_retry_json(
+            approval=approval,
+            result=result,
+            retry_status=retry_status,
+            exit_code=exit_code,
+            updated_approval=updated_approval,
+        )
+        return 0 if retry_status == "passed" else 1
     print(f"retry: {retry_status} exit={exit_code}")
     if updated_approval is not None:
         print(
@@ -4070,14 +4271,37 @@ def _retry_tool_broker_approval_request(
     store: StateStore,
     approval: StoredApprovalRequest,
     task: StoredTask,
+    *,
+    json_output: bool = False,
 ) -> int:
     action = _find_tool_broker_action_for_approval(store, approval)
     if action is None:
+        if json_output:
+            _print_control_json_error(
+                "approvals retry",
+                code="tool_action_not_found",
+                message=f"Tool action not found for approval request: {approval.approval_id}",
+                approval_id=approval.approval_id,
+                task_id=approval.task_id,
+            )
+            return 1
         print(f"Tool action not found for approval request: {approval.approval_id}")
         return 1
 
     call = _tool_call_from_action(action)
     if call is None:
+        if json_output:
+            _print_control_json_error(
+                "approvals retry",
+                code="invalid_tool_action_payload",
+                message=(
+                    "Tool action payload is invalid for approval request: "
+                    f"{approval.approval_id}"
+                ),
+                approval_id=approval.approval_id,
+                action_id=action.action_id,
+            )
+            return 1
         print(f"Tool action payload is invalid for approval request: {approval.approval_id}")
         return 1
 
@@ -4087,6 +4311,15 @@ def _retry_tool_broker_approval_request(
     registry = _tool_executor_registry(repo, config=config, approved_call=call)
     executor = registry.get(call.spec.name)
     if executor is None:
+        if json_output:
+            _print_control_json_error(
+                "approvals retry",
+                code="tool_executor_not_found",
+                message=f"No executor registered for tool: {call.spec.name}",
+                approval_id=approval.approval_id,
+                tool_name=call.spec.name,
+            )
+            return 1
         print(f"No executor registered for tool: {call.spec.name}")
         return 1
 
@@ -4103,6 +4336,15 @@ def _retry_tool_broker_approval_request(
         exit_code=exit_code,
         error=result.error or _tool_retry_stderr(result),
     )
+    if json_output:
+        _print_approval_retry_json(
+            approval=approval,
+            result=result,
+            retry_status=retry_status,
+            exit_code=exit_code,
+            updated_approval=updated_approval,
+        )
+        return 0 if retry_status == "passed" else 1
     print(f"retry: {retry_status} exit={exit_code}")
     if updated_approval is not None:
         print(
@@ -4120,6 +4362,45 @@ def _retry_tool_broker_approval_request(
     if stderr:
         print(stderr, end="" if stderr.endswith("\n") else "\n")
     return 0 if retry_status == "passed" else 1
+
+
+def _print_approval_retry_json(
+    *,
+    approval: StoredApprovalRequest,
+    result: ToolResult,
+    retry_status: str,
+    exit_code: int | None,
+    updated_approval: StoredApprovalRequest | None,
+) -> None:
+    stdout = _tool_retry_stdout(result)
+    stderr = _tool_retry_stderr(result)
+    current_approval = updated_approval or approval
+    _print_control_json(
+        _control_json_payload(
+            "approvals retry",
+            ok=retry_status == "passed",
+            error=(
+                None
+                if retry_status == "passed"
+                else {
+                    "code": retry_status,
+                    "message": result.error or stderr or retry_status,
+                }
+            ),
+            approval_id=approval.approval_id,
+            task_id=approval.task_id,
+            status=current_approval.status,
+            retry_status=retry_status,
+            exit_code=exit_code,
+            retry_count=current_approval.retry_count,
+            last_retry_status=current_approval.last_retry_status,
+            last_retry_exit_code=current_approval.last_retry_exit_code,
+            retry_error=result.error,
+            stdout=stdout,
+            stderr=stderr,
+            approval=_approval_json(current_approval),
+        )
+    )
 
 
 def _tool_executor_registry(
@@ -5398,6 +5679,14 @@ def _run_autopilot_queue_show(
     """
     item = store.get_plan_item(args.plan_item_id)
     if item is None:
+        if args.json:
+            _print_control_json_error(
+                "autopilot queue show",
+                code="queue_item_not_found",
+                message=f"Queue item not found: {args.plan_item_id}",
+                plan_item_id=args.plan_item_id,
+            )
+            return 1
         print(f"Queue item not found: {args.plan_item_id}")
         return 1
 
@@ -5419,7 +5708,9 @@ def _run_autopilot_queue_show(
             "task_id": item.task_id,
             "report_path": str(report_path) if report_path else None,
             "selected_worktree": item.selected_worktree_path,
+            "selected_worktree_path": item.selected_worktree_path,
             "reason": item.blocked_reason,
+            "blocked_reason": item.blocked_reason,
             "plan_graph_id": item.plan_graph_id,
             "plan_graph_root_node_id": item.plan_graph_root_node_id,
         }
@@ -6459,19 +6750,59 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
         else:
             plan_path = _resolve_plan_path(repo, Path(args.plan))
             if not plan_path.exists():
+                if args.json:
+                    _print_control_json_error(
+                        "autopilot queue status",
+                        code="plan_not_found",
+                        message=f"Plan not found: {plan_path}",
+                        plan=str(plan_path),
+                    )
+                    return 1
                 print(f"Plan not found: {plan_path}")
                 return 1
             plan_label = str(plan_path)
             items = store.list_plan_items(plan_path=plan_path)
         statuses = tuple(args.status or [])
         filtered_items = _filter_queue_items(items, statuses)
+        status_counts = {}
+        for item in items:
+            status_counts[item.status] = status_counts.get(item.status, 0) + 1
+        limit = max(0, args.limit)
+        if args.json:
+            recent_by_status = {}
+            for status in _QUEUE_STATUSES:
+                if statuses and status not in statuses:
+                    continue
+                recent = sorted(
+                    [item for item in items if item.status == status],
+                    key=lambda item: (item.updated_at, item.plan_item_id),
+                    reverse=True,
+                )[:limit]
+                recent_by_status[status] = [
+                    _queue_item_readiness_ref(repo, item) for item in recent
+                ]
+            _print_control_json(
+                _control_json_payload(
+                    "autopilot queue status",
+                    plan=plan_label,
+                    all_plans=include_plan_path,
+                    total=len(items),
+                    filtered=len(filtered_items),
+                    status_filter=list(statuses),
+                    limit=limit,
+                    by_status=dict(sorted(status_counts.items())),
+                    recent=recent_by_status,
+                    problem_summary=_problem_summary_data(
+                        filtered_items,
+                        limit=limit if limit else None,
+                    ),
+                )
+            )
+            return 0
         print(f"Queue status for {plan_label}")
         print(f"  total: {len(items)}")
         if statuses:
             print(f"  filtered: {len(filtered_items)} status={','.join(statuses)}")
-        status_counts = {}
-        for item in items:
-            status_counts[item.status] = status_counts.get(item.status, 0) + 1
         if status_counts:
             summary = ", ".join(
                 f"{status}={count}" for status, count in sorted(status_counts.items())
@@ -6482,12 +6813,11 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
 
         problem_summary = _format_problem_summary(
             filtered_items,
-            limit=max(0, args.limit) if args.limit else None,
+            limit=limit if limit else None,
         )
         if problem_summary:
             print(problem_summary)
 
-        limit = max(0, args.limit)
         for status, label in (
             ("created", "created"),
             ("in_progress", "started"),

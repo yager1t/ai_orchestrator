@@ -40,6 +40,33 @@ python -m ai_orchestrator release-check --repo .
 git diff --check
 ```
 
+## v0.8 Control Surface Gate
+
+Before tagging v0.8, confirm the stable control surface is documented and
+covered by focused contract tests:
+
+- `ai-orch export <task-id> --repo . [--redact]`
+- `ai-orch status <task-id> --repo . --json`
+- `ai-orch timeline <task-id> --repo . --json`
+- `ai-orch recover --repo . --json`
+- `ai-orch approvals list|show|approve|reject|retry --repo . --json`
+- `ai-orch autopilot queue show|status|readiness|preflight --repo . --json`
+
+Run the v0.8 quality gate before the release commit:
+
+```bash
+python -m pytest
+python -m compileall ai_orchestrator
+ruff check .
+mypy ai_orchestrator
+python -m ai_orchestrator release-check --repo .
+git diff --check
+```
+
+The release is blocked if the stable JSON contracts, redaction behavior, error
+shapes, hard release stops, or external operator workflow are missing from docs
+or tests.
+
 For larger or risky releases, compile a reviewer-ready handoff using
 `docs/SHIPPING_PACKET_TEMPLATE.md`.
 

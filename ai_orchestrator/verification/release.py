@@ -23,6 +23,7 @@ def run_release_checks(repo: Path) -> list[ReleaseCheckResult]:
         _check_version_sync(pyproject),
         _check_package_entrypoints(repo, pyproject),
         _check_release_docs(repo),
+        _check_v0_8_control_surface_docs(repo),
     ]
 
 
@@ -193,6 +194,75 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
             "README, changelog, platform install guides, onboarding plan, "
             "v0.5 action broker plan, user guide, release checklist, and "
             "shipping template present"
+        ),
+    )
+
+
+def _check_v0_8_control_surface_docs(repo: Path) -> ReleaseCheckResult:
+    required_docs = [
+        repo / "docs" / "RELEASE.md",
+        repo / "docs" / "USER_GUIDE.md",
+        repo / "docs" / "V0_8_GOAL_PLAN.md",
+        repo / "docs" / "V0_8_JSON_CONTRACTS.md",
+        repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md",
+    ]
+    missing = [_relative_label(path, repo) for path in required_docs if not path.exists()]
+    if missing:
+        return ReleaseCheckResult(
+            name="v0.8-control-surface-docs",
+            status="failed",
+            detail=f"Missing docs: {', '.join(missing)}",
+        )
+
+    content_requirements = [
+        (repo / "docs" / "V0_8_GOAL_PLAN.md", "stable control surface"),
+        (repo / "docs" / "V0_8_GOAL_PLAN.md", "subagent workflow"),
+        (repo / "docs" / "V0_8_GOAL_PLAN.md", "hard release stops"),
+        (repo / "docs" / "V0_8_GOAL_PLAN.md", "testable p0 tasks"),
+        (
+            repo / "docs" / "V0_8_GOAL_PLAN.md",
+            "supervisor, not the worker agent, decides done",
+        ),
+        (repo / "docs" / "V0_8_JSON_CONTRACTS.md", "stable now"),
+        (repo / "docs" / "V0_8_JSON_CONTRACTS.md", "stable candidate"),
+        (repo / "docs" / "V0_8_JSON_CONTRACTS.md", "experimental or internal"),
+        (repo / "docs" / "V0_8_JSON_CONTRACTS.md", "schema_version"),
+        (repo / "docs" / "V0_8_JSON_CONTRACTS.md", "generated_at"),
+        (repo / "docs" / "V0_8_JSON_CONTRACTS.md", "path/redaction"),
+        (repo / "docs" / "V0_8_JSON_CONTRACTS.md", "timeline --json"),
+        (repo / "docs" / "V0_8_JSON_CONTRACTS.md", "recover --json"),
+        (repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md", "start_task"),
+        (repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md", "get_status"),
+        (repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md", "list_approvals"),
+        (repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md", "approve_action"),
+        (repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md", "export_trace"),
+        (repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md", "no long-running mcp server"),
+        (repo / "docs" / "RELEASE.md", "v0.8 control surface gate"),
+        (repo / "docs" / "RELEASE.md", "python -m pytest"),
+        (repo / "docs" / "RELEASE.md", "ruff check ."),
+        (repo / "docs" / "RELEASE.md", "mypy ai_orchestrator"),
+        (repo / "docs" / "USER_GUIDE.md", "external local operator workflow"),
+        (repo / "docs" / "USER_GUIDE.md", "ai-orch status <task-id> --repo . --json"),
+        (repo / "docs" / "USER_GUIDE.md", "ai-orch approvals list --repo . --json"),
+        (repo / "docs" / "USER_GUIDE.md", "ai-orch export <task-id> --repo . --redact"),
+    ]
+    missing_content = [
+        f"{_relative_label(path, repo)} missing {needle!r}"
+        for path, needle in content_requirements
+        if needle.lower() not in path.read_text(encoding="utf-8").lower()
+    ]
+    if missing_content:
+        return ReleaseCheckResult(
+            name="v0.8-control-surface-docs",
+            status="failed",
+            detail=f"Missing v0.8 control surface content: {', '.join(missing_content)}",
+        )
+    return ReleaseCheckResult(
+        name="v0.8-control-surface-docs",
+        status="passed",
+        detail=(
+            "v0.8 goal plan, JSON contract inventory, release gate, and "
+            "external operator workflow documented"
         ),
     )
 

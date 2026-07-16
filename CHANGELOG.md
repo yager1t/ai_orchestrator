@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.8.0 - Ecosystem Control Surface
+
+Date: 2026-07-16
+
+- Added v0.8 control-surface JSON output for `status`, approval
+  list/show/approve/reject/retry workflows, and `autopilot queue status`.
+
+- Added v0.8 JSON contract documentation, external local operator workflow
+  guidance, focused contract tests, and a release-check gate for the documented
+  control surface.
+
 ## 0.7.0 - Worktree + Sandbox Isolation
 
 Date: 2026-07-13

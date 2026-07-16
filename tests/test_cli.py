@@ -912,12 +912,65 @@ def test_status_prints_stored_task(capsys, tmp_path: Path) -> None:
     assert "check=unit status=passed exit=0" in output
 
 
+def test_status_json_prints_stored_task(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="demo task",
+        raw_output="done",
+        decision_status="done",
+        decision_reason="Verification passed: unit",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="unit",
+            status="passed",
+            exit_code=0,
+            stdout="ok",
+            stderr="",
+        ),
+    )
+    store.update_task_status(task.task_id, "done")
+
+    exit_code = main(["status", task.task_id, "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["schema_version"] == "1.0"
+    assert payload["command"] == "status"
+    assert payload["ok"] is True
+    assert payload["error"] is None
+    assert payload["task"]["task_id"] == task.task_id
+    assert payload["task"]["status"] == "done"
+    assert payload["iteration_count"] == 1
+    assert payload["iterations"][0]["iteration_id"] == iteration.iteration_id
+    assert payload["iterations"][0]["verification_runs"][0]["name"] == "unit"
+    assert payload["iterations"][0]["verification_runs"][0]["status"] == "passed"
+
+
 def test_status_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
     exit_code = main(["status", "missing-task", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
 
     assert exit_code == 1
     assert "Task not found: missing-task" in output
+
+
+def test_status_json_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
+    exit_code = main(["status", "missing-task", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["command"] == "status"
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "task_not_found"
+    assert payload["error"]["task_id"] == "missing-task"
 
 
 def test_metrics_prints_local_summary(capsys, tmp_path: Path) -> None:
@@ -1007,12 +1060,45 @@ def test_approvals_list_prints_pending_requests(capsys, tmp_path: Path) -> None:
     assert "command=git push origin main" in output
 
 
+def test_approvals_list_json_prints_pending_requests(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="git push origin main",
+        reason="policy requires approval",
+    )
+
+    exit_code = main(["approvals", "list", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["command"] == "approvals list"
+    assert payload["ok"] is True
+    assert payload["status_filter"] == "pending"
+    assert payload["count"] == 1
+    assert payload["approvals"][0]["approval_id"] == approval.approval_id
+    assert payload["approvals"][0]["status"] == "pending"
+    assert payload["approvals"][0]["command_string"] == "git push origin main"
+
+
 def test_approvals_list_prints_empty_state(capsys, tmp_path: Path) -> None:
     exit_code = main(["approvals", "list", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
 
     assert exit_code == 0
     assert "No approval requests found." in output
+
+
+def test_approvals_list_json_prints_empty_list(capsys, tmp_path: Path) -> None:
+    exit_code = main(["approvals", "list", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["count"] == 0
+    assert payload["approvals"] == []
 
 
 def test_approvals_show_prints_details(capsys, tmp_path: Path) -> None:
@@ -1036,6 +1122,36 @@ def test_approvals_show_prints_details(capsys, tmp_path: Path) -> None:
     assert "Status: pending" in output
     assert "Source: memory" in output
     assert "Reason: memory indexing requires approval" in output
+
+
+def test_approvals_show_json_prints_details(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="memory",
+        command_string="codebase-memory-mcp cli index_repository",
+        reason="memory indexing requires approval",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "show",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["command"] == "approvals show"
+    assert payload["approval"]["approval_id"] == approval.approval_id
+    assert payload["approval"]["source"] == "memory"
+    assert payload["approval"]["reason"] == "memory indexing requires approval"
 
 
 def test_approvals_approve_resolves_request(capsys, tmp_path: Path) -> None:
@@ -1070,6 +1186,38 @@ def test_approvals_approve_resolves_request(capsys, tmp_path: Path) -> None:
     assert loaded.resolution == "looks safe"
 
 
+def test_approvals_approve_json_resolves_request(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="git push origin main",
+        reason="policy requires approval",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "approve",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--resolution",
+            "looks safe",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["command"] == "approvals approve"
+    assert payload["approval"]["approval_id"] == approval.approval_id
+    assert payload["approval"]["status"] == "approved"
+    assert payload["approval"]["resolution"] == "looks safe"
+
+
 def test_approvals_reject_resolves_request(capsys, tmp_path: Path) -> None:
     store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
     task = store.create_task("demo task", repo_path=tmp_path)
@@ -1100,6 +1248,38 @@ def test_approvals_reject_resolves_request(capsys, tmp_path: Path) -> None:
     assert loaded is not None
     assert loaded.status == "rejected"
     assert loaded.resolution == "not needed"
+
+
+def test_approvals_reject_json_resolves_request(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="pip install demo",
+        reason="package install requires approval",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "reject",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--resolution",
+            "not needed",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["command"] == "approvals reject"
+    assert payload["approval"]["approval_id"] == approval.approval_id
+    assert payload["approval"]["status"] == "rejected"
+    assert payload["approval"]["resolution"] == "not needed"
 
 
 def test_approvals_retry_runs_approved_request(
@@ -1174,6 +1354,75 @@ def test_approvals_retry_runs_approved_request(
         "stderr": "",
         "exit_code": 0,
     }
+
+
+def test_approvals_retry_json_runs_approved_request(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[tuple[list[str], Path | None]] = []
+
+    def fake_run(
+        self: ProcessRunner,
+        argv: list[str],
+        cwd: Path | None = None,
+        timeout_sec: int = 300,
+        should_cancel=None,
+        options: RunOptions | None = None,
+    ) -> ProcessResult:
+        captured.append((argv, cwd))
+        return ProcessResult(
+            status="success",
+            exit_code=0,
+            stdout="retry ok",
+            stderr="",
+        )
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(
+        tmp_path,
+        command_name="approval",
+        command_run="retry-token command",
+        require_approval_patterns=["retry-token"],
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="retry-token command",
+        reason="policy requires approval",
+    )
+    store.resolve_approval_request(
+        approval.approval_id,
+        "approved",
+        resolution="looks safe",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "retry",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["command"] == "approvals retry"
+    assert payload["ok"] is True
+    assert payload["approval_id"] == approval.approval_id
+    assert payload["task_id"] == task.task_id
+    assert payload["retry_status"] == "passed"
+    assert payload["exit_code"] == 0
+    assert payload["retry_count"] == 1
+    assert payload["stdout"] == "retry ok"
+    assert captured == [(["retry-token", "command"], tmp_path)]
 
 
 def test_approvals_retry_runs_approved_tool_broker_request(
@@ -1421,6 +1670,40 @@ def test_approvals_retry_requires_approved_request(
     assert f"Approval request is not approved: {approval.approval_id} status=pending" in output
 
 
+def test_approvals_retry_json_requires_approved_request(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="retry-token command",
+        reason="policy requires approval",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "retry",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "approval_not_approved"
+    assert payload["error"]["approval_id"] == approval.approval_id
+    assert payload["error"]["status"] == "pending"
+    assert store.get_approval_request(approval.approval_id).retry_count == 0  # type: ignore[union-attr]
+
+
 def test_approvals_stale_marks_old_pending_requests(
     capsys,
     tmp_path: Path,
@@ -1517,12 +1800,80 @@ def test_approvals_retry_does_not_override_deny_rules(
     assert calls == []
 
 
+def test_approvals_retry_json_does_not_override_deny_rules(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(self: ProcessRunner, argv: list[str], **kwargs) -> ProcessResult:
+        calls.append(argv)
+        return ProcessResult(status="success", exit_code=0, stdout="ran", stderr="")
+
+    monkeypatch.setattr(ProcessRunner, "run", fake_run)
+    write_config(
+        tmp_path,
+        command_name="danger",
+        command_run="dangerous command",
+        deny_patterns=["dangerous"],
+        require_approval_patterns=["dangerous"],
+    )
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("demo task", repo_path=tmp_path)
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=None,
+        source="verification",
+        command_string="dangerous command",
+        reason="policy requires approval",
+    )
+    store.resolve_approval_request(
+        approval.approval_id,
+        "approved",
+        resolution="operator approved",
+    )
+
+    exit_code = main(
+        [
+            "approvals",
+            "retry",
+            str(approval.approval_id),
+            "--repo",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["ok"] is False
+    assert payload["retry_status"] == "policy_denied"
+    assert payload["error"]["code"] == "policy_denied"
+    assert "Denied by pattern: dangerous" in payload["error"]["message"]
+    assert calls == []
+
+
 def test_approvals_returns_error_for_missing_request(capsys, tmp_path: Path) -> None:
     exit_code = main(["approvals", "show", "404", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
 
     assert exit_code == 1
     assert "Approval request not found: 404" in output
+
+
+def test_approvals_show_json_returns_error_for_missing_request(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    exit_code = main(["approvals", "show", "404", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["command"] == "approvals show"
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "approval_not_found"
+    assert payload["error"]["approval_id"] == 404
 
 
 def test_tui_status_prints_read_only_task_view(capsys, tmp_path: Path) -> None:
@@ -1967,7 +2318,26 @@ def test_recover_json_reports_counts(capsys, tmp_path: Path) -> None:
     payload = json.loads(output)
 
     assert exit_code == 0
+    assert set(payload) == {
+        "apply",
+        "dry_run",
+        "reason",
+        "running_tasks",
+        "expired_action_leases",
+        "stale_started_actions",
+        "worktree_recovery_candidates",
+        "recovered",
+    }
+    assert payload["apply"] is False
     assert payload["dry_run"] is True
+    assert payload["reason"] is None
+    for section in (
+        "running_tasks",
+        "expired_action_leases",
+        "stale_started_actions",
+        "worktree_recovery_candidates",
+    ):
+        assert set(payload[section]) == {"count", "items"}
     assert payload["running_tasks"]["count"] == 1
     assert payload["running_tasks"]["items"][0]["task_id"] == task.task_id
     assert payload["expired_action_leases"]["count"] == 1
@@ -1979,6 +2349,53 @@ def test_recover_json_reports_counts(capsys, tmp_path: Path) -> None:
         "failed_actions": 0,
         "marked_worktree_recoveries": 0,
     }
+
+
+def test_recover_apply_json_reports_recovery_counts(capsys, tmp_path: Path) -> None:
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task("json apply interrupted task", repo_path=tmp_path, status="running")
+    action = store.record_action(
+        task_id=task.task_id,
+        idempotency_key="recover-action-json-apply",
+        action_type="tool_call",
+    )
+    store.acquire_action_lease(
+        action.action_id,
+        lease_owner="worker-1",
+        ttl_sec=30,
+        now="2026-01-01T00:00:00+00:00",
+    )
+
+    exit_code = main(
+        [
+            "recover",
+            "--repo",
+            str(tmp_path),
+            "--apply",
+            "--reason",
+            "operator recovered json apply",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    recovered_task = store.get_task(task.task_id)
+    recovered_action = store.get_action_record(action.action_id)
+
+    assert exit_code == 0
+    assert payload["apply"] is True
+    assert payload["dry_run"] is False
+    assert payload["reason"] == "operator recovered json apply"
+    assert payload["recovered"] == {
+        "blocked_tasks": 1,
+        "failed_actions": 1,
+        "marked_worktree_recoveries": 0,
+    }
+    assert recovered_task is not None
+    assert recovered_task.status == "blocked"
+    assert recovered_action is not None
+    assert recovered_action.status == "failed"
+    assert recovered_action.result["reason"] == "operator recovered json apply"
 
 
 def test_recover_reports_stale_worktree_execution(capsys, tmp_path: Path) -> None:
@@ -2472,7 +2889,11 @@ def test_timeline_json_prints_replay_read_model(capsys, tmp_path: Path) -> None:
     payload = json.loads(output)
 
     assert exit_code == 0
+    assert set(payload) == {"task", "timeline"}
     assert payload["task"]["task_id"] == task.task_id
+    assert payload["task"]["status"] == "created"
+    assert payload["timeline"][0]["timeline_index"] == 1
+    assert payload["timeline"][0]["source"] == "task"
     assert [entry["event_type"] for entry in payload["timeline"]] == [
         "task.created",
         "task.recovered",
@@ -2490,6 +2911,17 @@ def test_timeline_returns_error_for_missing_task(capsys, tmp_path: Path) -> None
 
     assert exit_code == 1
     assert "Task not found: missing-task" in output
+
+
+def test_timeline_json_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
+    exit_code = main(["timeline", "missing-task", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["command"] == "timeline"
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "task_not_found"
+    assert payload["error"]["task_id"] == "missing-task"
 
 
 def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
@@ -2625,12 +3057,30 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
     assert trace_path.exists()
 
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert set(trace) == {
+        "metadata",
+        "task",
+        "timeline",
+        "task_events",
+        "action_records",
+        "action_journal",
+        "replan_decisions",
+        "plan_graph",
+        "memory_lessons",
+        "reflection_records",
+        "memory_influence",
+        "iterations",
+        "verification_runs",
+        "approvals",
+    }
     assert trace["metadata"]["schema_version"] == "1.2"
     assert trace["metadata"]["task_id"] == task.task_id
     assert trace["metadata"]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["metadata"]["unsafe_action_count"] == 0
     assert trace["metadata"]["redaction_mode"] == "none"
     assert "exported_at" in trace["metadata"]
+    exported_at = datetime.fromisoformat(trace["metadata"]["exported_at"])
+    assert exported_at.tzinfo is not None
     assert trace["task"]["task_id"] == task.task_id
     assert trace["task"]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["task"]["status"] == "done"
@@ -2682,6 +3132,7 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
     assert trace["action_journal"][1]["provenance"]["task_id"] == task.task_id
     assert trace["action_journal"][2]["lease"]["owner"] == "worker-1"
     assert len(trace["replan_decisions"]) == 1
+    assert trace["replan_decisions"][0]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["replan_decisions"][0]["status"] == "continue"
     assert trace["replan_decisions"][0]["failed_checks"][0]["name"] == "unit"
     assert trace["plan_graph"]["graph"]["graph_id"] == graph.graph_id
@@ -2694,17 +3145,23 @@ def test_export_writes_json_trace_file(capsys, tmp_path: Path) -> None:
     ]
     assert trace["plan_graph"]["readiness"][0]["reason"] == "node_status_done"
     assert trace["memory_lessons"][0]["lesson"] == "Retry unit after fixing assertion"
+    assert trace["memory_lessons"][0]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["reflection_records"][0]["reflection_type"] == "failed_verification"
+    assert trace["reflection_records"][0]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["memory_influence"][0]["lesson_id"] == lesson.lesson_id
+    assert trace["memory_influence"][0]["run_id"] == store.run_id_for_task(task.task_id)
     assert len(trace["iterations"]) == 1
     assert trace["iterations"][0]["prompt"] == "demo export"
+    assert trace["iterations"][0]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["iterations"][0]["decision_status"] == "done"
     assert len(trace["verification_runs"]) == 1
     assert trace["verification_runs"][0]["name"] == "unit"
     assert trace["verification_runs"][0]["status"] == "passed"
+    assert trace["verification_runs"][0]["run_id"] == store.run_id_for_task(task.task_id)
     assert trace["verification_runs"][0]["stdout"] == "ok"
     assert len(trace["approvals"]) == 1
     assert trace["approvals"][0]["status"] == "approved"
+    assert trace["approvals"][0]["run_id"] == store.run_id_for_task(task.task_id)
 
 
 def test_export_returns_error_for_missing_task(capsys, tmp_path: Path) -> None:
@@ -7595,6 +8052,62 @@ def test_autopilot_queue_status_summarizes_counts_and_recent_items(
     assert "Dry run" not in output
 
 
+def test_autopilot_queue_status_json_summarizes_counts_and_recent_items(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text(
+        "\n".join(
+            [
+                "# Roadmap",
+                "",
+                "- [ ] Done task",
+                "- [ ] Blocked task",
+                "- [ ] Started task",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    items = {item.text: item for item in store.list_plan_items(plan_path=plan)}
+    store.update_plan_item_status(items["Done task"].plan_item_id, "done")
+    store.update_plan_item_status(items["Blocked task"].plan_item_id, "blocked")
+    store.update_plan_item_status(items["Started task"].plan_item_id, "in_progress")
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "status",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(plan),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["schema_version"] == "1.0"
+    assert payload["command"] == "autopilot queue status"
+    assert payload["ok"] is True
+    assert payload["plan"] == str(plan)
+    assert payload["total"] == 3
+    assert payload["filtered"] == 3
+    assert payload["by_status"] == {"blocked": 1, "done": 1, "in_progress": 1}
+    assert payload["recent"]["done"][0]["plan_item_id"] == items["Done task"].plan_item_id
+    assert payload["recent"]["blocked"][0]["status"] == "blocked"
+    assert payload["problem_summary"][0]["status"] == "in_progress"
+    assert payload["problem_summary"][0]["count"] == 1
+    assert payload["problem_summary"][1]["status"] == "blocked"
+    assert payload["problem_summary"][1]["count"] == 1
+
+
 def test_autopilot_queue_status_filters_recent_items_by_status(
     capsys,
     tmp_path: Path,
@@ -9890,7 +10403,9 @@ def test_autopilot_queue_show_json_prints_item_details_without_changing_state(
         "task_id": task.task_id,
         "report_path": str(report_path),
         "selected_worktree": str(worktree),
+        "selected_worktree_path": str(worktree),
         "reason": "needs operator review",
+        "blocked_reason": "needs operator review",
         "plan_graph_id": None,
         "plan_graph_root_node_id": None,
     }
@@ -9920,6 +10435,36 @@ def test_autopilot_queue_show_reports_missing_item(capsys, tmp_path: Path) -> No
 
     assert exit_code == 1
     assert "Queue item not found: 9999" in output
+
+
+def test_autopilot_queue_show_json_reports_missing_item(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Task\n", encoding="utf-8")
+
+    main(["autopilot", "queue", "sync", "--repo", str(tmp_path), "--plan", str(plan)])
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "show",
+            "--repo",
+            str(tmp_path),
+            "9999",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert payload["command"] == "autopilot queue show"
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "queue_item_not_found"
+    assert payload["error"]["plan_item_id"] == 9999
 
 
 def test_autopilot_queue_show_with_plan_validates_matching_plan(

@@ -11,7 +11,13 @@ def test_release_checks_pass_for_minimal_release_tree(tmp_path: Path) -> None:
 
     results = run_release_checks(tmp_path)
 
-    assert [item.status for item in results] == ["passed", "passed", "passed", "passed"]
+    assert [item.status for item in results] == [
+        "passed",
+        "passed",
+        "passed",
+        "passed",
+        "passed",
+    ]
 
 
 def test_release_checks_report_version_mismatch(tmp_path: Path) -> None:
@@ -97,6 +103,74 @@ def test_release_checks_require_onboarding_content(tmp_path: Path) -> None:
     docs_result = next(item for item in results if item.name == "release-docs")
     assert docs_result.status == "failed"
     assert "pipx" in docs_result.detail
+
+
+def test_release_checks_require_v0_8_goal_plan(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "V0_8_GOAL_PLAN.md").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(
+        item for item in results if item.name == "v0.8-control-surface-docs"
+    )
+    assert docs_result.status == "failed"
+    assert "docs/V0_8_GOAL_PLAN.md" in docs_result.detail
+
+
+def test_release_checks_require_v0_8_json_contracts(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "V0_8_JSON_CONTRACTS.md").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(
+        item for item in results if item.name == "v0.8-control-surface-docs"
+    )
+    assert docs_result.status == "failed"
+    assert "docs/V0_8_JSON_CONTRACTS.md" in docs_result.detail
+
+
+def test_release_checks_require_v0_8_mcp_acp_design_spike(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(
+        item for item in results if item.name == "v0.8-control-surface-docs"
+    )
+    assert docs_result.status == "failed"
+    assert "docs/V0_8_MCP_ACP_DESIGN_SPIKE.md" in docs_result.detail
+
+
+def test_release_checks_v0_8_gate_reports_missing_user_guide(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "USER_GUIDE.md").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(
+        item for item in results if item.name == "v0.8-control-surface-docs"
+    )
+    assert docs_result.status == "failed"
+    assert "docs/USER_GUIDE.md" in docs_result.detail
+
+
+def test_release_checks_require_v0_8_control_surface_content(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "V0_8_JSON_CONTRACTS.md").write_text(
+        "# v0.8 JSON Contract Inventory\n",
+        encoding="utf-8",
+    )
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(
+        item for item in results if item.name == "v0.8-control-surface-docs"
+    )
+    assert docs_result.status == "failed"
+    assert "stable now" in docs_result.detail
 
 
 def test_windows_installer_scripts_are_safe_repo_helpers() -> None:
@@ -216,7 +290,17 @@ requires-python = ">=3.12"
         "# Windows Install\n",
         encoding="utf-8",
     )
-    (repo / "docs" / "RELEASE.md").write_text("# Release\n", encoding="utf-8")
+    (repo / "docs" / "RELEASE.md").write_text(
+        (
+            "# Release\n\n"
+            "## v0.8 Control Surface Gate\n\n"
+            "Run `python -m pytest`, `python -m compileall ai_orchestrator`, "
+            "`ruff check .`, `mypy ai_orchestrator`, "
+            "`python -m ai_orchestrator release-check --repo .`, and "
+            "`git diff --check`.\n"
+        ),
+        encoding="utf-8",
+    )
     (repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md").write_text(
         "# Shipping\n",
         encoding="utf-8",
@@ -224,7 +308,36 @@ requires-python = ">=3.12"
     (repo / "docs" / "USER_GUIDE.md").write_text(
         (
             "# User Guide\n\nRun `ai-orch demo`, `ai-orch onboard`, and "
-            "`ai-orch fix`. Trace exports include `action_journal`.\n"
+            "`ai-orch fix`. Trace exports include `action_journal`.\n\n"
+            "## External Local Operator Workflow\n\n"
+            "Use `ai-orch status <task-id> --repo . --json`, "
+            "`ai-orch approvals list --repo . --json`, and "
+            "`ai-orch export <task-id> --repo . --redact`.\n"
+        ),
+        encoding="utf-8",
+    )
+    (repo / "docs" / "V0_8_GOAL_PLAN.md").write_text(
+        (
+            "# v0.8 Goal Plan\n\n"
+            "Stable control surface. Subagent workflow. Hard release stops. "
+            "Testable P0 Tasks. The supervisor, not the worker agent, decides done.\n"
+        ),
+        encoding="utf-8",
+    )
+    (repo / "docs" / "V0_8_JSON_CONTRACTS.md").write_text(
+        (
+            "# v0.8 JSON Contract Inventory\n\n"
+            "Stable Now. Stable candidate. Experimental or internal. "
+            "`schema_version`, `command`, `generated_at`, `ok`, `error`. "
+            "Path/redaction policy. `export`, `timeline --json`, `recover --json`.\n"
+        ),
+        encoding="utf-8",
+    )
+    (repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md").write_text(
+        (
+            "# v0.8 MCP/ACP Design Spike\n\n"
+            "start_task, get_status, list_approvals, approve_action, "
+            "export_trace. No long-running MCP server.\n"
         ),
         encoding="utf-8",
     )
