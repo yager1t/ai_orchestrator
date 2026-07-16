@@ -2,9 +2,18 @@
 
 ## Unreleased
 
+## 0.9.0 - Local Operator Compatibility
+
+Date: 2026-07-16
+
 - Added a GitHub release-notes template and release-check coverage so future
   releases include operator impact, safety notes, verification, and full diff
   context.
+
+- Added v0.9 local operator compatibility hardening, including stricter v0.8
+  JSON envelope/error compatibility tests, a safe external local operator smoke
+  path, a future MCP/ACP adapter boundary mapped to existing CLI commands, and
+  a release-check gate for the new operator workflow docs.
 
 ## 0.8.0 - Ecosystem Control Surface
 

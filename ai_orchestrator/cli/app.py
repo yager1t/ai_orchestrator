@@ -5008,12 +5008,11 @@ def _run_autopilot_queue_readiness(
         plan_path = _resolve_plan_path(repo, Path(args.plan))
         if not plan_path.exists():
             if args.json:
-                print(
-                    json.dumps(
-                        {"error": f"Plan not found: {plan_path}"},
-                        indent=2,
-                        ensure_ascii=False,
-                    )
+                _print_control_json_error(
+                    "autopilot queue readiness",
+                    code="plan_not_found",
+                    message=f"Plan not found: {plan_path}",
+                    plan=str(plan_path),
                 )
             else:
                 print(f"Plan not found: {plan_path}")
@@ -5254,12 +5253,11 @@ def _run_autopilot_queue_preflight(
     plan_path = _resolve_plan_path(repo, Path(args.plan))
     if not plan_path.exists():
         if args.json:
-            print(
-                json.dumps(
-                    {"error": f"Plan not found: {plan_path}"},
-                    indent=2,
-                    ensure_ascii=False,
-                )
+            _print_control_json_error(
+                "autopilot queue preflight",
+                code="plan_not_found",
+                message=f"Plan not found: {plan_path}",
+                plan=str(plan_path),
             )
         else:
             print(f"Plan not found: {plan_path}")
@@ -5430,12 +5428,11 @@ def _run_autopilot_queue_reconcile(
         plan_path = _resolve_plan_path(repo, Path(args.plan))
         if not plan_path.exists():
             if args.json:
-                print(
-                    json.dumps(
-                        {"error": f"Plan not found: {plan_path}"},
-                        indent=2,
-                        ensure_ascii=False,
-                    )
+                _print_control_json_error(
+                    "autopilot queue reconcile",
+                    code="plan_not_found",
+                    message=f"Plan not found: {plan_path}",
+                    plan=str(plan_path),
                 )
             else:
                 print(f"Plan not found: {plan_path}")
@@ -6677,12 +6674,11 @@ def _run_autopilot_queue_command(args: argparse.Namespace, parser: argparse.Argu
             plan_path = _resolve_plan_path(repo, Path(args.plan))
             if not plan_path.exists():
                 if args.json:
-                    print(
-                        json.dumps(
-                            {"error": f"Plan not found: {plan_path}"},
-                            indent=2,
-                            ensure_ascii=False,
-                        )
+                    _print_control_json_error(
+                        "autopilot queue list",
+                        code="plan_not_found",
+                        message=f"Plan not found: {plan_path}",
+                        plan=str(plan_path),
                     )
                 else:
                     print(f"Plan not found: {plan_path}")

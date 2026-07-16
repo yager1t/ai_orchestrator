@@ -676,6 +676,11 @@ future MCP/ACP adapter drives `ai-orch`.
 8. Export the audit artifact with `ai-orch export <task-id> --repo . --redact`
    when the trace may leave the local review context.
 
+For release and integration validation, the local operator smoke exercises this
+same control surface with fixture-backed local state. It does not require
+external AI credentials and does not grant an external client authority to mark
+tasks done.
+
 The completion rule is unchanged: the worker agent executes, but the supervisor
 and verification checks decide whether the task is `done`.
 

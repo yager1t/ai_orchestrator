@@ -76,6 +76,33 @@ The release is blocked if the stable JSON contracts, redaction behavior, error
 shapes, hard release stops, or external operator workflow are missing from docs
 or tests.
 
+## v0.9 Operator Compatibility Gate
+
+Before tagging v0.9, confirm the local operator compatibility layer is
+documented and covered by focused tests:
+
+- v0.8 control-envelope JSON success and error shapes remain compatible.
+- The external local operator integration smoke can inspect machine-readable
+  status, approvals, queue state, recovery preflight, and redacted trace export
+  without external AI credentials.
+- The MCP/ACP adapter boundary maps future protocol operations to existing CLI
+  control commands without starting a long-running server.
+- `release-check` requires the v0.9 goal plan and operator compatibility docs.
+
+Run the v0.9 quality gate before the release commit:
+
+```bash
+python -m pytest
+python -m compileall ai_orchestrator
+ruff check .
+mypy ai_orchestrator
+python -m ai_orchestrator release-check --repo .
+git diff --check
+```
+
+The release is blocked if compatibility tests, local operator smoke coverage,
+MCP/ACP boundary docs, or release-check coverage are missing.
+
 For larger or risky releases, compile a reviewer-ready handoff using
 `docs/SHIPPING_PACKET_TEMPLATE.md`.
 

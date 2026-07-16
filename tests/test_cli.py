@@ -59,6 +59,26 @@ def task_id_from_run_output(output: str) -> str:
     raise AssertionError(f"Could not find task id in output:\n{output}")
 
 
+def assert_control_envelope(
+    payload: dict[str, object],
+    *,
+    command: str,
+    ok: bool,
+) -> None:
+    assert payload["schema_version"] == "1.0"
+    assert payload["command"] == command
+    assert isinstance(payload["generated_at"], str)
+    datetime.fromisoformat(payload["generated_at"])
+    assert payload["ok"] is ok
+    if ok:
+        assert payload["error"] is None
+    else:
+        error = payload["error"]
+        assert isinstance(error, dict)
+        assert isinstance(error["code"], str)
+        assert isinstance(error["message"], str)
+
+
 def test_autopilot_next_prints_next_plan_item(capsys, tmp_path: Path) -> None:
     plan = tmp_path / "ROADMAP.md"
     plan.write_text("- [ ] Add approval CLI\n", encoding="utf-8")
@@ -942,10 +962,7 @@ def test_status_json_prints_stored_task(capsys, tmp_path: Path) -> None:
     payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert payload["schema_version"] == "1.0"
-    assert payload["command"] == "status"
-    assert payload["ok"] is True
-    assert payload["error"] is None
+    assert_control_envelope(payload, command="status", ok=True)
     assert payload["task"]["task_id"] == task.task_id
     assert payload["task"]["status"] == "done"
     assert payload["iteration_count"] == 1
@@ -967,8 +984,7 @@ def test_status_json_returns_error_for_missing_task(capsys, tmp_path: Path) -> N
     payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 1
-    assert payload["command"] == "status"
-    assert payload["ok"] is False
+    assert_control_envelope(payload, command="status", ok=False)
     assert payload["error"]["code"] == "task_not_found"
     assert payload["error"]["task_id"] == "missing-task"
 
@@ -1075,8 +1091,7 @@ def test_approvals_list_json_prints_pending_requests(capsys, tmp_path: Path) -> 
     payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert payload["command"] == "approvals list"
-    assert payload["ok"] is True
+    assert_control_envelope(payload, command="approvals list", ok=True)
     assert payload["status_filter"] == "pending"
     assert payload["count"] == 1
     assert payload["approvals"][0]["approval_id"] == approval.approval_id
@@ -1097,6 +1112,7 @@ def test_approvals_list_json_prints_empty_list(capsys, tmp_path: Path) -> None:
     payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
+    assert_control_envelope(payload, command="approvals list", ok=True)
     assert payload["count"] == 0
     assert payload["approvals"] == []
 
@@ -1870,8 +1886,7 @@ def test_approvals_show_json_returns_error_for_missing_request(
     payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 1
-    assert payload["command"] == "approvals show"
-    assert payload["ok"] is False
+    assert_control_envelope(payload, command="approvals show", ok=False)
     assert payload["error"]["code"] == "approval_not_found"
     assert payload["error"]["approval_id"] == 404
 
@@ -3240,6 +3255,110 @@ def test_export_redact_flag_omits_bulky_fields(capsys, tmp_path: Path) -> None:
     loaded_run = store.list_verification_details(task.task_id)[0]
     assert loaded_run.stdout == "bulky stdout"
     assert loaded_run.stderr == "bulky stderr"
+
+
+def test_external_local_operator_smoke_reads_control_surface(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "ROADMAP.md"
+    plan.write_text("- [ ] Operator smoke task\n", encoding="utf-8")
+    store = StateStore(tmp_path / ".ai-orch" / "state" / "ai-orch.db")
+    task = store.create_task(
+        "operator smoke",
+        repo_path=tmp_path,
+        task_id="task-operator-smoke",
+    )
+    iteration = store.add_iteration(
+        task_id=task.task_id,
+        iteration_index=1,
+        agent_name="mock",
+        agent_status="success",
+        prompt="operator smoke",
+        raw_output="raw local operator smoke output",
+        decision_status="done",
+        decision_reason="Verification passed: operator-smoke",
+    )
+    store.add_verification_run(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        result=VerificationResult(
+            name="operator-smoke",
+            status="passed",
+            exit_code=0,
+            stdout="raw smoke stdout",
+            stderr="raw smoke stderr",
+        ),
+    )
+    approval = store.add_approval_request(
+        task_id=task.task_id,
+        iteration_id=iteration.iteration_id,
+        source="verification",
+        command_string="git push origin main",
+        reason="operator smoke approval visibility",
+    )
+    store.update_task_status(task.task_id, "done")
+
+    assert (
+        main(
+            [
+                "autopilot",
+                "queue",
+                "sync",
+                "--repo",
+                str(tmp_path),
+                "--plan",
+                str(plan),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["status", task.task_id, "--repo", str(tmp_path), "--json"]) == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert_control_envelope(status_payload, command="status", ok=True)
+    assert status_payload["task"]["task_id"] == task.task_id
+    assert status_payload["task"]["status"] == "done"
+
+    assert main(["approvals", "list", "--repo", str(tmp_path), "--json"]) == 0
+    approvals_payload = json.loads(capsys.readouterr().out)
+    assert_control_envelope(approvals_payload, command="approvals list", ok=True)
+    assert approvals_payload["count"] == 1
+    assert approvals_payload["approvals"][0]["approval_id"] == approval.approval_id
+
+    assert (
+        main(
+            [
+                "autopilot",
+                "queue",
+                "status",
+                "--repo",
+                str(tmp_path),
+                "--plan",
+                str(plan),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    queue_payload = json.loads(capsys.readouterr().out)
+    assert_control_envelope(queue_payload, command="autopilot queue status", ok=True)
+    assert queue_payload["total"] == 1
+
+    assert main(["recover", "--repo", str(tmp_path), "--json"]) == 0
+    recover_payload = json.loads(capsys.readouterr().out)
+    assert recover_payload["dry_run"] is True
+    assert recover_payload["running_tasks"] == {"count": 0, "items": []}
+
+    assert main(["export", task.task_id, "--repo", str(tmp_path), "--redact"]) == 0
+    trace_path = tmp_path / ".ai-orch" / "traces" / f"{task.task_id}.json"
+    trace = json.loads(trace_path.read_text(encoding="utf-8"))
+    assert trace["metadata"]["task_id"] == task.task_id
+    assert trace["metadata"]["redaction_mode"] == "redacted"
+    assert "raw_output" not in trace["iterations"][0]
+    assert "stdout" not in trace["verification_runs"][0]
+    assert "stderr" not in trace["verification_runs"][0]
 
 
 def test_export_without_redact_keeps_bulky_fields(capsys, tmp_path: Path) -> None:
@@ -5186,6 +5305,32 @@ def test_autopilot_queue_list_handles_missing_plan(capsys, tmp_path: Path) -> No
 
     assert exit_code == 1
     assert "Plan not found:" in output
+
+
+def test_autopilot_queue_list_json_handles_missing_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    missing_plan = tmp_path / "MISSING.md"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "list",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(missing_plan),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert_control_envelope(payload, command="autopilot queue list", ok=False)
+    assert payload["error"]["code"] == "plan_not_found"
+    assert payload["error"]["plan"] == str(missing_plan)
 
 
 def test_autopilot_queue_list_shows_report_path_for_completed_item(
@@ -8093,9 +8238,7 @@ def test_autopilot_queue_status_json_summarizes_counts_and_recent_items(
     payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert payload["schema_version"] == "1.0"
-    assert payload["command"] == "autopilot queue status"
-    assert payload["ok"] is True
+    assert_control_envelope(payload, command="autopilot queue status", ok=True)
     assert payload["plan"] == str(plan)
     assert payload["total"] == 3
     assert payload["filtered"] == 3
@@ -9072,8 +9215,9 @@ def test_autopilot_queue_readiness_json_handles_missing_plan(
 
     assert exit_code == 1
     result = json.loads(output)
-    assert "error" in result
-    assert "Plan not found:" in result["error"]
+    assert_control_envelope(result, command="autopilot queue readiness", ok=False)
+    assert result["error"]["code"] == "plan_not_found"
+    assert result["error"]["plan"] == str(missing_plan)
 
 
 def test_autopilot_queue_preflight_shows_readiness_and_agent_profile(
@@ -9432,6 +9576,32 @@ def test_autopilot_queue_preflight_handles_missing_plan(
     assert "Plan not found:" in output
 
 
+def test_autopilot_queue_preflight_json_handles_missing_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    missing_plan = tmp_path / "MISSING.md"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "preflight",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(missing_plan),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert_control_envelope(payload, command="autopilot queue preflight", ok=False)
+    assert payload["error"]["code"] == "plan_not_found"
+    assert payload["error"]["plan"] == str(missing_plan)
+
+
 def test_autopilot_queue_reconcile_dry_run_reports_stale_created_items(
     capsys,
     tmp_path: Path,
@@ -9466,6 +9636,32 @@ def test_autopilot_queue_reconcile_dry_run_reports_stale_created_items(
     assert "[stale]" in output
     assert "Stale task" in output
     assert item.status == "created"
+
+
+def test_autopilot_queue_reconcile_json_handles_missing_plan(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    missing_plan = tmp_path / "MISSING.md"
+
+    exit_code = main(
+        [
+            "autopilot",
+            "queue",
+            "reconcile",
+            "--repo",
+            str(tmp_path),
+            "--plan",
+            str(missing_plan),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert_control_envelope(payload, command="autopilot queue reconcile", ok=False)
+    assert payload["error"]["code"] == "plan_not_found"
+    assert payload["error"]["plan"] == str(missing_plan)
 
 
 def test_autopilot_queue_reconcile_all_plans_apply_skips_only_stale_created_items(

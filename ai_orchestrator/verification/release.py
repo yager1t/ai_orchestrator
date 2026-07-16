@@ -24,6 +24,7 @@ def run_release_checks(repo: Path) -> list[ReleaseCheckResult]:
         _check_package_entrypoints(repo, pyproject),
         _check_release_docs(repo),
         _check_v0_8_control_surface_docs(repo),
+        _check_v0_9_operator_compatibility_docs(repo),
     ]
 
 
@@ -268,6 +269,89 @@ def _check_v0_8_control_surface_docs(repo: Path) -> ReleaseCheckResult:
         detail=(
             "v0.8 goal plan, JSON contract inventory, release gate, and "
             "external operator workflow documented"
+        ),
+    )
+
+
+def _check_v0_9_operator_compatibility_docs(repo: Path) -> ReleaseCheckResult:
+    required_docs = [
+        repo / "docs" / "RELEASE.md",
+        repo / "docs" / "USER_GUIDE.md",
+        repo / "docs" / "V0_8_JSON_CONTRACTS.md",
+        repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md",
+        repo / "docs" / "V0_9_GOAL_PLAN.md",
+    ]
+    required_files = [
+        repo / "ai_orchestrator" / "control" / "__init__.py",
+        repo / "ai_orchestrator" / "control" / "mcp_acp.py",
+        repo / "tests" / "test_cli.py",
+        repo / "tests" / "test_mcp_acp_boundary.py",
+    ]
+    missing = [
+        _relative_label(path, repo)
+        for path in [*required_docs, *required_files]
+        if not path.exists()
+    ]
+    if missing:
+        return ReleaseCheckResult(
+            name="v0.9-operator-compatibility-docs",
+            status="failed",
+            detail=f"Missing docs: {', '.join(missing)}",
+        )
+
+    content_requirements = [
+        (repo / "docs" / "V0_9_GOAL_PLAN.md", "local operator compatibility"),
+        (repo / "docs" / "V0_9_GOAL_PLAN.md", "v0.8 json compatibility"),
+        (
+            repo / "docs" / "V0_9_GOAL_PLAN.md",
+            "external local operator integration smoke",
+        ),
+        (repo / "docs" / "V0_9_GOAL_PLAN.md", "mcp/acp adapter boundary"),
+        (repo / "docs" / "V0_9_GOAL_PLAN.md", "long-running server"),
+        (repo / "docs" / "V0_9_GOAL_PLAN.md", "supervisor decides done"),
+        (repo / "docs" / "RELEASE.md", "v0.9 operator compatibility gate"),
+        (repo / "docs" / "USER_GUIDE.md", "external local operator workflow"),
+        (repo / "docs" / "USER_GUIDE.md", "local operator smoke"),
+        (repo / "docs" / "V0_8_JSON_CONTRACTS.md", "schema_version"),
+        (repo / "docs" / "V0_8_MCP_ACP_DESIGN_SPIKE.md", "no long-running mcp server"),
+        (
+            repo / "ai_orchestrator" / "control" / "mcp_acp.py",
+            "does not run commands or start a server",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "mcp_acp.py",
+            "cli_args_for_operation",
+        ),
+        (
+            repo / "tests" / "test_cli.py",
+            "test_external_local_operator_smoke_reads_control_surface",
+        ),
+        (repo / "tests" / "test_cli.py", "assert_control_envelope"),
+        (
+            repo / "tests" / "test_mcp_acp_boundary.py",
+            "test_mcp_acp_boundary_maps_operations_to_cli_json_contracts",
+        ),
+    ]
+    missing_content = [
+        f"{_relative_label(path, repo)} missing {needle!r}"
+        for path, needle in content_requirements
+        if needle.lower() not in path.read_text(encoding="utf-8").lower()
+    ]
+    if missing_content:
+        return ReleaseCheckResult(
+            name="v0.9-operator-compatibility-docs",
+            status="failed",
+            detail=(
+                "Missing v0.9 operator compatibility content: "
+                f"{', '.join(missing_content)}"
+            ),
+        )
+    return ReleaseCheckResult(
+        name="v0.9-operator-compatibility-docs",
+        status="passed",
+        detail=(
+            "v0.9 goal plan, operator compatibility gate, local smoke workflow, "
+            "and MCP/ACP boundary documented"
         ),
     )
 
