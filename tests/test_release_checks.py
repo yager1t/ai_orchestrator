@@ -61,6 +61,17 @@ def test_release_checks_require_install_doc(tmp_path: Path) -> None:
     assert "docs/INSTALL.md" in docs_result.detail
 
 
+def test_release_checks_require_release_notes_template(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "RELEASE_NOTES_TEMPLATE.md").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(item for item in results if item.name == "release-docs")
+    assert docs_result.status == "failed"
+    assert "docs/RELEASE_NOTES_TEMPLATE.md" in docs_result.detail
+
+
 def test_release_checks_require_windows_install_doc(tmp_path: Path) -> None:
     write_release_tree(tmp_path)
     (tmp_path / "docs" / "WINDOWS_INSTALL.md").unlink()
@@ -293,6 +304,7 @@ requires-python = ">=3.12"
     (repo / "docs" / "RELEASE.md").write_text(
         (
             "# Release\n\n"
+            "Use `docs/RELEASE_NOTES_TEMPLATE.md` before publishing.\n\n"
             "## v0.8 Control Surface Gate\n\n"
             "Run `python -m pytest`, `python -m compileall ai_orchestrator`, "
             "`ruff check .`, `mypy ai_orchestrator`, "
@@ -303,6 +315,17 @@ requires-python = ">=3.12"
     )
     (repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md").write_text(
         "# Shipping\n",
+        encoding="utf-8",
+    )
+    (repo / "docs" / "RELEASE_NOTES_TEMPLATE.md").write_text(
+        (
+            "# GitHub Release Notes Template\n\n"
+            "## vX.Y.Z - Short Release Theme\n\n"
+            "### Operator impact\n\n"
+            "### Safety notes\n\n"
+            "Full diff: https://github.com/yager1t/ai_orchestrator/compare/"
+            "vPREVIOUS...vX.Y.Z\n"
+        ),
         encoding="utf-8",
     )
     (repo / "docs" / "USER_GUIDE.md").write_text(

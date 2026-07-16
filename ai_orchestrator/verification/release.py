@@ -143,6 +143,7 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
         repo / "docs" / "ONBOARDING_GOAL_PLAN.md",
         repo / "docs" / "WINDOWS_INSTALL.md",
         repo / "docs" / "RELEASE.md",
+        repo / "docs" / "RELEASE_NOTES_TEMPLATE.md",
         repo / "docs" / "SHIPPING_PACKET_TEMPLATE.md",
         repo / "docs" / "USER_GUIDE.md",
         repo / "docs" / "V0_3_GOAL_PLAN.md",
@@ -175,6 +176,10 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
         (repo / "docs" / "USER_GUIDE.md", "action_journal"),
         (repo / "docs" / "V0_5_GOAL_PLAN.md", "Typed Action Broker"),
         (repo / "docs" / "MAC_INSTALL.md", "macOS"),
+        (repo / "docs" / "RELEASE.md", "RELEASE_NOTES_TEMPLATE"),
+        (repo / "docs" / "RELEASE_NOTES_TEMPLATE.md", "Operator impact"),
+        (repo / "docs" / "RELEASE_NOTES_TEMPLATE.md", "Safety notes"),
+        (repo / "docs" / "RELEASE_NOTES_TEMPLATE.md", "Full diff"),
     ]
     missing_content = [
         f"{_relative_label(path, repo)} missing {needle!r}"
@@ -193,7 +198,7 @@ def _check_release_docs(repo: Path) -> ReleaseCheckResult:
         detail=(
             "README, changelog, platform install guides, onboarding plan, "
             "v0.5 action broker plan, user guide, release checklist, and "
-            "shipping template present"
+            "release-notes/shipping templates present"
         ),
     )
 

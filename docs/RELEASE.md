@@ -7,7 +7,16 @@ Use this checklist before tagging or publishing an `ai-orch` release.
 - Keep `pyproject.toml` `[project].version` and `ai_orchestrator.__version__` in sync.
 - Run `python -m ai_orchestrator --version` and confirm the printed version.
 - Keep release notes in `CHANGELOG.md`.
+- Draft the GitHub Release body from `docs/RELEASE_NOTES_TEMPLATE.md`.
 - Run `python -m ai_orchestrator release-check --repo .` before tagging.
+
+## GitHub Release Notes
+
+- Use `docs/RELEASE_NOTES_TEMPLATE.md` for the public GitHub Release body.
+- Include a short theme paragraph, highlights, operator impact, docs/contracts,
+  safety notes, verification, and a full diff link.
+- Keep patch releases concise, but still explain why the release exists.
+- Do not publish a release whose notes only restate the changelog bullets.
 
 ## Install
 

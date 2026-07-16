@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a GitHub release-notes template and release-check coverage so future
+  releases include operator impact, safety notes, verification, and full diff
+  context.
+
 ## 0.8.0 - Ecosystem Control Surface
 
 Date: 2026-07-16
