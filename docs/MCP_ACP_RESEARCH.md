@@ -48,6 +48,35 @@ The first runtime proposal should still keep MCP/ACP behind `AgentAdapter`.
 Supervisor decisions, verification, and dangerous-command approval must remain
 owned by `ai-orch`, not delegated to the external protocol endpoint.
 
+## v1.0 future runtime proposal draft
+
+Status: draft / documentation-only / no implementation.
+
+The stable local operator client creates the first supported protocol-adapter
+boundary for local tools:
+
+```text
+External tool -> LocalOperatorClient -> MCP/ACP operation boundary -> ai-orch CLI -> Supervisor
+```
+
+Future executor-agent protocol support must still use the adapter boundary:
+
+```text
+Supervisor -> AgentAdapter -> MCP/ACP client -> external endpoint
+```
+
+Allowed v1.0 proposal scope is limited to capability discovery, endpoint config
+shape, result-envelope draft, policy-matrix draft, and adapter contract-test
+planning. It must not add a server, listener, daemon, direct task-completion
+operation, direct state-store mutation, credential storage in repository config,
+or a path around `PolicyEngine`.
+
+The proposal may become implementation work only after the runtime proposal
+gate above is satisfied. Future protocol operations must preserve
+supervisor-owned completion, verification-owned `done`, approval retry
+semantics, policy deny precedence, recovery visibility, and local trace/report
+auditability.
+
 ## Open questions
 
 - How should sessions/resume map to each protocol?

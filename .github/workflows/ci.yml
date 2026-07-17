@@ -46,6 +46,13 @@ jobs:
       - name: Run ai-orch verification
         run: python -m ai_orchestrator verify --repo .
 
+      - name: Packaged install smoke
+        run: |
+          python -m venv .package-smoke-venv
+          .package-smoke-venv/bin/python -m pip install . --no-deps
+          .package-smoke-venv/bin/ai-orch --version
+          .package-smoke-venv/bin/ai-orch --help
+
       - name: Check diff whitespace
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then

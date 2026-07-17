@@ -87,7 +87,9 @@ Exit criteria:
 Goal: expose `ai-orch` to other local tools without weakening the core model.
 
 - Add headless CI mode with stable exit codes.
-- Add MCP server mode for `start_task`, `get_status`, and `approve_action`.
+- Add a no-server MCP/ACP operation boundary and a stable local operator client
+  for `start_task`, `get_status`, approvals, retry, and trace export.
+- Defer MCP server mode until the local client contract is stable and reviewed.
 - Improve Codebase Memory preflight into a more automatic context layer.
 - Add optional JSON trace export.
 

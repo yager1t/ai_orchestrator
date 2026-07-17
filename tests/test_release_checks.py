@@ -18,6 +18,8 @@ def test_release_checks_pass_for_minimal_release_tree(tmp_path: Path) -> None:
         "passed",
         "passed",
         "passed",
+        "passed",
+        "passed",
     ]
 
 
@@ -49,6 +51,37 @@ def test_release_checks_require_console_script(tmp_path: Path) -> None:
     entrypoint_result = next(item for item in results if item.name == "entrypoints")
     assert entrypoint_result.status == "failed"
     assert "ai-orch" in entrypoint_result.detail
+
+
+def test_release_checks_require_packaged_install_smoke(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / ".github" / "workflows" / "ci.yml").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    smoke_result = next(
+        item for item in results if item.name == "packaged-install-smoke"
+    )
+    assert smoke_result.status == "failed"
+    assert ".github/workflows/ci.yml" in smoke_result.detail
+
+
+def test_release_checks_require_packaged_install_smoke_no_deps(
+    tmp_path: Path,
+) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        "name: CI\n\njobs:\n  test:\n    steps:\n      - name: Packaged install smoke\n",
+        encoding="utf-8",
+    )
+
+    results = run_release_checks(tmp_path)
+
+    smoke_result = next(
+        item for item in results if item.name == "packaged-install-smoke"
+    )
+    assert smoke_result.status == "failed"
+    assert "--no-deps" in smoke_result.detail
 
 
 def test_release_checks_require_install_doc(tmp_path: Path) -> None:
@@ -216,6 +249,67 @@ def test_release_checks_require_v0_9_operator_compatibility_content(
     assert "local operator compatibility" in docs_result.detail
 
 
+def test_release_checks_require_v1_0_goal_plan(tmp_path: Path) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "V1_0_GOAL_PLAN.md").unlink()
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(
+        item for item in results if item.name == "v1.0-local-operator-client-docs"
+    )
+    assert docs_result.status == "failed"
+    assert "docs/V1_0_GOAL_PLAN.md" in docs_result.detail
+
+
+def test_release_checks_require_v1_0_local_operator_client_content(
+    tmp_path: Path,
+) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "ai_orchestrator" / "control" / "client.py").write_text(
+        "# local client placeholder\n",
+        encoding="utf-8",
+    )
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(
+        item for item in results if item.name == "v1.0-local-operator-client-docs"
+    )
+    assert docs_result.status == "failed"
+    assert "LocalOperatorClient" in docs_result.detail
+
+
+def test_release_checks_require_v1_0_changelog_content(tmp_path: Path) -> None:
+    write_release_tree(tmp_path, changelog="# Changelog\n\n## Unreleased\n\n- Demo.\n")
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(
+        item for item in results if item.name == "v1.0-local-operator-client-docs"
+    )
+    assert docs_result.status == "failed"
+    assert "stable local operator client" in docs_result.detail
+
+
+def test_release_checks_require_v1_0_runtime_proposal_content(
+    tmp_path: Path,
+) -> None:
+    write_release_tree(tmp_path)
+    (tmp_path / "docs" / "MCP_ACP_RESEARCH.md").write_text(
+        "# MCP / ACP research notes\n",
+        encoding="utf-8",
+    )
+
+    results = run_release_checks(tmp_path)
+
+    docs_result = next(
+        item for item in results if item.name == "v1.0-local-operator-client-docs"
+    )
+    assert docs_result.status == "failed"
+    assert "v1.0 future runtime proposal draft" in docs_result.detail
+
+
 def test_windows_installer_scripts_are_safe_repo_helpers() -> None:
     repo = Path(__file__).resolve().parents[1]
     ps1 = repo / "scripts" / "install_windows.ps1"
@@ -269,10 +363,15 @@ def test_windows_installer_scripts_are_safe_repo_helpers() -> None:
 def write_release_tree(
     repo: Path,
     version: str = __version__,
-    changelog: str = "# Changelog\n\n## Unreleased\n\n- Demo.\n",
+    changelog: str = (
+        "# Changelog\n\n"
+        "## Unreleased\n\n"
+        "- Added the stable local operator client.\n"
+    ),
     include_console_script: bool = True,
 ) -> None:
     (repo / "ai_orchestrator" / "cli").mkdir(parents=True)
+    (repo / ".github" / "workflows").mkdir(parents=True)
     (repo / "docs").mkdir()
     scripts_section = (
         """
@@ -299,10 +398,28 @@ requires-python = ">=3.12"
     )
     (repo / "ai_orchestrator" / "__init__.py").write_text("", encoding="utf-8")
     (repo / "ai_orchestrator" / "__main__.py").write_text("", encoding="utf-8")
-    (repo / "ai_orchestrator" / "cli" / "app.py").write_text("", encoding="utf-8")
+    (repo / "ai_orchestrator" / "cli" / "app.py").write_text(
+        "def start(json_output=False):\n    pass\n",
+        encoding="utf-8",
+    )
+    (repo / ".github" / "workflows" / "ci.yml").write_text(
+        (
+            "name: CI\n\n"
+            "jobs:\n"
+            "  test:\n"
+            "    steps:\n"
+            "      - name: Packaged install smoke\n"
+            "        run: |\n"
+            "          python -m venv .package-smoke-venv\n"
+            "          .package-smoke-venv/bin/python -m pip install . --no-deps\n"
+            "          .package-smoke-venv/bin/ai-orch --version\n"
+            "          .package-smoke-venv/bin/ai-orch --help\n"
+        ),
+        encoding="utf-8",
+    )
     (repo / "ai_orchestrator" / "control").mkdir()
     (repo / "ai_orchestrator" / "control" / "__init__.py").write_text(
-        "",
+        "from .client import LocalOperatorClient, LocalOperatorResult\n",
         encoding="utf-8",
     )
     (repo / "ai_orchestrator" / "control" / "mcp_acp.py").write_text(
@@ -310,7 +427,25 @@ requires-python = ">=3.12"
             "# Boundary\n"
             "This module does not run commands or start a server.\n"
             "def cli_args_for_operation():\n"
+            "    task = 'demo'\n"
+            "    repo_args = []\n"
+            "    return [\"start\", \"--task\", task, *repo_args, \"--json\"]\n"
             "    pass\n"
+        ),
+        encoding="utf-8",
+    )
+    (repo / "ai_orchestrator" / "control" / "client.py").write_text(
+        (
+            "class LocalOperatorResult:\n"
+            "    pass\n\n"
+            "class LocalOperatorClient:\n"
+            "    module = 'ai_orchestrator'\n"
+            "    error = 'Invalid JSON output'\n"
+            "    def __post_init__(self):\n"
+            "        pass\n"
+            "    expected_command = 'expected command'\n"
+            "    expected_ok = 'expected boolean ok'\n"
+            "    expected_generated_at = 'expected non-empty generated_at'\n"
         ),
         encoding="utf-8",
     )
@@ -320,6 +455,35 @@ requires-python = ">=3.12"
             "def assert_control_envelope():\n"
             "    pass\n\n"
             "def test_external_local_operator_smoke_reads_control_surface():\n"
+            "    pass\n\n"
+            "def test_start_json_emits_control_envelope():\n"
+            "    pass\n\n"
+            "def test_start_json_reports_missing_config():\n"
+            "    pass\n\n"
+            "def test_start_json_blocks_invalid_worktree_before_execution():\n"
+            "    pass\n"
+        ),
+        encoding="utf-8",
+    )
+    (repo / "tests" / "test_local_operator_client.py").write_text(
+        (
+            "def test_local_operator_client_parses_control_json():\n"
+            "    pass\n\n"
+            "def test_local_operator_client_starts_task_with_control_json():\n"
+            "    pass\n\n"
+            "def test_local_operator_client_preserves_start_payload_on_nonzero_exit():\n"
+            "    pass\n\n"
+            "def test_local_operator_client_approval_methods_parse_control_json():\n"
+            "    pass\n\n"
+            "def test_local_operator_client_reports_process_failure():\n"
+            "    pass\n\n"
+            "def test_local_operator_client_reports_invalid_json():\n"
+            "    pass\n\n"
+            "def test_local_operator_client_allows_export_trace_text_output():\n"
+            "    pass\n"
+            "def test_local_operator_client_rejects_invalid_control_envelope():\n"
+            "    pass\n"
+            "def test_local_operator_client_pins_repo_before_chdir():\n"
             "    pass\n"
         ),
         encoding="utf-8",
@@ -346,6 +510,15 @@ requires-python = ">=3.12"
     )
     (repo / "docs" / "MAC_INSTALL.md").write_text(
         "# macOS Install\n",
+        encoding="utf-8",
+    )
+    (repo / "docs" / "MCP_ACP_RESEARCH.md").write_text(
+        (
+            "# MCP / ACP research notes\n\n"
+            "## v1.0 future runtime proposal draft\n\n"
+            "Status: draft / documentation-only / no implementation.\n"
+            "Future protocol operations preserve policy deny precedence.\n"
+        ),
         encoding="utf-8",
     )
     (repo / "docs" / "ONBOARDING_GOAL_PLAN.md").write_text(
@@ -376,6 +549,10 @@ requires-python = ">=3.12"
             "## v0.9 Operator Compatibility Gate\n\n"
             "Confirm the v0.8 JSON compatibility tests, local operator smoke, "
             "and MCP/ACP adapter boundary before tagging.\n"
+            "\n"
+            "## v1.0 Stable Local Operator Client Gate\n\n"
+            "Confirm the stable local operator client, focused tests, and "
+            "operator workflow docs before tagging.\n"
         ),
         encoding="utf-8",
     )
@@ -399,10 +576,13 @@ requires-python = ">=3.12"
             "# User Guide\n\nRun `ai-orch demo`, `ai-orch onboard`, and "
             "`ai-orch fix`. Trace exports include `action_journal`.\n\n"
             "## External Local Operator Workflow\n\n"
-            "Use `ai-orch status <task-id> --repo . --json`, "
+            "Use `ai-orch start --task \"Demo\" --repo . --json`, "
+            "`ai-orch status <task-id> --repo . --json`, "
             "`ai-orch approvals list --repo . --json`, and "
             "`ai-orch export <task-id> --repo . --redact`. Run the local "
-            "operator smoke before release.\n"
+            "operator smoke before release. Python integrations may use "
+            "`LocalOperatorClient` for this external local operator workflow.\n"
+            "Example payload includes \"command\": \"start\".\n"
         ),
         encoding="utf-8",
     )
@@ -437,6 +617,14 @@ requires-python = ">=3.12"
             "v0.8 JSON compatibility. External local operator integration "
             "smoke. MCP/ACP adapter boundary. No long-running server. "
             "The supervisor decides done.\n"
+        ),
+        encoding="utf-8",
+    )
+    (repo / "docs" / "V1_0_GOAL_PLAN.md").write_text(
+        (
+            "# v1.0 Goal Plan: Stable Local Operator Client\n\n"
+            "Stable local operator client. No-server MCP/ACP readiness. "
+            "The supervisor decides done. No direct state-store mutation.\n"
         ),
         encoding="utf-8",
     )

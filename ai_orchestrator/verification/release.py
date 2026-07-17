@@ -22,9 +22,11 @@ def run_release_checks(repo: Path) -> list[ReleaseCheckResult]:
         _check_pyproject_metadata(pyproject_path, pyproject),
         _check_version_sync(pyproject),
         _check_package_entrypoints(repo, pyproject),
+        _check_packaged_install_smoke(repo),
         _check_release_docs(repo),
         _check_v0_8_control_surface_docs(repo),
         _check_v0_9_operator_compatibility_docs(repo),
+        _check_v1_0_local_operator_client_docs(repo),
     ]
 
 
@@ -131,6 +133,44 @@ def _check_package_entrypoints(
         name="entrypoints",
         status="passed",
         detail="python -m ai_orchestrator and ai-orch console entrypoints present",
+    )
+
+
+def _check_packaged_install_smoke(repo: Path) -> ReleaseCheckResult:
+    workflow = repo / ".github" / "workflows" / "ci.yml"
+    if not workflow.exists():
+        return ReleaseCheckResult(
+            name="packaged-install-smoke",
+            status="failed",
+            detail="Missing .github/workflows/ci.yml packaged install smoke",
+        )
+
+    content = workflow.read_text(encoding="utf-8")
+    requirements = [
+        "Packaged install smoke",
+        "python -m venv .package-smoke-venv",
+        ".package-smoke-venv/bin/python -m pip install . --no-deps",
+        ".package-smoke-venv/bin/ai-orch --version",
+        ".package-smoke-venv/bin/ai-orch --help",
+    ]
+    missing = [item for item in requirements if item not in content]
+    if missing:
+        return ReleaseCheckResult(
+            name="packaged-install-smoke",
+            status="failed",
+            detail=(
+                "Missing CI packaged install smoke content: "
+                f"{', '.join(missing)}"
+            ),
+        )
+
+    return ReleaseCheckResult(
+        name="packaged-install-smoke",
+        status="passed",
+        detail=(
+            "CI covers local package install in a clean venv without dependency "
+            "resolution"
+        ),
     )
 
 
@@ -352,6 +392,168 @@ def _check_v0_9_operator_compatibility_docs(repo: Path) -> ReleaseCheckResult:
         detail=(
             "v0.9 goal plan, operator compatibility gate, local smoke workflow, "
             "and MCP/ACP boundary documented"
+        ),
+    )
+
+
+def _check_v1_0_local_operator_client_docs(repo: Path) -> ReleaseCheckResult:
+    required_docs = [
+        repo / "CHANGELOG.md",
+        repo / "docs" / "MCP_ACP_RESEARCH.md",
+        repo / "docs" / "RELEASE.md",
+        repo / "docs" / "USER_GUIDE.md",
+        repo / "docs" / "V1_0_GOAL_PLAN.md",
+    ]
+    required_files = [
+        repo / "ai_orchestrator" / "control" / "__init__.py",
+        repo / "ai_orchestrator" / "control" / "client.py",
+        repo / "ai_orchestrator" / "control" / "mcp_acp.py",
+        repo / "tests" / "test_local_operator_client.py",
+        repo / "tests" / "test_mcp_acp_boundary.py",
+    ]
+    missing = [
+        _relative_label(path, repo)
+        for path in [*required_docs, *required_files]
+        if not path.exists()
+    ]
+    if missing:
+        return ReleaseCheckResult(
+            name="v1.0-local-operator-client-docs",
+            status="failed",
+            detail=f"Missing docs or client files: {', '.join(missing)}",
+        )
+
+    content_requirements = [
+        (repo / "docs" / "V1_0_GOAL_PLAN.md", "stable local operator client"),
+        (repo / "docs" / "V1_0_GOAL_PLAN.md", "supervisor decides done"),
+        (repo / "docs" / "V1_0_GOAL_PLAN.md", "no-server"),
+        (repo / "docs" / "V1_0_GOAL_PLAN.md", "direct state-store mutation"),
+        (
+            repo / "docs" / "MCP_ACP_RESEARCH.md",
+            "v1.0 future runtime proposal draft",
+        ),
+        (
+            repo / "docs" / "MCP_ACP_RESEARCH.md",
+            "documentation-only / no implementation",
+        ),
+        (
+            repo / "docs" / "MCP_ACP_RESEARCH.md",
+            "policy deny precedence",
+        ),
+        (repo / "CHANGELOG.md", "stable local operator client"),
+        (repo / "docs" / "RELEASE.md", "v1.0 stable local operator client gate"),
+        (repo / "docs" / "USER_GUIDE.md", "LocalOperatorClient"),
+        (repo / "docs" / "USER_GUIDE.md", "external local operator workflow"),
+        (repo / "docs" / "USER_GUIDE.md", "ai-orch start --task"),
+        (repo / "docs" / "USER_GUIDE.md", '"command": "start"'),
+        (repo / "ai_orchestrator" / "cli" / "app.py", "json_output"),
+        (
+            repo / "ai_orchestrator" / "control" / "mcp_acp.py",
+            '["start", "--task", task, *repo_args, "--json"]',
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "__init__.py",
+            "LocalOperatorClient",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "__init__.py",
+            "LocalOperatorResult",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "client.py",
+            "class LocalOperatorClient",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "client.py",
+            "class LocalOperatorResult",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "client.py",
+            "Invalid JSON output",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "client.py",
+            "__post_init__",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "client.py",
+            "expected command",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "client.py",
+            "expected boolean ok",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "client.py",
+            "expected non-empty generated_at",
+        ),
+        (
+            repo / "ai_orchestrator" / "control" / "client.py",
+            "ai_orchestrator",
+        ),
+        (
+            repo / "tests" / "test_local_operator_client.py",
+            "test_local_operator_client_parses_control_json",
+        ),
+        (
+            repo / "tests" / "test_local_operator_client.py",
+            "test_local_operator_client_starts_task_with_control_json",
+        ),
+        (
+            repo / "tests" / "test_local_operator_client.py",
+            "test_local_operator_client_preserves_start_payload_on_nonzero_exit",
+        ),
+        (
+            repo / "tests" / "test_local_operator_client.py",
+            "test_local_operator_client_approval_methods_parse_control_json",
+        ),
+        (
+            repo / "tests" / "test_local_operator_client.py",
+            "test_local_operator_client_reports_process_failure",
+        ),
+        (
+            repo / "tests" / "test_local_operator_client.py",
+            "test_local_operator_client_reports_invalid_json",
+        ),
+        (
+            repo / "tests" / "test_local_operator_client.py",
+            "test_local_operator_client_allows_export_trace_text_output",
+        ),
+        (
+            repo / "tests" / "test_local_operator_client.py",
+            "test_local_operator_client_rejects_invalid_control_envelope",
+        ),
+        (
+            repo / "tests" / "test_local_operator_client.py",
+            "test_local_operator_client_pins_repo_before_chdir",
+        ),
+        (repo / "tests" / "test_cli.py", "test_start_json_emits_control_envelope"),
+        (repo / "tests" / "test_cli.py", "test_start_json_reports_missing_config"),
+        (
+            repo / "tests" / "test_cli.py",
+            "test_start_json_blocks_invalid_worktree_before_execution",
+        ),
+    ]
+    missing_content = [
+        f"{_relative_label(path, repo)} missing {needle!r}"
+        for path, needle in content_requirements
+        if needle.lower() not in path.read_text(encoding="utf-8").lower()
+    ]
+    if missing_content:
+        return ReleaseCheckResult(
+            name="v1.0-local-operator-client-docs",
+            status="failed",
+            detail=(
+                "Missing v1.0 local operator client content: "
+                f"{', '.join(missing_content)}"
+            ),
+        )
+    return ReleaseCheckResult(
+        name="v1.0-local-operator-client-docs",
+        status="passed",
+        detail=(
+            "v1.0 goal plan, stable local operator client, focused tests, "
+            "and operator workflow docs present"
         ),
     )
 

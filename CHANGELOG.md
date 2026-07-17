@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+## 1.0.0 - Stable Local Operator Client
+
+Date: 2026-07-17
+
+- Added the first v1.0 stable local operator client slice, including a typed
+  Python wrapper over the existing CLI control surface, injectable runner
+  support, P0 start/status/approval/retry/export methods,
+  invalid-JSON/process-failure handling, control-envelope failure detection,
+  focused tests, and a release-check gate for the v1.0 client docs and
+  contracts.
+
+- Changed `ai-orch verify` to return a failing exit code when a verification
+  command is `policy_denied`, so release and CI gates fail closed when policy
+  blocks a configured check.
+
+- Synced the v1.0 goal plan, backlog, and roadmap to mark the stable local
+  operator client P0/P1 scope complete.
+
+- Hardened the v1.0 local operator client by pinning the repository path at
+  client creation time and rejecting malformed control JSON envelopes with
+  mismatched commands, missing boolean `ok`, missing `generated_at`, or
+  success payloads that still carry an error.
+
+- Added `ai-orch start --json` and changed `LocalOperatorClient.start_task` to
+  parse the stable control-envelope payload with task identity and supervisor
+  result metadata instead of treating start as human-text output.
+
+- Added local operator JSON payload examples for status reads, missing-task
+  errors, approval inbox reads, and policy-denied approval retries.
+
+- Added CI packaged install smoke coverage for the v1.0 local operator client
+  release gate, with static `release-check` coverage so the local gate does not
+  perform networked install work.
+
+- Closed additional queue JSON client wrappers as not needed for v1.0; queue
+  inspection remains available through the documented CLI JSON surface while
+  `LocalOperatorClient` stays focused on the stable local operator workflow.
+
+- Added a documentation-only v1.0 MCP/ACP future runtime proposal draft that
+  keeps runtime implementation behind the existing research gate.
+
 ## 0.9.0 - Local Operator Compatibility
 
 Date: 2026-07-16

@@ -25,6 +25,9 @@ No open P2 items.
   the expansion gate in `docs/ARCHITECTURE.md`.
 - Continue MCP/ACP research spikes before adding runtime support; see the
   runtime proposal gate in `docs/MCP_ACP_RESEARCH.md`.
+- Design read-only queue client methods only after queue JSON envelope
+  stabilization; v1.0 keeps queue inspection on the documented CLI JSON
+  surface.
 - Evaluate deeper supervisor planning integration after `start --use-memory`
   usage proves useful; see the planning criteria in
   `docs/CODEBASE_MEMORY_RESEARCH.md`.

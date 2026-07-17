@@ -46,7 +46,7 @@ def cli_args_for_operation(request: McpAcpRequest) -> list[str]:
 
     if request.operation == "start_task":
         task = _required_text(request.task, "task")
-        return ["start", "--task", task, *repo_args]
+        return ["start", "--task", task, *repo_args, "--json"]
     if request.operation == "get_status":
         return ["status", _required_text(request.task_id, "task_id"), *repo_args, "--json"]
     if request.operation == "list_approvals":

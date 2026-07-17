@@ -103,6 +103,45 @@ git diff --check
 The release is blocked if compatibility tests, local operator smoke coverage,
 MCP/ACP boundary docs, or release-check coverage are missing.
 
+## v1.0 Stable Local Operator Client Gate
+
+Before tagging v1.0, confirm the stable local operator client is documented and
+covered by focused tests:
+
+- The client executes only through the existing CLI control surface and the
+  v0.9 no-server MCP/ACP boundary.
+- The client parses stable JSON payloads for supported start/read/control
+  operations and reports invalid JSON or non-zero process results explicitly.
+- `ai-orch start --json` returns a single control-envelope JSON object with
+  task identity and supervisor result metadata, without human preamble or
+  progress text on stdout.
+- The client does not expose direct state-store mutation or a method that marks
+  tasks done; completion remains supervisor-owned.
+- `release-check` requires the v1.0 goal plan, user-guide workflow, client
+  module, and focused client tests.
+- CI includes a packaged install smoke in a clean local virtual environment
+  using `python -m pip install . --no-deps`, followed by `ai-orch --version`
+  and `ai-orch --help`; local `release-check` verifies this workflow content
+  without running networked install work.
+- `docs/MCP_ACP_RESEARCH.md` records the v1.0 future runtime proposal draft
+  as documentation-only and keeps implementation behind the runtime proposal
+  gate.
+
+Run the v1.0 quality gate before the release commit:
+
+```bash
+python -m pytest
+python -m compileall ai_orchestrator
+ruff check .
+mypy ai_orchestrator
+python -m ai_orchestrator release-check --repo .
+git diff --check
+```
+
+The release is blocked if the local operator client, focused tests, workflow
+docs, release-check coverage, or no-server/supervisor-owned completion
+constraints are missing.
+
 For larger or risky releases, compile a reviewer-ready handoff using
 `docs/SHIPPING_PACKET_TEMPLATE.md`.
 

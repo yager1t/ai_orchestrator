@@ -4004,6 +4004,35 @@ def test_start_uses_project_config(capsys, tmp_path: Path) -> None:
     assert "Verification passed: custom" in output
 
 
+def test_start_json_emits_control_envelope(capsys, tmp_path: Path) -> None:
+    write_config(tmp_path)
+
+    exit_code = main(["start", "--task", "demo", "--repo", str(tmp_path), "--json"])
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+
+    assert exit_code == 0
+    assert "=== ai-orch run ===" not in output
+    assert "progress:" not in output
+    assert_control_envelope(payload, command="start", ok=True)
+    assert payload["task_id"]
+    assert payload["status"] == "done"
+    assert payload["repo"] == str(tmp_path)
+    assert payload["verification"] == "passed"
+    assert payload["files_changed"] == []
+    assert payload["report"] is None
+
+
+def test_start_json_reports_missing_config(capsys, tmp_path: Path) -> None:
+    exit_code = main(["start", "--task", "demo", "--repo", str(tmp_path), "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert_control_envelope(payload, command="start", ok=False)
+    assert payload["error"]["code"] == "config_not_found"  # type: ignore[index]
+    assert "Config not found" in payload["error"]["message"]  # type: ignore[index]
+
+
 def test_start_strict_mode_blocks_without_verification_commands(
     capsys,
     tmp_path: Path,
@@ -4330,6 +4359,47 @@ def test_start_blocks_invalid_worktree_before_execution(
     assert "Execution blocked: worktree path does not exist:" in output
 
 
+def test_start_json_blocks_invalid_worktree_before_execution(
+    capsys,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    write_config(tmp_path)
+    worktree = tmp_path / "not-worktree"
+
+    def fake_validate(repo: Path, candidate: Path) -> str | None:
+        return f"worktree path does not exist: {candidate}"
+
+    def fake_run_once(
+        self, task: str, repo: Path, planning_context=None
+    ) -> SupervisorResult:
+        raise AssertionError("supervisor should not start with an invalid worktree")
+
+    monkeypatch.setattr(
+        "ai_orchestrator.cli.app._validate_autopilot_worktree", fake_validate
+    )
+    monkeypatch.setattr("ai_orchestrator.cli.app.Supervisor.run_once", fake_run_once)
+
+    exit_code = main(
+        [
+            "start",
+            "--task",
+            "demo",
+            "--repo",
+            str(tmp_path),
+            "--worktree",
+            str(worktree),
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert_control_envelope(payload, command="start", ok=False)
+    assert payload["error"]["code"] == "invalid_worktree"  # type: ignore[index]
+    assert "worktree path does not exist:" in payload["error"]["message"]  # type: ignore[index]
+
+
 def test_start_blocks_generic_agent_command_from_project_policy(
     capsys,
     tmp_path: Path,
@@ -4387,7 +4457,7 @@ def test_verify_uses_policy_rules_from_project_config(capsys, tmp_path: Path) ->
     assert "deploy: needs_approval exit=None" in output
 
 
-def test_verify_policy_denied_does_not_block_ci_exit_code(
+def test_verify_policy_denied_returns_failure_exit_code(
     capsys,
     tmp_path: Path,
 ) -> None:
@@ -4401,7 +4471,7 @@ def test_verify_policy_denied_does_not_block_ci_exit_code(
     exit_code = main(["verify", "--repo", str(tmp_path)])
     output = capsys.readouterr().out
 
-    assert exit_code == 0
+    assert exit_code == 1
     assert "blocked: policy_denied exit=None" in output
 
 

@@ -12,7 +12,7 @@ def test_mcp_acp_boundary_maps_operations_to_cli_json_contracts() -> None:
 
     assert cli_args_for_operation(
         McpAcpRequest(operation="start_task", repo=repo, task="Fix tests")
-    ) == ["start", "--task", "Fix tests", "--repo", "."]
+    ) == ["start", "--task", "Fix tests", "--repo", ".", "--json"]
     assert cli_args_for_operation(
         McpAcpRequest(operation="get_status", repo=repo, task_id="task-1")
     ) == ["status", "task-1", "--repo", ".", "--json"]
@@ -78,4 +78,3 @@ def test_mcp_acp_boundary_validates_required_fields() -> None:
         cli_args_for_operation(
             McpAcpRequest(operation="approve_action", repo=repo, approval_id=1)
         )
-

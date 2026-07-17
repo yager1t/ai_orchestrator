@@ -327,6 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Relative paths are resolved from --repo."
         ),
     )
+    start.add_argument("--json", action="store_true", help="Print machine-readable JSON")
 
     demo = sub.add_parser(
         "demo",
@@ -1856,6 +1857,7 @@ def main(argv: list[str] | None = None) -> int:
             worktree=args.worktree,
             use_memory=args.use_memory,
             memory_area=args.memory_area,
+            json_output=args.json,
         )
         if start_result is None:
             return 1
@@ -2852,7 +2854,7 @@ def _validate_max_runtime_sec(args: argparse.Namespace) -> bool:
 
 
 def _verify_status_allows_success(status: str) -> bool:
-    return status in {"passed", "policy_denied"}
+    return status == "passed"
 
 
 def _filter_queue_items(
@@ -3035,6 +3037,30 @@ def _print_supervisor_result(
         print(f"  ai-orch timeline {result.task_id} --repo {repo}")
 
 
+def _start_control_payload(
+    result: SupervisorResult,
+    *,
+    repo: Path,
+    store: StateStore | None = None,
+    report_path: Path | None = None,
+) -> dict[str, object]:
+    files_changed: list[str] = []
+    verification_status = "not_run"
+    if result.task_id and store is not None:
+        files_changed = _files_changed_for_task(store, result.task_id)
+        verification_status = _verification_status_for_task(store, result.task_id)
+    return _control_json_payload(
+        "start",
+        task_id=result.task_id,
+        status=result.status,
+        summary=result.summary,
+        repo=str(repo),
+        files_changed=files_changed,
+        verification=verification_status,
+        report=str(report_path) if report_path is not None else None,
+    )
+
+
 def _files_changed_for_task(store: StateStore, task_id: str) -> list[str]:
     seen: set[str] = set()
     files: list[str] = []
@@ -3067,15 +3093,31 @@ def _run_supervisor_start(
     action: str = "start",
     write_report: bool = False,
     require_verification: bool = False,
+    json_output: bool = False,
 ) -> SupervisorResult | None:
     config_path = repo / ".ai-orch" / "config.yaml"
     if not config_path.exists():
+        if json_output:
+            _print_control_json_error(
+                "start",
+                code="config_not_found",
+                message=f"Config not found: {config_path}",
+                config_path=str(config_path),
+            )
+            return None
         print(f"Config not found: {config_path}")
         print("Next command: ai-orch setup --repo .")
         print("For a safe first result, run: ai-orch demo")
         return None
     config = load_project_config(repo)
     if require_verification and not config.verification_commands:
+        if json_output:
+            _print_control_json_error(
+                "start",
+                code="verification_not_configured",
+                message="No verification commands configured.",
+            )
+            return None
         print("No verification commands configured.")
         print("Next command: ai-orch setup --repo . --force")
         return None
@@ -3083,6 +3125,14 @@ def _run_supervisor_start(
     if worktree:
         worktree_error = _validate_autopilot_worktree(repo, execution_repo)
         if worktree_error is not None:
+            if json_output:
+                _print_control_json_error(
+                    "start",
+                    code="invalid_worktree",
+                    message=worktree_error,
+                    worktree=str(execution_repo),
+                )
+                return None
             print(f"Execution blocked: {worktree_error}")
             return None
     planning_context = None
@@ -3093,6 +3143,14 @@ def _run_supervisor_start(
             area=memory_area,
         )
         if memory_context.status != "passed":
+            if json_output:
+                _print_control_json_error(
+                    "start",
+                    code="memory_context_failed",
+                    message=memory_context.error or "Memory context preflight failed.",
+                    status=memory_context.status,
+                )
+                return None
             print(f"memory context: {memory_context.status}")
             if memory_context.error:
                 print(f"error: {memory_context.error}")
@@ -3103,18 +3161,26 @@ def _run_supervisor_start(
         supervisor = _build_supervisor(
             state_store=store,
             config=config,
-            progress_callback=_print_progress,
+            progress_callback=None if json_output else _print_progress,
         )
     except ValueError as exc:
+        if json_output:
+            _print_control_json_error(
+                "start",
+                code="agent_unavailable",
+                message=str(exc),
+            )
+            return None
         print(str(exc))
         print("Next command: ai-orch doctor agents --repo .")
         return None
-    _print_run_preamble(
-        action=action,
-        repo=execution_repo,
-        config=config,
-        supervisor=supervisor,
-    )
+    if not json_output:
+        _print_run_preamble(
+            action=action,
+            repo=execution_repo,
+            config=config,
+            supervisor=supervisor,
+        )
     result = supervisor.run_once(
         task=task,
         repo=execution_repo,
@@ -3123,12 +3189,22 @@ def _run_supervisor_start(
     report_path = None
     if write_report and result.task_id:
         report_path = _write_task_report(store, execution_repo, result.task_id)
-    _print_supervisor_result(
-        result,
-        repo=execution_repo,
-        store=store,
-        report_path=report_path,
-    )
+    if json_output:
+        _print_control_json(
+            _start_control_payload(
+                result,
+                repo=execution_repo,
+                store=store,
+                report_path=report_path,
+            )
+        )
+    else:
+        _print_supervisor_result(
+            result,
+            repo=execution_repo,
+            store=store,
+            report_path=report_path,
+        )
     return result
 
 

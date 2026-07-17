@@ -60,7 +60,7 @@ Latest verified baseline:
 
 - `ruff check .`: passed
 - `mypy ai_orchestrator`: passed
-- `python -m pytest`: 579 passed
+- `python -m pytest`: 688 passed
 - `python -m compileall ai_orchestrator`: passed
 - `python -m ai_orchestrator verify --repo .`: passed
 - `python -m ai_orchestrator release-check --repo .`: passed
@@ -498,6 +498,7 @@ in `ai_orchestrator/storage/migrations.py`.
 - `docs/MVP_IMPLEMENTATION_PLAN.md`: implemented phases and deferred work.
 - `docs/POST_MVP_ROADMAP.md`: post-MVP product and engineering roadmap.
 - `docs/BACKLOG.md`: current backlog.
+- `docs/V1_0_GOAL_PLAN.md`: active v1.0 stable local operator client plan.
 - `docs/SECURITY.md`: security model and secret handling.
 - `docs/CODEBASE_MEMORY_RESEARCH.md`: optional Codebase Memory integration notes.
 - `docs/PUBLICATION_POLICY.md`: public/private documentation boundary.

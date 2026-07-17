@@ -659,8 +659,8 @@ recovery/checkpoint details.
 Use this workflow when another local tool, editor integration, shell script, or
 future MCP/ACP adapter drives `ai-orch`.
 
-1. Start or queue one bounded task with the same CLI commands a human operator
-   would use. External tools must not mark tasks done directly.
+1. Start one bounded task with `ai-orch start --task "..." --repo . --json`.
+   External tools must not mark tasks done directly.
 2. Poll state with `ai-orch status <task-id> --repo . --json`.
 3. Inspect replay detail with `ai-orch timeline <task-id> --repo . --json`.
 4. Inspect approvals with `ai-orch approvals list --repo . --json` and
@@ -675,6 +675,157 @@ future MCP/ACP adapter drives `ai-orch`.
    with `--apply --reason`.
 8. Export the audit artifact with `ai-orch export <task-id> --repo . --redact`
    when the trace may leave the local review context.
+
+Python integrations can use `LocalOperatorClient` instead of reconstructing
+argv or parsing human text:
+
+```python
+from pathlib import Path
+
+from ai_orchestrator.control import LocalOperatorClient
+
+client = LocalOperatorClient(repo=Path("."))
+started = client.start_task("Fix the failing tests")
+
+if started.payload is not None:
+    task_id = started.payload["task_id"]
+    print(task_id)
+else:
+    print(started.error or started.stderr)
+```
+
+The client is a local wrapper over `python -m ai_orchestrator ...`; it does not
+start a server, bypass policy, mutate the state store directly, or grant a
+caller authority to mark work done.
+
+The supported v1.0 methods are `start_task`, `get_status`, `list_approvals`,
+`approve_action`, `reject_action`, `retry_approval`, and `export_trace`.
+`start_task`, `get_status`, and approval methods parse the existing JSON
+control payloads. They report invalid JSON, incompatible control-envelope
+schema versions, and `ok: false` control payloads as explicit client errors.
+`export_trace` preserves the CLI stdout/stderr and exit code without granting
+any direct state mutation authority.
+
+Stable JSON control payloads share this envelope:
+
+```json
+{
+  "schema_version": "1.0",
+  "command": "status",
+  "generated_at": "2026-07-16T12:00:00+00:00",
+  "ok": true,
+  "error": null
+}
+```
+
+`start_task(task)` returns the supervisor-created task identity and current
+result status. A blocked task can still include a valid payload while the
+process exits non-zero:
+
+```json
+{
+  "schema_version": "1.0",
+  "command": "start",
+  "generated_at": "2026-07-16T12:00:00+00:00",
+  "ok": true,
+  "error": null,
+  "task_id": "task-123",
+  "status": "done",
+  "summary": "Verification passed: unit",
+  "repo": ".",
+  "files_changed": [],
+  "verification": "passed",
+  "report": null
+}
+```
+
+`get_status(task_id)` returns task state, iteration count, and verification
+detail when the task exists:
+
+```json
+{
+  "schema_version": "1.0",
+  "command": "status",
+  "generated_at": "2026-07-16T12:00:00+00:00",
+  "ok": true,
+  "error": null,
+  "task": {
+    "task_id": "task-123",
+    "status": "done"
+  },
+  "iteration_count": 1,
+  "iterations": [
+    {
+      "iteration_id": 1,
+      "verification_runs": [
+        {
+          "name": "unit",
+          "status": "passed"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Missing or blocked control reads keep the same envelope with `ok: false`:
+
+```json
+{
+  "schema_version": "1.0",
+  "command": "status",
+  "generated_at": "2026-07-16T12:00:00+00:00",
+  "ok": false,
+  "error": {
+    "code": "task_not_found",
+    "message": "Task not found: missing-task",
+    "task_id": "missing-task"
+  }
+}
+```
+
+`list_approvals()` returns the current approval inbox:
+
+```json
+{
+  "schema_version": "1.0",
+  "command": "approvals list",
+  "generated_at": "2026-07-16T12:00:00+00:00",
+  "ok": true,
+  "error": null,
+  "status_filter": "pending",
+  "count": 1,
+  "approvals": [
+    {
+      "approval_id": 7,
+      "status": "pending",
+      "command_string": "git push origin main"
+    }
+  ]
+}
+```
+
+`retry_approval(approval_id)` does not override policy denies:
+
+```json
+{
+  "schema_version": "1.0",
+  "command": "approvals retry",
+  "generated_at": "2026-07-16T12:00:00+00:00",
+  "ok": false,
+  "error": {
+    "code": "policy_denied",
+    "message": "Denied by pattern: dangerous"
+  },
+  "approval_id": 7,
+  "retry_status": "policy_denied"
+}
+```
+
+Treat `python_executable`, `stdout`, and `stderr` as local trusted-boundary
+values. Do not accept the executable path from untrusted input, and redact
+payloads or command streams before sending them outside the local review
+context.
 
 For release and integration validation, the local operator smoke exercises this
 same control surface with fixture-backed local state. It does not require
