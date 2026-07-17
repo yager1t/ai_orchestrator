@@ -1,7 +1,7 @@
 # v1.0 Goal Plan: Stable Local Operator Client
 
 Date: 2026-07-16
-Status: release-candidate readiness, P0/P1 implementation complete
+Status: released as v1.0.0 on 2026-07-17
 Baseline: v0.9.0 Local Operator Compatibility released and published
 
 ## Progress
@@ -32,15 +32,34 @@ Baseline: v0.9.0 Local Operator Compatibility released and published
   v1.0 no-server, requires future protocol adapters to preserve
   supervisor-owned completion and policy deny precedence, and gates any runtime
   implementation behind a separate review.
-- 2026-07-17: Completed release-candidate readiness sync. No open P0/P1 items
-  remain in the v1.0 plan or backlog; the next release-prep step is review,
-  version bump, and release handoff only after explicit operator approval.
+- 2026-07-17: Completed pre-release readiness sync. No open P0/P1 items
+  remained in the v1.0 plan or backlog before the release-prep handoff.
 - 2026-07-17: Applied P1 client hardening from architecture/security review:
   the client now pins the repository path at creation time and rejects
   malformed control JSON envelopes before reporting success.
 - 2026-07-17: Closed the `start_task` RC gap: `ai-orch start --json` now emits
   a stable control envelope and `LocalOperatorClient.start_task` parses the
   machine-readable task identity instead of relying on human stdout.
+- 2026-07-17: Released v1.0.0, tagged `v1.0.0`, published the GitHub Release,
+  and published `ai-engineering-supervisor 1.0.0` to PyPI through the trusted
+  GitHub Actions release workflow.
+
+## Release Outcome
+
+v1.0.0 is released. The P0/P1 Stable Local Operator Client scope is complete:
+
+- `LocalOperatorClient` is the supported Python wrapper for the local operator
+  workflow.
+- `ai-orch start --json` returns a stable control envelope with task identity
+  and supervisor result metadata.
+- Status reads, approval list/approve/reject/retry, and trace export remain on
+  the existing CLI control surface.
+- Completion authority remains supervisor-owned; the client has no direct
+  state mutation or direct `done` method.
+- MCP/ACP runtime implementation remains out of scope and gated by the future
+  runtime proposal in `docs/MCP_ACP_RESEARCH.md`.
+- Release verification passed with `688` tests before tagging, and the PyPI
+  publication workflow completed successfully.
 
 ## Positioning
 
@@ -121,10 +140,9 @@ P1 documentation, smoke coverage, and release readiness.
 - [x] Add a future runtime proposal for MCP/ACP only after the local client is
   stable and reviewed.
 
-## Release-Candidate Handoff
+## Release Verification Record
 
-The v1.0 release-candidate slice is ready for review when the required quality
-gate passes:
+The v1.0.0 release was tagged only after the required quality gate passed:
 
 ```bash
 python -m pytest
@@ -135,10 +153,9 @@ python -m ai_orchestrator release-check --repo .
 git diff --check
 ```
 
-Release preparation is intentionally separate from this implementation goal.
-Do not bump the package version, tag, publish, or push until the accumulated
-v1.0 diff has been reviewed and the operator explicitly approves the release
-step.
+The release commit is `d04ec66` and the release tag is `v1.0.0`. GitHub Release
+publication triggered the trusted PyPI publishing workflow for
+`ai-engineering-supervisor 1.0.0`.
 
 ## Out Of Scope
 

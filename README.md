@@ -22,6 +22,7 @@ plan -> execute -> verify -> decide -> continue | done | blocked
 ## Project Status
 
 The robust local control plane is implemented in the current `main` branch.
+The latest published release is `v1.0.0 - Stable Local Operator Client`.
 
 Current working surface:
 
@@ -46,6 +47,9 @@ Current working surface:
   action records, approval requests, and deny-rule precedence.
 - Local golden, chaos, and security red-team evaluation suites.
 - Review hygiene with CODEOWNERS, local ruff pre-commit hooks, and release checks.
+- Stable `LocalOperatorClient` for local tools that need to start tasks, inspect
+  status, handle approvals, retry approved actions, and export traces without
+  parsing human-oriented stdout.
 
 Supported agent types:
 
@@ -105,7 +109,7 @@ mode rather than real AI work.
 
 ## Install Paths
 
-For future packaged releases, the universal end-user path is `pipx`:
+For packaged releases, the universal end-user path is `pipx`:
 
 ```bash
 pipx install ai-engineering-supervisor
@@ -323,7 +327,7 @@ current machine. It reports whether each known worker is configured, enabled,
 available on `PATH`, how credentials are expected to be supplied, and whether a
 native API adapter exists.
 
-Connector support in `0.2.5`:
+Connector support:
 
 | Connector | CLI/headless support | Native API adapter | Credential model |
 | --- | --- | --- | --- |
@@ -334,7 +338,7 @@ Connector support in `0.2.5`:
 | Generic | yes, configurable command wrapper | wrapper-owned | external env/secret store outside `.ai-orch/config.yaml` |
 | Mock | yes, smoke-test only | not applicable | no credentials |
 
-Native provider API adapters are intentionally not part of the `0.2.5`
+Native provider API adapters are intentionally not part of the current
 production surface. If a provider API is required today, wrap it with the
 `generic_cli` adapter and inject credentials from the shell, OS/user secret
 store, service manager, or CI secrets.
@@ -498,7 +502,8 @@ in `ai_orchestrator/storage/migrations.py`.
 - `docs/MVP_IMPLEMENTATION_PLAN.md`: implemented phases and deferred work.
 - `docs/POST_MVP_ROADMAP.md`: post-MVP product and engineering roadmap.
 - `docs/BACKLOG.md`: current backlog.
-- `docs/V1_0_GOAL_PLAN.md`: active v1.0 stable local operator client plan.
+- `docs/V1_0_GOAL_PLAN.md`: released v1.0 stable local operator client plan.
+- `docs/RELEASE_LOG.md`: published release outcomes and verification records.
 - `docs/SECURITY.md`: security model and secret handling.
 - `docs/CODEBASE_MEMORY_RESEARCH.md`: optional Codebase Memory integration notes.
 - `docs/PUBLICATION_POLICY.md`: public/private documentation boundary.

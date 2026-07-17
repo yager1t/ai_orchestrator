@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Updated project memory, roadmap, backlog, README status, and release log after
+  the v1.0.0 GitHub Release and PyPI publication.
+
 ## 1.0.0 - Stable Local Operator Client
 
 Date: 2026-07-17

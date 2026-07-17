@@ -13,7 +13,14 @@ No open P1 items.
 
 ## P2
 
-No open P2 items.
+- Monitor real local operator client usage and collect candidates for a v1.0.1
+  stabilization release.
+- Prepare a MCP/ACP runtime proposal spike only after the evidence listed in
+  `docs/MCP_ACP_RESEARCH.md` can be answered in implementation-ready terms.
+- Improve Codebase Memory preflight into a more automatic context layer without
+  making memory output authoritative for completion.
+- Design read-only queue client methods only if external integrations need a
+  stable Python API beyond the documented CLI JSON queue surface.
 
 ## P3 / Deferred
 
@@ -23,14 +30,6 @@ No open P2 items.
   diverges from the shared adapter contract.
 - Expand TUI beyond read-only views when interactive workflows are needed; see
   the expansion gate in `docs/ARCHITECTURE.md`.
-- Continue MCP/ACP research spikes before adding runtime support; see the
-  runtime proposal gate in `docs/MCP_ACP_RESEARCH.md`.
-- Design read-only queue client methods only after queue JSON envelope
-  stabilization; v1.0 keeps queue inspection on the documented CLI JSON
-  surface.
-- Evaluate deeper supervisor planning integration after `start --use-memory`
-  usage proves useful; see the planning criteria in
-  `docs/CODEBASE_MEMORY_RESEARCH.md`.
 - Defer MCP server mode, web dashboard, parallel agent swarm, and auto-merge
   until the trusted approval, audit, and isolation foundations are in place.
 

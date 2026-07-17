@@ -105,6 +105,10 @@ MCP/ACP boundary docs, or release-check coverage are missing.
 
 ## v1.0 Stable Local Operator Client Gate
 
+Status: completed for `v1.0.0` at release commit `d04ec66`. The GitHub Release
+was published on 2026-07-17 and the trusted PyPI workflow published
+`ai-engineering-supervisor 1.0.0`.
+
 Before tagging v1.0, confirm the stable local operator client is documented and
 covered by focused tests:
 

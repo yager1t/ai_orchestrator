@@ -19,6 +19,22 @@ platform. Its strongest niche is trusted local execution for real repositories:
 bounded agent loops, policy-gated commands, persisted state, and independent
 verification before completion.
 
+## Current Status After v1.0.0
+
+The Phase 4 ecosystem milestone is complete as of v1.0.0:
+
+- headless CI and release-check flows exist;
+- the no-server MCP/ACP operation boundary is documented;
+- `LocalOperatorClient` provides the stable local Python client for
+  `start_task`, `get_status`, approvals, retry, and trace export;
+- JSON trace export remains local and redaction-aware;
+- MCP/ACP runtime support remains deferred until the runtime proposal gate is
+  satisfied.
+
+The next planning question is no longer "finish v1.0"; it is whether the next
+bounded release should be a v1.0.x stabilization pass or the first post-v1.0
+research/implementation slice.
+
 ## Guardrails
 
 - Keep the supervisor as the only owner of final task status.
@@ -159,3 +175,13 @@ repeatable real-agent operation:
 - Auto-merge.
 - Organization policy server.
 - New production dependencies for TUI or YAML parsing.
+
+## Post-v1.0 Candidate Tracks
+
+- v1.0.1 stabilization after real-world local operator client usage.
+- MCP/ACP runtime proposal spike that satisfies `docs/MCP_ACP_RESEARCH.md`
+  before any protocol runtime implementation.
+- More automatic Codebase Memory context preflight, while keeping memory output
+  read-only and non-authoritative.
+- Dedicated read-only queue client wrappers only if external integrations need
+  a stable Python API beyond the documented CLI JSON queue surface.
